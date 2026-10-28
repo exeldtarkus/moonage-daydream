@@ -221,7 +221,8 @@ export const mssqlDriver: Driver = {
   async columns(conn, password, db, obj) {
     const rows = await select<{ name: string; type: string; max_length: number; precision: number; scale: number; is_nullable: boolean }>(
       conn, password,
-      `SELECT c.name, t.name AS type, c.max_length, c.precision, c.scale, c.is_nullable FROM ${q(db)}.sys.columns c
+      // all_columns: termasuk kolom view / tabel sistem (sys.objects dll.), sys.columns hanya objek user
+      `SELECT c.name, t.name AS type, c.max_length, c.precision, c.scale, c.is_nullable FROM ${q(db)}.sys.all_columns c
         JOIN ${q(db)}.sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID(@full) ORDER BY c.column_id`,
       { full: `${q(db)}.${q(obj.schema)}.${q(obj.name)}` },
     );
