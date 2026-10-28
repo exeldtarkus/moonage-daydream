@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { fmtType, q, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
-import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements } from '../sqlContext';
+import { formatSql, leadingCommas } from '../sqlFormat';
+import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable } from '../sqlContext';
 
 test('splitBatches splits on GO lines only', () => {
   assert.deepEqual(splitBatches('select 1\nGO\nselect 2\n  go 5  \r\nselect 3\ngo -- end\n'), ['select 1', 'select 2', 'select 3']);
@@ -76,4 +77,55 @@ test('splitStatements / parallelSafe', () => {
   assert.equal(preview('-- c\nSELECT  *\n FROM t;'), 'SELECT * FROM t;');
   assert.equal(maskSql("a 'it''s' b").length, "a 'it''s' b".length);
   assert.equal(maskSql("a 'it''s' b"), 'a         b');
+});
+
+test('statementAt picks the statement under the cursor', () => {
+  const sql = '-- c\nSELECT TOP 20\n    name\nFROM sys.objects;\n\nSELECT\n    COUNT(*) AS n\nFROM sys.objects;\n';
+  const first = '-- c\nSELECT TOP 20\n    name\nFROM sys.objects;';
+  const second = 'SELECT\n    COUNT(*) AS n\nFROM sys.objects;';
+  assert.equal(statementAt(sql, 0), first);
+  assert.equal(statementAt(sql, sql.indexOf('name')), first);
+  assert.equal(statementAt(sql, sql.indexOf(';') + 1), first, 'right after ;');
+  assert.equal(statementAt(sql, sql.indexOf(';') + 2), first, 'blank line between');
+  assert.equal(statementAt(sql, sql.indexOf('COUNT')), second);
+  assert.equal(statementAt(sql, sql.length), second, 'end of file');
+  assert.equal(statementAt("SELECT 'a;b'\nGO\nSELECT 2", 20), 'SELECT 2', 'GO separates, ; in string ignored');
+  assert.equal(statementAt("SELECT 'a;b'\nGO\nSELECT 2", 3), "SELECT 'a;b'");
+  assert.equal(statementAt('SELECT 1', 4), 'SELECT 1', 'no separator');
+});
+
+test('tableRefs finds FROM / JOIN tables and aliases', () => {
+  assert.deepEqual(tableRefs('SELECT  *\nFROM    dbo.Orders\nwhere ;'), [{ parts: ['dbo', 'Orders'], alias: undefined }]);
+  assert.deepEqual(
+    tableRefs('select * from SalesDb..Orders o join [My DB].dbo.[Order Lines] AS l on l.id = o.id where'),
+    [{ parts: ['SalesDb', '', 'Orders'], alias: 'o' }, { parts: ['My DB', 'dbo', 'Order Lines'], alias: 'l' }],
+  );
+  assert.deepEqual(tableRefs("select 'from x' from T"), [{ parts: ['T'], alias: undefined }], 'from inside string ignored');
+  assert.deepEqual(tableRefs('select * from SalesDb.'), []);
+});
+
+test('formatSql: uppercase keywords, leading commas, strings untouched', () => {
+  const s = { keywordCase: 'upper' as const, leadingComma: true, semicolonNewline: true, tabWidth: 4, useTabs: false };
+  assert.equal(
+    formatSql("select name, object_id, 'a,b' as x from sys.objects where kind = 'U' and name like 'x,%'", s),
+    "SELECT\n    name\n    , object_id\n    , 'a,b' AS x\nFROM\n    sys.objects\nWHERE\n    kind = 'U'\n    AND name LIKE 'x,%'",
+  );
+  assert.equal(formatSql('select a, b from t', { ...s, leadingComma: false, keywordCase: 'lower' }), 'select\n    a,\n    b\nfrom\n    t');
+  assert.equal(
+    formatSql("select * from dbo.Orders left join dbo.OrderLines on a = b where 1=1 and order_no = 'x'; select 1;", s),
+    "SELECT\n    *\nFROM\n    dbo.Orders\n    LEFT JOIN dbo.OrderLines ON a = b\nWHERE\n    1 = 1\n    AND order_no = 'x'\n;\n\nSELECT\n    1\n;",
+  );
+  assert.equal(formatSql('select 1;', { ...s, semicolonNewline: false }), 'SELECT\n    1;');
+  assert.equal(leadingCommas('SELECT\n  a, -- c,\n  b'), 'SELECT\n  a -- c,\n  , b', 'code comma moved, comma inside comment kept');
+});
+
+test('autoLimitable: only a single SELECT without TOP / FETCH / INTO', () => {
+  assert.equal(autoLimitable(['SELECT  *\nFROM    dbo.Orders']), true);
+  assert.equal(autoLimitable(['WITH x AS (SELECT 1 a) SELECT * FROM x;']), true);
+  assert.equal(autoLimitable(['select top 10 * from t']), false);
+  assert.equal(autoLimitable(['select * from t order by a offset 0 rows fetch next 5 rows only']), false);
+  assert.equal(autoLimitable(['select * into #t from t']), false);
+  assert.equal(autoLimitable(['update t set a = 1']), false);
+  assert.equal(autoLimitable(["select 'top' as x from t"]), true, 'TOP inside a string does not count');
+  assert.equal(autoLimitable(['select 1;', 'select 2;']), false, 'multiple statements: not limited');
 });

@@ -7,9 +7,10 @@ import { ConnectionInfo, address, drivers } from './db';
 import { Results, LOCATIONS, VIEW_ID } from './results';
 import { SqlFiles, SqlNode, newSqlFile } from './sqlFiles';
 import { SqlCompletion } from './completion';
+import { formatSql } from './sqlFormat';
 import type { Outcome } from './resultsHtml';
 import { splitBatches } from './mssql';
-import { parallelSafe, splitStatements } from './sqlContext';
+import { autoLimitable, parallelSafe, splitStatements, statementAt } from './sqlContext';
 
 let log: vscode.LogOutputChannel;
 export let conns: Connections;
@@ -23,6 +24,8 @@ export let runningView: RunningView;
 export let history: History;
 export let sqlFiles: SqlFiles;
 export let completion: SqlCompletion;
+/** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
+export let ownFormatter = false;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : String(e));
@@ -33,6 +36,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'moonageDaydream.selectConnection';
   explorer = new Explorer(conns, log);
+  updateFormatterContext(ctx);
   sqlFiles = new SqlFiles(ctx.globalState, conns, log);
   completion = new SqlCompletion(conns, fileConn, log);
   updateStatus();
@@ -77,7 +81,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.cancelAllQueries', () => running.forEach(cancel)),
     vscode.commands.registerCommand('moonageDaydream.openHistory', (e?: HistoryEntry) => e && openHistory(e)),
     vscode.commands.registerCommand('moonageDaydream.runHistory', async (e?: HistoryEntry) => {
-      if (e && (await openHistory(e))) await runQuery();
+      if (e && (await openHistory(e))) await runQuery({ all: true });
     }),
     vscode.commands.registerCommand('moonageDaydream.copyHistory', (e?: HistoryEntry) => e && vscode.env.clipboard.writeText(e.sql)),
     vscode.commands.registerCommand('moonageDaydream.removeHistory', (e?: HistoryEntry) => e && history.remove(e)),
@@ -110,6 +114,21 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.cancelQuery', cancelQuery),
     vscode.commands.registerCommand('moonageDaydream.setFileConnection', setFileConnection),
     vscode.commands.registerCommand('moonageDaydream.setFileDatabase', setFileDatabase),
+    // Ctrl+Alt+F: format langsung tanpa lewat default formatter (settings user bisa menunjuk formatter lain, mis. DBCode)
+    vscode.commands.registerTextEditorCommand('moonageDaydream.formatSql', (editor, builder) => {
+      const doc = editor.document;
+      const range = editor.selection.isEmpty ? new vscode.Range(0, 0, doc.lineCount, 0) : editor.selection;
+      const edits = formatEdits(doc, range, { tabSize: Number(editor.options.tabSize) || 4, insertSpaces: editor.options.insertSpaces !== false });
+      edits.forEach((e) => builder.replace(e.range, e.newText)); // builder hanya valid selama callback (sinkron)
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('editor.defaultFormatter') && updateFormatterContext(ctx)),
+    vscode.extensions.onDidChange(() => updateFormatterContext(ctx)),
+    vscode.languages.registerDocumentFormattingEditProvider({ language: 'sql' }, {
+      provideDocumentFormattingEdits: (doc, o) => formatEdits(doc, new vscode.Range(0, 0, doc.lineCount, 0), o),
+    }),
+    vscode.languages.registerDocumentRangeFormattingEditProvider({ language: 'sql' }, {
+      provideDocumentRangeFormattingEdits: (doc, range, o) => formatEdits(doc, range, o),
+    }),
     vscode.languages.registerCompletionItemProvider({ language: 'sql' }, completion, '.'),
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, { onDidChangeCodeLenses: lensChanged.event, provideCodeLenses }),
     vscode.window.onDidChangeActiveTextEditor(updateFileStatus),
@@ -118,6 +137,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.refreshExplorer', (n?: Node) => {
       completion.clear(); // tabel baru juga muncul di autocomplete
       explorer.refresh(n);
+    }),
+    vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
+      if (n?.kind !== 'db') return;
+      // tab SQL baru yang langsung terikat ke koneksi + database ini (CodeLens: conn | db)
+      const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: '' });
+      await conns.bind(doc.uri.toString(), { conn: n.c.name, db: n.db });
+      await vscode.window.showTextDocument(doc);
+      updateFileStatus();
     }),
     vscode.commands.registerCommand('moonageDaydream.selectTop', async (n?: Node) => {
       if (n?.kind !== 'obj') return;
@@ -146,6 +173,38 @@ function sqlWatcher(): vscode.Disposable {
   const w = vscode.workspace.createFileSystemWatcher('**/*.sql', false, true, false);
   const refresh = () => sqlFiles.refresh();
   return vscode.Disposable.from(w, w.onDidCreate(refresh), w.onDidDelete(refresh), vscode.workspace.onDidChangeWorkspaceFolders(refresh));
+}
+
+/**
+ * Shift+Alt+F: formatter default [sql] di settings user (mis. DBCode) dipakai bila extension-nya ada di jendela ini;
+ * kalau tidak ada (mis. jendela dev tanpa DBCode), kosong, atau Moonage: keybinding Moonage yang aktif.
+ */
+function updateFormatterContext(ctx: vscode.ExtensionContext) {
+  const id = vscode.workspace.getConfiguration('editor', { languageId: 'sql' }).get<string>('defaultFormatter');
+  ownFormatter = !id || id.toLowerCase() === ctx.extension.id.toLowerCase() || !vscode.extensions.getExtension(id);
+  void vscode.commands.executeCommand('setContext', 'moonageDaydream.ownFormatter', ownFormatter);
+  log.info(`formatter for sql: ${ownFormatter ? 'Moonage' : id}`);
+}
+
+/** Format Document / Selection (Shift+Alt+F): T-SQL, keyword + posisi koma dari setting moonageDaydream.format.* */
+function formatEdits(doc: vscode.TextDocument, range: vscode.Range, o: vscode.FormattingOptions): vscode.TextEdit[] {
+  const cfg = vscode.workspace.getConfiguration('moonageDaydream.format', doc);
+  const r = doc.validateRange(range);
+  const text = doc.getText(r);
+  if (!text.trim()) return [];
+  try {
+    const out = formatSql(text, {
+      keywordCase: cfg.get('keywordCase', 'upper'), leadingComma: cfg.get('leadingComma', true), semicolonNewline: cfg.get('semicolonNewline', true), tabWidth: o.tabSize, useTabs: !o.insertSpaces,
+    });
+    // seluruh dokumen: akhiri dengan satu newline; selection: pertahankan newline akhir bila ada
+    const tail = r.end.line === doc.lineCount - 1 || /\r?\n$/.test(text) ? doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n' : '';
+    const eolOut = doc.eol === vscode.EndOfLine.CRLF ? out.replace(/\n/g, '\r\n') : out;
+    return [vscode.TextEdit.replace(r, eolOut + tail)];
+  } catch (e) {
+    log.error(`formatEdits - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showWarningMessage(`SQL format failed: ${errMsg(e)}`);
+    return [];
+  }
 }
 
 const connOf = (n?: Node) => (n?.kind === 'conn' ? n.c : undefined);
@@ -295,10 +354,17 @@ async function openHistory(e: HistoryEntry): Promise<boolean> {
   return true;
 }
 
-async function runQuery() {
+/**
+ * Blok teks: jalankan yang diblok. Tanpa blok: hanya statement di kursor (`;` / `GO`).
+ * `{ all: true }` (Run Again di History): seluruh isi file. Argumen lain (mis. Uri dari tombol editor/title) diabaikan.
+ */
+async function runQuery(opts?: unknown) {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return;
-  const text = editor.selection.isEmpty ? editor.document.getText() : editor.document.getText(editor.selection);
+  const doc = editor.document;
+  const text = !editor.selection.isEmpty ? doc.getText(editor.selection)
+    : (opts as { all?: unknown } | undefined)?.all === true ? doc.getText()
+    : statementAt(doc.getText(), doc.offsetAt(editor.selection.active));
   if (!text.trim()) return;
 
   const uri = editor.document.uri;
@@ -335,15 +401,18 @@ async function runQuery() {
       async () => {
         const pw = await conns.password(c.name);
         const o = outcome;
+        const autoLimit = vscode.workspace.getConfiguration('moonageDaydream.query', doc).get('autoLimit', 100);
+        // satu SELECT tanpa TOP: ambil autoLimit baris pertama lalu hentikan di server
+        const limitFor = (stmts: string[]) => (autoLimit > 0 && autoLimitable(stmts) ? autoLimit : undefined);
         if (!('parts' in o)) {
-          outcome = { result: await drivers[c.type].run(c, pw, text, ac.signal) };
+          outcome = { result: await drivers[c.type].run(c, pw, text, ac.signal, limitFor(stmts)) };
           return;
         }
         const acs = (q.parts = o.parts.map(() => new AbortController()));
         ac.signal.addEventListener('abort', () => acs.forEach((a) => a.abort()));
         await Promise.all(o.parts.map(async (part, i) => {
           try {
-            part.o = { result: await drivers[c.type].run(c, pw, part.sql, acs[i].signal) };
+            part.o = { result: await drivers[c.type].run(c, pw, part.sql, acs[i].signal, limitFor([part.sql])) };
           } catch (e) {
             log.error(`runQuery part ${i + 1} - EXCEPTION CAUGHT | ${c.name}${acs[i].signal.aborted ? ' (cancelled by user)' : ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
             part.o = { error: acs[i].signal.aborted ? 'Query cancelled.' : errMsg(e) };

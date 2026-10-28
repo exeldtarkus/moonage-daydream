@@ -57,7 +57,7 @@ export const mssqlDriver: Driver = {
   label: 'SQL Server',
   defaultPort: 1433,
 
-  async run(conn, password, text, signal) {
+  async run(conn, password, text, signal, limit) {
     const p = await pool(conn, password);
     const out: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
     const start = Date.now();
@@ -72,14 +72,20 @@ export const mssqlDriver: Driver = {
       const r = await new Promise<sql.IResult<unknown>>((resolve, reject) => {
         let err: unknown;
         let cur: ResultSet | undefined;
+        let limited = false;
         req.on('recordset', (cols: { name: string }[]) => out.resultSets.push(cur = { columns: cols.map((c) => c.name), rows: [], total: 0 }));
         req.on('row', (row: unknown[]) => {
-          if (!cur) return;
+          if (!cur || limited) return;
           cur.total++;
           if (cur.rows.length < MAX_ROWS) cur.rows.push(row);
+          if (limit && cur.total >= limit) {
+            limited = true; // auto limit: cukup, hentikan query di server; error "Canceled" berikutnya bukan kegagalan
+            cur.limited = limit;
+            req.cancel();
+          }
         });
         req.on('error', (e: unknown) => (err ??= e)); // mode stream: error lewat event, yang pertama yang dilaporkan
-        req.query(batch, (_e, result) => (err ? reject(err) : resolve(result!)));
+        req.query(batch, (_e, result) => (err && !(limited && !signal?.aborted) ? reject(err) : resolve(result ?? ({ rowsAffected: [] } as unknown as sql.IResult<unknown>))));
       }).finally(() => signal?.removeEventListener('abort', cancel));
       out.rowsAffected.push(...r.rowsAffected);
     }

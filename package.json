@@ -150,6 +150,17 @@
         "title": "New SQL File",
         "category": "Moonage Daydream",
         "icon": "$(new-file)"
+      },
+      {
+        "command": "moonageDaydream.newQueryForDb",
+        "title": "New SQL File",
+        "category": "Moonage Daydream",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "moonageDaydream.formatSql",
+        "title": "Format SQL (Moonage)",
+        "category": "Moonage Daydream"
       }
     ],
     "keybindings": [
@@ -158,6 +169,18 @@
         "key": "ctrl+alt+enter",
         "mac": "cmd+alt+enter",
         "when": "editorTextFocus && editorLangId == sql"
+      },
+      {
+        "command": "moonageDaydream.formatSql",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f",
+        "when": "editorTextFocus && editorLangId == sql && !editorReadonly"
+      },
+      {
+        "command": "moonageDaydream.formatSql",
+        "key": "shift+alt+f",
+        "mac": "shift+alt+f",
+        "when": "editorTextFocus && editorLangId == sql && !editorReadonly && moonageDaydream.ownFormatter"
       }
     ],
     "menus": {
@@ -300,6 +323,16 @@
           "command": "moonageDaydream.newSqlFile",
           "when": "view == moonageDaydream.sqlFiles && viewItem == sqlFolder",
           "group": "1_new"
+        },
+        {
+          "command": "moonageDaydream.newQueryForDb",
+          "when": "view == moonageDaydream.explorer && viewItem == db",
+          "group": "1_query"
+        },
+        {
+          "command": "moonageDaydream.newQueryForDb",
+          "when": "view == moonageDaydream.explorer && viewItem == db",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -326,6 +359,17 @@
         {
           "command": "moonageDaydream.selectTop",
           "when": "false"
+        },
+        {
+          "command": "moonageDaydream.newQueryForDb",
+          "when": "false"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "moonageDaydream.formatSql",
+          "when": "editorLangId == sql && !editorReadonly",
+          "group": "1_modification@1"
         }
       ]
     },
@@ -389,7 +433,43 @@
         "view": "moonageDaydream.sqlFiles",
         "contents": "No .sql files in this workspace.\n[New SQL File](command:moonageDaydream.newSqlFile)"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Moonage Daydream",
+      "properties": {
+        "moonageDaydream.format.keywordCase": {
+          "type": "string",
+          "enum": [
+            "upper",
+            "lower",
+            "preserve"
+          ],
+          "default": "upper",
+          "description": "Keyword case when formatting SQL (Format Document / Shift+Alt+F)."
+        },
+        "moonageDaydream.format.leadingComma": {
+          "type": "boolean",
+          "default": true,
+          "description": "Put commas at the start of the line (`    , column`) when formatting SQL."
+        },
+        "moonageDaydream.query.autoLimit": {
+          "type": "number",
+          "default": 100,
+          "minimum": 0,
+          "description": "Auto limit for a single SELECT without TOP / OFFSET FETCH / INTO: only the first N rows are fetched and the query is stopped on the server. 0 = off."
+        },
+        "moonageDaydream.format.semicolonNewline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Put the semicolon that ends a statement on its own line when formatting SQL."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[sql]": {
+        "editor.defaultFormatter": "exeltarkus.moonage-daydream"
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -402,7 +482,8 @@
     "install:local": "node scripts/install-local.js"
   },
   "dependencies": {
-    "mssql": "^12.7.13"
+    "mssql": "^12.7.13",
+    "sql-formatter": "^15.9.0"
   },
   "devDependencies": {
     "@types/mssql": "^12.3.0",

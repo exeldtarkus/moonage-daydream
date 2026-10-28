@@ -23,8 +23,10 @@ export interface ResultSet {
   columns: string[];
   /** maksimal MAX_ROWS baris pertama */
   rows: unknown[][];
-  /** jumlah baris sebenarnya */
+  /** jumlah baris sebenarnya (berhenti di limit bila auto limit berlaku) */
   total: number;
+  /** auto limit: query dihentikan di server setelah sekian baris */
+  limited?: number;
 }
 
 export interface QueryResult {
@@ -51,7 +53,8 @@ export interface Driver {
   label: string;
   defaultPort: number;
   /** `signal` abort = cancel query di server */
-  run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal): Promise<QueryResult>;
+  /** limit: ambil sekian baris pertama lalu hentikan query di server (hanya untuk satu SELECT, lihat autoLimitable) */
+  run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal, limit?: number): Promise<QueryResult>;
   /** explorer (read-only, query ke katalog) */
   databases(conn: ConnectionInfo, password: string): Promise<string[]>;
   objects(conn: ConnectionInfo, password: string, db: string, kind: ObjectKind): Promise<DbObject[]>;

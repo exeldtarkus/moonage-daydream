@@ -2,7 +2,7 @@
 // run: npm run test:real   (hanya SELECT; laporan di ~/.claude/bg-logs/moonage-real-test.log)
 import * as vscode from 'vscode';
 import * as assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Location } from '../../results';
@@ -23,6 +23,30 @@ const L = (() => {
     throw new Error(`real test butuh ${LOCAL_CONFIG}: ${e instanceof Error ? e.message : e}`);
   }
 })();
+const FIXTURES = join(__dirname, '..', '..', '..', 'test-extention', 'local', 'real-test');
+
+/** file .sql tetap di test-extention/local/real-test (dipakai ulang tiap run, isi ditulis ulang hanya bila berubah) supaya test tidak membuat tab Untitled baru */
+async function fixture(name: string, content: string): Promise<vscode.TextDocument> {
+  const file = join(FIXTURES, `${name}.sql`);
+  mkdirSync(FIXTURES, { recursive: true });
+  if (!existsSync(file) || readFileSync(file, 'utf8') !== content) writeFileSync(file, content);
+  return vscode.workspace.openTextDocument(vscode.Uri.file(file));
+}
+
+const untitledTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs)
+  .flatMap((t) => (t.input instanceof vscode.TabInputText && t.input.uri.scheme === 'untitled' ? [t.input.uri] : []));
+/** tab Untitled milik user sebelum test mulai: tidak pernah disentuh */
+let userUntitled = new Set<string>();
+
+/** tutup tab Untitled yang dibuka test (Select Top / Run Again) tanpa dialog Save; Untitled milik user dibiarkan */
+async function closeUntitled(): Promise<void> {
+  for (const uri of untitledTabs()) {
+    if (userUntitled.has(uri.toString())) continue;
+    await vscode.window.showTextDocument(uri, { preview: false });
+    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+  }
+}
+
 const QUERY = 'SELECT TOP 5 name, create_date FROM sys.databases;\nSELECT @@VERSION AS version;';
 
 const say = (s: string) => appendFileSync(REPORT, `${new Date().toISOString()} ${s}\n`);
@@ -75,19 +99,45 @@ async function sqlFilesTest(m: typeof import('../../extension')) {
     assert.ok(String(item.description).startsWith('__moonage_test__/sub'), `flat description ${item.description}`);
     say(`PASS sql files: tree __moonage_test__/sub -> q1.sql, q2.sql; flat ${flat.length} file(s), "${item.description}"`);
   } finally {
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    // tutup hanya tab file test ini (closeAllEditors memunculkan dialog Save untuk tab Untitled user)
+    await vscode.window.tabGroups.close(vscode.window.tabGroups.all.flatMap((g) => g.tabs)
+      .filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.path.includes('/__moonage_test__/')));
     await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false });
     await m.sqlFiles.setFlat(flat0);
     m.sqlFiles.refresh();
   }
 }
 
+/** tanpa blok: hanya statement di kursor; diblok: yang diblok (2 SELECT -> paralel) */
+async function cursorTest(m: typeof import('../../extension')) {
+  const sql = '-- 2 result set\nSELECT TOP 20\n    name\n    , type_desc\nFROM sys.objects;\n\nSELECT\n    COUNT(*) AS total_objects\nFROM sys.objects;\n';
+  const doc = await fixture('cursor', sql);
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
+  const editor = await vscode.window.showTextDocument(doc);
+  const at = (needle: string) => doc.positionAt(sql.indexOf(needle));
+  const runAndWait = async () => {
+    await vscode.commands.executeCommand('moonageDaydream.runQuery');
+    return resultHtml(m);
+  };
+  editor.selection = new vscode.Selection(at('COUNT'), at('COUNT'));
+  let html = await runAndWait();
+  assert.ok(html.includes('total_objects') && !html.includes('type_desc') && !html.includes('Query 1'), 'cursor on 2nd: only 2nd runs');
+  editor.selection = new vscode.Selection(at('name'), at('name'));
+  html = await runAndWait();
+  assert.ok(html.includes('type_desc') && !html.includes('total_objects'), 'cursor on 1st: only 1st runs');
+  editor.selection = new vscode.Selection(at('SELECT TOP'), doc.positionAt(sql.length));
+  html = await runAndWait();
+  assert.ok(html.includes('Query 1') && html.includes('Query 2') && html.includes('total_objects') && html.includes('type_desc'), 'selection of both: parallel');
+  say('PASS cursor: only statement under cursor runs; selecting both runs both in parallel');
+  await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+}
+
 /** 2 SELECT paralel: yang cepat tampil duluan, yang lambat tetap loading lalu di-cancel sendiri (hanya SELECT) */
 async function parallelTest(m: typeof import('../../extension')) {
-  const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: `SELECT 1 AS fast;\nSELECT * FROM ${L.bigDb}.dbo.${L.bigTable};` });
+  const doc = await fixture('parallel', `SELECT 1 AS fast;\nSELECT TOP 5000000 * FROM ${L.bigDb}.dbo.${L.bigTable};`);
   await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
   await vscode.window.showTextDocument(doc);
-  const run = vscode.commands.executeCommand('moonageDaydream.runQuery');
+  const run = vscode.commands.executeCommand('moonageDaydream.runQuery', { all: true });
   let html = '';
   for (let i = 0; i < 40 && !/Query 1 <span>[^<]*· \d+ ms/.test(html); i++) {
     await sleep(250);
@@ -107,11 +157,49 @@ async function parallelTest(m: typeof import('../../extension')) {
   await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
 }
 
+/** auto limit: SELECT * tabel besar tanpa TOP -> 100 baris, query dihentikan di server (hanya SELECT) */
+async function autoLimitTest(m: typeof import('../../extension')) {
+  const doc = await fixture('auto-limit', `SELECT  *\nFROM    dbo.${L.bigTable}\n`);
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: L.bigDb });
+  await vscode.window.showTextDocument(doc);
+  const t = Date.now();
+  await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  const html = resultHtml(m);
+  assert.ok(html.includes('100 row(s) · auto limit 100') && !html.includes('class="err"'), `auto limit: ${html.match(/<h3>[^\n]*/)?.[0] ?? html.match(/class="err">([^<]*)/)?.[1]}`);
+  assert.equal((html.match(/<tr><td class="n">/g) ?? []).length, 100, '100 rows rendered');
+  say(`PASS auto limit: SELECT * without TOP -> 100 rows in ${Date.now() - t} ms`);
+}
+
+/** Format Document: keyword huruf besar + koma di depan (tanpa koneksi DB) */
+async function formatTest(m: typeof import('../../extension')) {
+  const doc = await fixture('format', "select name, object_id from sys.objects where name like 'a,%'\n");
+  const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>('vscode.executeFormatDocumentProvider', doc.uri, { tabSize: 4, insertSpaces: true });
+  // VS Code mengembalikan edit minimal (beberapa potongan): terapkan semua di memori, dari belakang ke depan
+  let out = doc.getText();
+  for (const e of [...(edits ?? [])].sort((a, b) => doc.offsetAt(b.range.start) - doc.offsetAt(a.range.start))) {
+    out = out.slice(0, doc.offsetAt(e.range.start)) + e.newText + out.slice(doc.offsetAt(e.range.end));
+  }
+  assert.equal(out.replace(/\r\n/g, '\n'), "SELECT\n    name\n    , object_id\nFROM\n    sys.objects\nWHERE\n    name LIKE 'a,%'\n", `formatted: ${JSON.stringify(out)}`);
+  say('PASS format document (uppercase keywords, leading commas)');
+
+  // command Ctrl+Alt+F (tidak tergantung default formatter di settings user); isi file dikembalikan sesudahnya
+  const editor = await vscode.window.showTextDocument(doc);
+  await vscode.commands.executeCommand('moonageDaydream.formatSql');
+  assert.equal(doc.getText().replace(/\r\n/g, '\n'), out.replace(/\r\n/g, '\n'), 'Ctrl+Alt+F formats the document');
+  await vscode.commands.executeCommand('workbench.action.files.revert');
+  assert.ok(!editor.document.isDirty);
+  say('PASS format command Ctrl+Alt+F');
+  const fmtId = vscode.workspace.getConfiguration('editor', { languageId: 'sql' }).get<string>('defaultFormatter');
+  const expectOwn = !fmtId || fmtId === 'exeltarkus.moonage-daydream' || !vscode.extensions.getExtension(fmtId);
+  assert.equal(m.ownFormatter, expectOwn, `Shift+Alt+F owner (defaultFormatter=${fmtId})`);
+  say(`PASS Shift+Alt+F -> ${m.ownFormatter ? 'Moonage' : fmtId} (defaultFormatter=${fmtId ?? '-'})`);
+}
+
 /** autocomplete: database, schema, tabel lintas database (hanya baca metadata) */
 async function completionTest(m: typeof import('../../extension')) {
   const prefix = L.table.slice(0, 2);
   const lines = ['SELECT * FROM ', `SELECT * FROM ${L.db}.`, `SELECT * FROM ${L.db}.dbo.${prefix}`, `SELECT * FROM ${L.db}..${prefix}`];
-  const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: lines.join('\n') });
+  const doc = await fixture('completion-tables', lines.join('\n'));
   await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
   m.completion.clear();
   const labels = async (line: number) => {
@@ -126,6 +214,22 @@ async function completionTest(m: typeof import('../../extension')) {
   assert.ok(tables.includes(L.table), `tables after DB.dbo.: ${tables.length}`);
   assert.ok((await labels(3)).includes(L.table), 'DB..table defaults to dbo');
   say(`PASS completion: ${dbs.length} items at FROM, DB. -> ${schemas.length} schema(s), DB.dbo. -> ${tables.length} table/view(s)`);
+
+  // kolom: WHERE tanpa alias (database file = L.db, tabel tanpa schema) dan `alias.` lintas database
+  const { drivers } = require('../../db') as typeof import('../../db');
+  const c = { ...m.conns.get(CONN)!, database: L.db };
+  const cols = (await drivers.mssql.columns(c, await m.conns.password(CONN), L.db, { schema: 'dbo', name: L.table })).map((x) => x.name);
+  const colDoc = await fixture('completion-columns', `SELECT  *\nFROM    ${L.table}\nwhere ;\nSELECT * FROM ${L.db}..${L.table} t WHERE t.`);
+  await m.conns.bind(colDoc.uri.toString(), { conn: CONN, db: L.db });
+  const at = async (line: number, ch: number) => {
+    const list = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', colDoc.uri, new vscode.Position(line, ch));
+    return list.items.filter((i) => i.kind === vscode.CompletionItemKind.Field).map((i) => (typeof i.label === 'string' ? i.label : i.label.label));
+  };
+  const afterWhere = await at(2, 6);
+  assert.ok(cols.length && cols.every((x) => afterWhere.includes(x)), `columns after WHERE: ${afterWhere.length}/${cols.length}`);
+  const afterAlias = await at(3, colDoc.lineAt(3).text.length);
+  assert.ok(cols.every((x) => afterAlias.includes(x)), `columns after alias: ${afterAlias.length}/${cols.length}`);
+  say(`PASS completion columns: WHERE -> ${afterWhere.length} column(s), alias t. -> ${afterAlias.length} column(s)`);
 }
 
 async function explorerTest(m: typeof import('../../extension')) {
@@ -147,6 +251,14 @@ async function explorerTest(m: typeof import('../../extension')) {
     const html = (m.results.location === 'panel' ? m.results.view?.webview.html : m.results.panel?.webview.html) ?? '';
     assert.ok(!html.includes('class="err"') && html.includes('Result 1'), `select top: ${html.match(/class="err">([^<]*)/)?.[1]}`);
     say(`PASS explorer + select top 100 (${vscode.window.activeTextEditor?.document.getText()})`);
+    await vscode.commands.executeCommand('moonageDaydream.newQueryForDb', { kind: 'db', c: t.c, db: t.db });
+    const nq = vscode.window.activeTextEditor!.document;
+    assert.ok(nq.isUntitled && nq.languageId === 'sql' && !nq.getText(), 'new empty sql tab');
+    assert.equal(await firstLens(nq.uri), '$(play) Execute');
+    const nqLens = (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', nq.uri)).map((l) => l.command?.title);
+    assert.ok(nqLens.includes(`$(database) ${t.db}`) && nqLens.includes(`$(server) ${t.c.name}`), `new sql lens ${nqLens}`);
+    say(`PASS new sql file from database ${t.db} (codelens: ${nqLens.join(' | ')})`);
+    await closeUntitled(); // Select Top membuka tab Untitled baru (fitur), ditutup tanpa dialog Save
     return;
   }
   throw new Error('no user table found in the first 10 databases');
@@ -161,7 +273,7 @@ async function fileBindingTest(m: typeof import('../../extension')) {
   const dbs = (await m.explorer.getChildren(conn)).flatMap((n) => (n.kind === 'db' ? [n.db] : []));
   const pair = ['master', dbs.find((d) => !['master', 'model', 'msdb', 'tempdb'].includes(d)) ?? 'tempdb'];
   for (const db of pair) {
-    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: 'SELECT DB_NAME() AS current_db;' });
+    const doc = await fixture(`file-binding-${db}`, 'SELECT DB_NAME() AS current_db;');
     await m.conns.bind(doc.uri.toString(), { conn: CONN, db });
     await vscode.window.showTextDocument(doc);
     const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
@@ -180,16 +292,16 @@ const firstLens = async (uri: vscode.Uri) =>
 
 /** cancel: WAITFOR (read-only) dihentikan di server, batch berikutnya tidak jalan, run ulang membatalkan run lama */
 async function cancelTest(m: typeof import('../../extension')) {
-  const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: "WAITFOR DELAY '00:00:20';\nSELECT 'should-not-run' AS x;" });
+  const doc = await fixture('cancel-waitfor', "WAITFOR DELAY '00:00:20';\nSELECT 'should-not-run' AS x;");
   await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
   await vscode.window.showTextDocument(doc);
 
-  const first = vscode.commands.executeCommand('moonageDaydream.runQuery');
+  const first = vscode.commands.executeCommand('moonageDaydream.runQuery', { all: true });
   await sleep(1500);
   assert.equal(await firstLens(doc.uri), '$(debug-stop) Cancel', 'lens shows Cancel while running');
   assert.ok(resultHtml(m).includes('class="spin"') && resultHtml(m).includes('href="command:moonageDaydream.cancelQuery'), 'results show spinner + Cancel while running');
   say('PASS results spinner while running');
-  const second = vscode.commands.executeCommand('moonageDaydream.runQuery'); // run ulang: run pertama harus dibatalkan
+  const second = vscode.commands.executeCommand('moonageDaydream.runQuery', { all: true }); // run ulang: run pertama harus dibatalkan
   let t = Date.now();
   await first;
   assert.ok(Date.now() - t < 5000, `re-run cancels the old run quickly (${Date.now() - t} ms)`);
@@ -234,7 +346,7 @@ async function bigCancelTest(m: typeof import('../../extension')) {
     `SELECT SUM(p.rows) AS row_count FROM sys.partitions p WHERE p.object_id = OBJECT_ID('dbo.${L.bigTable}') AND p.index_id IN (0, 1)`);
   say(`${L.bigTable} rows (metadata)=${meta.resultSets[0].rows[0][0]}`);
 
-  const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: `select * from ${L.bigTable};` });
+  const doc = await fixture('big-cancel', `select top 5000000 * from ${L.bigTable};`);
   await m.conns.bind(doc.uri.toString(), { conn: CONN, db: L.bigDb });
   await vscode.window.showTextDocument(doc);
   const mb = () => Math.round(process.memoryUsage().rss / 1e6);
@@ -274,6 +386,7 @@ async function historyAndFormTest(m: typeof import('../../extension'), since: nu
   assert.equal(vscode.window.activeTextEditor?.document.getText(), ok.sql, 'history opened in editor');
   assert.ok(resultHtml(m).includes(`<td>${ok.db}</td>`), 'run again uses the same database');
   say(`PASS run again from history (${ok.conn} / ${ok.db})`);
+  await closeUntitled(); // Run Again membuka SQL history di tab Untitled baru (fitur)
 
   const { testConnection } = require('../../connectionForm') as typeof import('../../connectionForm');
   const c = m.conns.get(CONN)!;
@@ -288,6 +401,7 @@ async function historyAndFormTest(m: typeof import('../../extension'), since: nu
 }
 
 export async function run(only?: string): Promise<void> {
+  userUntitled = new Set(untitledTabs().map((u) => u.toString()));
   if (only === 'big') {
     mkdirSync(OUT, { recursive: true });
     writeFileSync(REPORT, '');
@@ -320,13 +434,13 @@ export async function run(only?: string): Promise<void> {
     assert.ok(names.includes(CONN), `connection "${CONN}" not found`);
     await m.conns.setActive(CONN);
 
-    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: QUERY });
+    const doc = await fixture('locations', QUERY);
     const editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
 
     for (const loc of ['panel', 'right', 'left'] as Location[]) {
       try {
         await m.results.setLocation(loc);
-        await vscode.commands.executeCommand('moonageDaydream.runQuery');
+        await vscode.commands.executeCommand('moonageDaydream.runQuery', { all: true });
         await sleep(1500);
         const html = (loc === 'panel' ? m.results.view?.webview.html : m.results.panel?.webview.html) ?? '';
         assert.ok(!html.includes('class="err"'), `query error: ${html.match(/class="err">([^<]*)/)?.[1]}`);
@@ -373,6 +487,24 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL explorer: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await autoLimitTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL auto limit: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await formatTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL format: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await cursorTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL cursor: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await parallelTest(m);

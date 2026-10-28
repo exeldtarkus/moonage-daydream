@@ -38,7 +38,7 @@ function resultHtml(r: QueryResult): string {
   const sets = r.resultSets.map((s, i) => {
     const rows = s.rows
       .map((row, n) => `<tr><td class="n">${n + 1}</td>${row.map((v) => `<td>${cell(v)}</td>`).join('')}</tr>`).join('');
-    const more = s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
+    const more = s.limited ? ` · auto limit ${s.limited}, add TOP n for more` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
     return `<h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
 <div class="grid"><table><thead><tr><th class="n">#</th>${s.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join('');

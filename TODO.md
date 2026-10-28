@@ -23,7 +23,11 @@
 ## Tahap 3 — nanti
 - [ ] CodeLens `Execute` per statement (sekarang satu di baris pertama: selection / seluruh file), Explain / Analyze
 - [x] Autocomplete database / schema / tabel / view, termasuk lintas database (`DB.schema.table`, `DB..table`)
-- [ ] Autocomplete kolom (setelah alias `a.`) + keyword SQL
+- [x] Autocomplete kolom dari tabel di FROM / JOIN (WHERE, SELECT, ON, `alias.`)
+- [ ] Autocomplete keyword SQL, FROM dengan koma (`FROM a, b`)
+- [x] Formatter SQL (Format Document / Selection, Shift+Alt+F): keyword huruf besar, koma di depan (setting `moonageDaydream.format.*`)
+- [x] Klik kanan database di Connections: New SQL File (tab terikat ke koneksi + database)
+- [x] Auto limit 100 (setting `moonageDaydream.query.autoLimit`): satu SELECT tanpa TOP / OFFSET FETCH / INTO diambil 100 baris lalu dihentikan di server
 - [ ] Edit data langsung di grid
 - [ ] Riwayat query
 - [ ] Paging / virtual scroll di grid (sekarang 1000 baris pertama per result set; sisanya hanya dihitung)
