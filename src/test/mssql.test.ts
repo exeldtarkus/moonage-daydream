@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { fmtType, q, splitBatches } from '../mssql';
+import { fmtType, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
 import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere } from '../sqlContext';
@@ -161,4 +161,16 @@ test('render: WHERE toolbar for single SELECT source, nonce script', () => {
   const nonce = /script-src 'nonce-([A-Za-z0-9]+)'/.exec(html)?.[1];
   assert.ok(nonce && html.includes(`<script nonce="${nonce}">`), 'CSP nonce matches script');
   assert.ok(!render('csp', 't', { result: r }).includes('class="where"'), 'no source: no WHERE bar');
+});
+
+test('connect retry: one retry on timeout / instance lookup, not on login failure', async () => {
+  assert.ok(retryableConnectError({ code: 'ETIMEOUT', message: 'Failed to connect to h\\i in 15000ms' }));
+  assert.ok(retryableConnectError({ code: 'EINSTLOOKUP', message: 'Port for UAT not found in h' }));
+  assert.ok(!retryableConnectError({ code: 'ELOGIN', message: "Login failed for user 'x'." }));
+  let n = 0;
+  assert.equal(await retryOnce(async () => (++n === 1 ? Promise.reject({ code: 'ETIMEOUT' }) : 'ok'), retryableConnectError), 'ok');
+  assert.equal(n, 2);
+  n = 0;
+  await assert.rejects(retryOnce(async () => { n++; throw { code: 'ELOGIN' }; }, retryableConnectError));
+  assert.equal(n, 1, 'login failure is not retried (no account lockout)');
 });

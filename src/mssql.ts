@@ -6,18 +6,34 @@ import type { ConnectionInfo, Driver, ObjectKind, QueryResult, ResultSet } from 
 const pools = new Map<string, Promise<sql.ConnectionPool>>();
 const poolKey = (conn: ConnectionInfo) => `${conn.name}\n${conn.database}`;
 
+/** gagal connect yang layak dicoba ulang: timeout / pencarian port named instance (SQL Server Browser, UDP 1434) */
+export const retryableConnectError = (e: unknown) => {
+  const x = e as { code?: string; message?: string };
+  return x?.code === 'ETIMEOUT' || x?.code === 'EINSTLOOKUP' || /Failed to connect .* in \d+ms|Port for .* not found/i.test(x?.message ?? '');
+};
+
+/** satu kali coba ulang bila error-nya retryable (UDP 1434 kadang hilang -> timeout acak saat membuka pool baru) */
+export async function retryOnce<T>(f: () => Promise<T>, retryable: (e: unknown) => boolean): Promise<T> {
+  try {
+    return await f();
+  } catch (e) {
+    if (!retryable(e)) throw e;
+    return f();
+  }
+}
+
 function pool(conn: ConnectionInfo, password: string): Promise<sql.ConnectionPool> {
   const key = poolKey(conn);
   let p = pools.get(key);
   if (!p) {
-    p = new sql.ConnectionPool({
+    p = retryOnce(() => new sql.ConnectionPool({
       server: conn.host,
       port: conn.instance ? undefined : conn.port, // tedious: port dan instanceName tidak boleh bersamaan
       user: conn.user,
       password,
       database: conn.database || undefined,
       options: { encrypt: true, trustServerCertificate: conn.trustServerCertificate, instanceName: conn.instance || undefined },
-    }).connect();
+    }).connect(), retryableConnectError);
     pools.set(key, p);
     p.catch(() => pools.delete(key)); // gagal connect: coba ulang di run berikutnya (error dilaporkan oleh pemanggil)
   }
