@@ -5,7 +5,7 @@ import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, address, drivers } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
-import { ExportFormat, FORMATS, openSink } from './exporter';
+import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, newSqlFile } from './sqlFiles';
 import { SqlCompletion } from './completion';
 import { formatSql } from './sqlFormat';
@@ -47,7 +47,9 @@ export function activate(ctx: vscode.ExtensionContext) {
   updateStatus();
   status.show();
   results = new Results(ctx);
-  results.onMessage = (m) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part) : m.type === 'export' ? exportResult(m) : undefined);
+  results.onMessage = (m) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part)
+    : m.type === 'export' ? exportResult(m)
+    : m.type === 'copy' ? exportResult(m, 'clipboard') : undefined);
   runningView = new RunningView(running);
   history = new History(ctx.globalState);
 
@@ -460,9 +462,10 @@ export async function applyWhere(where: string, part?: number) {
 /**
  * Export dari panel hasil. scope sel = baris terpilih (data yang sudah dimuat); all = semua data:
  * statement asal (+ filter WHERE aktif) dijalankan ulang tanpa limit dan di-stream ke file; tanpa statement asal = baris yang dimuat.
- * target diisi test (tanpa dialog Save). Mengembalikan jumlah baris yang ditulis.
+ * target: 'clipboard' = Copy (format teks, All Data dibatasi CLIPBOARD_MAX_ROWS); Uri diisi test (tanpa dialog Save).
+ * Mengembalikan jumlah baris yang ditulis.
  */
-export async function exportResult(m: ResultMessage, target?: vscode.Uri): Promise<number | undefined> {
+export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clipboard'): Promise<number | undefined> {
   const o = results.current?.outcome;
   if (!o || m.set === undefined) return;
   const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
@@ -471,22 +474,27 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri): Promi
   const rs = single.result.resultSets[m.set];
   if (!rs) return;
   const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
+  const toClipboard = target === 'clipboard';
   const format = (m.format && m.format in FORMATS ? m.format : 'csv') as ExportFormat;
+  if (toClipboard && format === 'xlsx') return void vscode.window.showWarningMessage('Excel cannot be copied to the clipboard; use Save');
   const cols = m.cols?.length ? m.cols : rs.columns.map((_, i) => i);
   const pick = (row: unknown[]) => cols.map((i) => row[i]);
   const fromServer = m.scope !== 'sel' && !!src && m.set === 0 && (rs.total > rs.rows.length || !!rs.limited);
   const base = src ? vscode.Uri.parse(src.uri) : undefined;
   const dir = (base && vscode.workspace.getWorkspaceFolder(base)?.uri) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
-  const uri = target ?? await vscode.window.showSaveDialog({
+  const uri = toClipboard ? undefined : target ?? await vscode.window.showSaveDialog({
     defaultUri: dir && vscode.Uri.joinPath(dir, `result.${FORMATS[format].ext}`),
     filters: { [FORMATS[format].label]: [FORMATS[format].ext] },
     title: `Export ${m.scope === 'sel' ? `${m.rows?.length ?? 0} selected row(s)` : 'all data'} as ${FORMATS[format].label}`,
   });
-  if (!uri) return;
+  if (!uri && !toClipboard) return;
+  const quiet = target !== undefined && !toClipboard; // test: tanpa dialog / notifikasi
   return vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Exporting ${FORMATS[format].label}…`, cancellable: true },
+    { location: vscode.ProgressLocation.Notification, title: `${toClipboard ? 'Copying' : 'Exporting'} ${FORMATS[format].label}…`, cancellable: true },
     async (progress, token) => {
-      const sink = await openSink(format, uri.fsPath, cols.map((i) => rs.columns[i]));
+      const names = cols.map((i) => rs.columns[i]);
+      const mem = toClipboard ? await memorySink(format as Exclude<ExportFormat, 'xlsx'>, names, m.header !== false) : undefined;
+      const sink: Sink = mem ?? await openSink(format, uri!.fsPath, names);
       let n = 0;
       try {
         if (m.scope === 'sel') {
@@ -501,6 +509,7 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri): Promi
             columns: () => undefined,
             row: (v) => {
               if (++n % 10000 === 0) progress.report({ message: `${n.toLocaleString()} rows` });
+              if (toClipboard && n > CLIPBOARD_MAX_ROWS) throw new Error(`More than ${CLIPBOARD_MAX_ROWS.toLocaleString()} rows: too many for the clipboard, use Save`);
               return sink.row(pick(v));
             },
           });
@@ -510,17 +519,23 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri): Promi
         await sink.end();
       } catch (e) {
         await sink.abort();
-        log.error(`exportResult - EXCEPTION CAUGHT | ${token.isCancellationRequested ? '(cancelled by user) ' : ''}${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        if (!token.isCancellationRequested && !target) vscode.window.showErrorMessage(`Export failed: ${errMsg(e)}`);
-        if (target) throw e;
+        log.error(`exportResult - EXCEPTION CAUGHT | ${toClipboard ? '(clipboard) ' : ''}${token.isCancellationRequested ? '(cancelled by user) ' : ''}${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        if (!token.isCancellationRequested && !quiet) vscode.window.showErrorMessage(`${toClipboard ? 'Copy' : 'Export'} failed: ${errMsg(e)}`);
+        if (quiet) throw e;
         return undefined;
       }
       const partial = m.scope !== 'sel' && !fromServer && rs.total > rs.rows.length;
-      log.info(`export ${format} ${n} rows -> ${uri.fsPath}${partial ? ' (loaded rows only)' : ''}`);
-      if (!target) {
+      if (mem) {
+        await vscode.env.clipboard.writeText(mem.text());
+        log.info(`copy ${format} ${n} rows to clipboard${partial ? ' (loaded rows only)' : ''}`);
+        vscode.window.setStatusBarMessage(`$(copy) Copied ${n.toLocaleString()} row(s) as ${FORMATS[format].label}${partial ? ' (loaded rows only)' : ''}`, 4000);
+        return n;
+      }
+      log.info(`export ${format} ${n} rows -> ${uri!.fsPath}${partial ? ' (loaded rows only)' : ''}`);
+      if (!quiet) {
         void vscode.window.showInformationMessage(
-          `Exported ${n.toLocaleString()} row(s) to ${uri.fsPath}${partial ? ` (loaded rows only: ${rs.total} rows in result)` : ''}`, 'Open',
-        ).then((a) => a && vscode.commands.executeCommand(format === 'xlsx' ? 'revealFileInOS' : 'vscode.open', uri));
+          `Exported ${n.toLocaleString()} row(s) to ${uri!.fsPath}${partial ? ` (loaded rows only: ${rs.total} rows in result)` : ''}`, 'Open',
+        ).then((a) => a && vscode.commands.executeCommand(format === 'xlsx' ? 'revealFileInOS' : 'vscode.open', uri!));
       }
       return n;
     },

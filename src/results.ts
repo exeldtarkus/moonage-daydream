@@ -17,6 +17,8 @@ export interface ResultMessage {
   rows?: number[];
   cols?: number[];
   format?: string;
+  /** copy: false = tanpa baris header (Ctrl+C di grid) */
+  header?: boolean;
 }
 export const VIEW_ID = 'moonageDaydream.results';
 const LOCATION_KEY = 'resultsLocation';

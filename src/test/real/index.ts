@@ -260,6 +260,22 @@ async function exportTest(m: typeof import('../../extension')) {
     const lines = readFileSync(file('where.csv').fsPath, 'utf8').trim().split('\r\n').length - 1;
     assert.ok(filtered === want && lines === want, `WHERE kept: ${filtered} / ${lines} = ${want}`);
     say(`PASS export: all data ${all} rows (grid 100), selection 2 rows markdown, xlsx ${xl} rows, WHERE csv ${filtered} rows`);
+
+    // copy ke clipboard (isi clipboard user dikembalikan sesudahnya)
+    const clip0 = await vscode.env.clipboard.readText();
+    try {
+      await m.applyWhere('');
+      const copied = await m.exportResult({ type: 'copy', set: 0, scope: 'sel', rows: [0, 1], cols: [0, 1], format: 'tsv', header: false }, 'clipboard');
+      const tsv = (await vscode.env.clipboard.readText()).trimEnd().split('\r\n');
+      assert.ok(copied === 2 && tsv.length === 2 && tsv[0].split('\t').length === 2, `Ctrl+C TSV: ${JSON.stringify(tsv[0])}`);
+      const allCopied = await m.exportResult({ type: 'copy', set: 0, scope: 'all', format: 'json' }, 'clipboard');
+      const clipJson = JSON.parse(await vscode.env.clipboard.readText());
+      assert.ok(allCopied === total && clipJson.length === total, `copy all data JSON ${clipJson.length} = ${total}`);
+      assert.equal(await m.exportResult({ type: 'copy', set: 0, scope: 'all', format: 'xlsx' }, 'clipboard'), undefined, 'xlsx cannot be copied');
+      say(`PASS copy: selection TSV 2 rows (no header), all data JSON ${allCopied} rows to clipboard`);
+    } finally {
+      await vscode.env.clipboard.writeText(clip0);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

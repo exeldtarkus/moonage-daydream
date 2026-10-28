@@ -2,15 +2,18 @@ import { createReadStream, createWriteStream, promises as fsp, WriteStream } fro
 import { once } from 'events';
 import { createDeflateRaw, deflateRawSync } from 'zlib';
 
-export type ExportFormat = 'xlsx' | 'csv' | 'json' | 'jsonPretty' | 'markdown' | 'html';
+export type ExportFormat = 'xlsx' | 'csv' | 'tsv' | 'json' | 'jsonPretty' | 'markdown' | 'html';
 export const FORMATS: Record<ExportFormat, { label: string; ext: string }> = {
   xlsx: { label: 'Excel (.xlsx)', ext: 'xlsx' },
   csv: { label: 'CSV', ext: 'csv' },
+  tsv: { label: 'TSV (tab separated)', ext: 'tsv' },
   json: { label: 'JSON', ext: 'json' },
   jsonPretty: { label: 'JSON (pretty)', ext: 'json' },
   markdown: { label: 'Markdown', ext: 'md' },
   html: { label: 'HTML', ext: 'html' },
 };
+/** batas baris Copy All Data ke clipboard (teks disimpan di memori) */
+export const CLIPBOARD_MAX_ROWS = 100_000;
 /** batas baris satu sheet Excel (tanpa header) */
 export const XLSX_MAX_ROWS = 1_048_575;
 
@@ -51,9 +54,16 @@ const csvCell = (v: ReturnType<typeof plain>) => {
   const s = String(v);
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
+/** TSV: tab / baris baru di dalam nilai diganti spasi supaya paste ke spreadsheet tetap satu sel */
+const tsvCell = (v: ReturnType<typeof plain>) => (v === null ? '' : String(v).replace(/[\t\r\n]+/g, ' '));
 const mdCell = (v: ReturnType<typeof plain>) => (v === null ? 'NULL' : String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>'));
 
-class Out {
+interface Writer {
+  write(s: string): Promise<void> | void;
+  close(): Promise<void>;
+}
+
+class Out implements Writer {
   constructor(readonly ws: WriteStream) {}
   /** tulis dengan backpressure: tunggu drain bila buffer penuh */
   write(s: string): Promise<void> | void {
@@ -69,16 +79,26 @@ export async function openSink(format: ExportFormat, file: string, columns: stri
   if (format === 'xlsx') return xlsxSink(file, columns);
   const out = new Out(createWriteStream(file));
   await once(out.ws, 'open');
-  const names = uniqueNames(columns);
-  let n = 0;
-  const abort = async () => {
+  return textSink(format, columns, out, async () => {
     out.ws.destroy();
     await fsp.rm(file, { force: true });
-  };
+  });
+}
+
+/** Copy ke clipboard: format teks yang sama, ditampung di memori; header false = hanya baris (Ctrl+C di grid) */
+export async function memorySink(format: Exclude<ExportFormat, 'xlsx'>, columns: string[], header = true): Promise<Sink & { text(): string }> {
+  const chunks: string[] = [];
+  const sink = await textSink(format, columns, { write: (s) => void chunks.push(s), close: async () => undefined }, async () => undefined, header);
+  return { ...sink, text: () => chunks.join('') };
+}
+
+async function textSink(format: Exclude<ExportFormat, 'xlsx'>, columns: string[], out: Writer, abort: () => Promise<void>, header = true): Promise<Sink> {
+  const names = uniqueNames(columns);
+  let n = 0;
   const obj = (values: unknown[]) => Object.fromEntries(names.map((k, i) => [k, plain(values[i])]));
   switch (format) {
     case 'csv':
-      await out.write(`﻿${columns.map((c) => csvCell(c)).join(',')}\r\n`); // BOM: Excel membaca UTF-8
+      await out.write(`${out instanceof Out ? '\uFEFF' : ''}${columns.map((c) => csvCell(c)).join(',')}\r\n`); // BOM (file saja): Excel membaca UTF-8
       return { row: (v) => out.write(`${v.map((x) => csvCell(plain(x))).join(',')}\r\n`), end: () => out.close(), abort };
     case 'json':
       await out.write('[');
@@ -94,6 +114,9 @@ export async function openSink(format: ExportFormat, file: string, columns: stri
         end: async () => { await out.write(n ? '\n]\n' : ']\n'); await out.close(); },
         abort,
       };
+    case 'tsv':
+      if (header) await out.write(`${columns.map((c) => tsvCell(c)).join('\t')}\r\n`);
+      return { row: (v) => out.write(`${v.map((x) => tsvCell(plain(x))).join('\t')}\r\n`), end: () => out.close(), abort };
     case 'markdown':
       await out.write(`| ${columns.map((c) => mdCell(c)).join(' | ')} |\n|${columns.map(() => ' --- ').join('|')}|\n`);
       return { row: (v) => out.write(`| ${v.map((x) => mdCell(plain(x))).join(' | ')} |\n`), end: () => out.close(), abort };

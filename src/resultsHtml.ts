@@ -169,6 +169,11 @@ export function render(cspSource: string, title: string, o: Outcome): string {
   .menu.export label { display: block; margin: 6px 0 4px; font-weight: 600; }
   .menu select { width: 100%; padding: 4px; font: inherit; color: var(--vscode-dropdown-foreground, inherit);
     background: var(--vscode-dropdown-background, var(--vscode-input-background)); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); }
+  .menu .acts { display: flex; gap: 8px; margin-top: 12px; } .menu .acts button { flex: 1; margin: 0; }
+  .menu button.second { text-align: center; padding: 6px; border-radius: 2px;
+    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  .menu button.second:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+  .menu button:disabled { opacity: .45; cursor: not-allowed; }
   .menu button.primary { margin-top: 12px; text-align: center; padding: 6px; border-radius: 2px;
     color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   .menu button.primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
@@ -234,6 +239,18 @@ const GRID_SCRIPT = `(() => {
   const saved = vscode.getState() || {};
   /** baris terpilih (index asli) dalam urutan tampil sekarang */
   const selected = (t) => { const s = st(t); return s.rows.filter((r) => !r.hidden && s.sel.has(s.rows.indexOf(r))).map((r) => s.rows.indexOf(r)); };
+  const visibleCols = (t) => [...t.tHead.rows[0].cells].slice(1).map((c, i) => (c.hidden ? -1 : i)).filter((i) => i >= 0);
+  /** export / copy ke extension: baris terpilih (scope sel) atau semua data, kolom yang tidak disembunyikan */
+  function send(t, type, format, scope, header) {
+    const part = t.closest('section')?.dataset.part;
+    vscode.postMessage({ type, format, scope, header, set: +t.dataset.set, part: part === undefined ? undefined : +part,
+      rows: scope === 'sel' ? selected(t) : undefined, cols: visibleCols(t) });
+  }
+  /** Copy tidak tersedia untuk Excel (file biner) */
+  function syncCopy() {
+    const c = menu.querySelector('[data-a=xcopy]');
+    if (c) c.disabled = document.getElementById('xf').value === 'xlsx';
+  }
   function paintSel(t) { const s = st(t); s.rows.forEach((r, i) => r.classList.toggle('sel', s.sel.has(i))); }
   const text = (td) => (td.querySelector('.null') ? null : td.textContent);
   const match = (v, f) => (f.toLowerCase() === 'null' ? v === null : v !== null && v.toLowerCase().includes(f.toLowerCase()));
@@ -302,9 +319,11 @@ const GRID_SCRIPT = `(() => {
       const n = selected(t).length;
       menu.table = t;
       open(b, '<label>Export</label><select id="xs"><option value="all">All Data</option><option value="sel"' + (n ? '' : ' disabled') + '>Current Selection (' + n + ' rows)</option></select>'
-        + '<label>Format</label><select id="xf">' + FORMAT_OPTIONS + '</select><button data-a="xsave" class="primary">Save</button>', () => {
+        + '<label>Format</label><select id="xf">' + FORMAT_OPTIONS + '</select>'
+        + '<div class="acts"><button data-a="xsave" class="primary">Save</button><button data-a="xcopy" class="second" title="Copy to clipboard">Copy</button></div>', () => {
         document.getElementById('xs').value = n ? 'sel' : 'all';
         if (saved.format) document.getElementById('xf').value = saved.format;
+        syncCopy();
       }, 'export');
       return;
     }
@@ -325,13 +344,11 @@ const GRID_SCRIPT = `(() => {
     if (menu.contains(b)) {
       const t = menu.table, c = menu.col, s = st(t);
       const a = b.dataset.a;
-      if (a === 'xsave') {
+      if (a === 'xsave' || a === 'xcopy') {
         const format = document.getElementById('xf').value, scope = document.getElementById('xs').value;
         saved.format = format;
         vscode.setState(saved);
-        const part = t.closest('section')?.dataset.part;
-        vscode.postMessage({ type: 'export', format, scope, set: +t.dataset.set, part: part === undefined ? undefined : +part,
-          rows: scope === 'sel' ? selected(t) : undefined, cols: [...t.tHead.rows[0].cells].slice(1).map((c, i) => (c.hidden ? -1 : i)).filter((i) => i >= 0) });
+        send(t, a === 'xsave' ? 'export' : 'copy', format, scope);
         menu.hidden = true;
         return;
       }
@@ -350,6 +367,7 @@ const GRID_SCRIPT = `(() => {
       form.requestSubmit();
     }
   });
+  document.addEventListener('change', (e) => { if (e.target.id === 'xf') syncCopy(); });
   document.addEventListener('input', (e) => {
     if (e.target.id !== 'f') return;
     const s = st(menu.table);
@@ -358,6 +376,13 @@ const GRID_SCRIPT = `(() => {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' || (e.key === 'Enter' && e.target.id === 'f')) menu.hidden = true;
+    // Ctrl/Cmd+C: baris terpilih sebagai TSV tanpa header (paste langsung ke spreadsheet); tidak saat mengetik di input
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !e.target.closest('input, select, textarea') && !String(getSelection())) {
+      const t = [...document.querySelectorAll('table.rs')].find((x) => selected(x).length);
+      if (!t) return;
+      e.preventDefault();
+      send(t, 'copy', 'tsv', 'sel', false);
+    }
   });
   document.addEventListener('submit', (e) => {
     e.preventDefault();

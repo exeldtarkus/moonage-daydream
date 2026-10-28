@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
-import { crc32, ExportFormat, openSink, plain, uniqueNames } from '../exporter';
+import { crc32, ExportFormat, memorySink, openSink, plain, uniqueNames } from '../exporter';
 
 const dir = join(__dirname, 'tmp-export');
 const cols = ['id', 'name', 'name', 'when', 'ok', 'bin'];
@@ -47,4 +47,19 @@ test('export formats', async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('memorySink: TSV without header (Ctrl+C), CSV without BOM, JSON', async () => {
+  const tsv = await memorySink('tsv', cols, false);
+  for (const r of rows) await tsv.row(r);
+  await tsv.end();
+  assert.equal(tsv.text(), '1\ta|b, "c" d\t\t2025-01-02T00:00:00.000Z\ttrue\t0x01FF\r\n2.5\t<x>&\ty\t\tfalse\t\r\n');
+  const csv = await memorySink('csv', ['a'], true);
+  await csv.row(['x']);
+  await csv.end();
+  assert.equal(csv.text(), 'a\r\nx\r\n', 'no BOM in clipboard text');
+  const json = await memorySink('json', ['a']);
+  await json.row([1]);
+  await json.end();
+  assert.deepEqual(JSON.parse(json.text()), [{ a: 1 }]);
 });
