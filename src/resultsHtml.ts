@@ -244,6 +244,8 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   #side .col { display: flex; align-items: center; gap: 6px; padding: 3px 2px; border-radius: 2px; }
   #side .col:hover { background: var(--vscode-list-hoverBackground); } #side .col a { color: inherit; text-decoration: none; cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; }
   #side .col .t, #side .kv .t { opacity: .5; font-size: 10px; }
+  #side .col { cursor: grab; } #side .col .mv { border: 0; background: none; color: inherit; cursor: pointer; opacity: .5; padding: 0 2px; }
+  #side .col .mv:hover { opacity: 1; }
   #side .acts2 { display: flex; gap: 6px; margin-bottom: 6px; } #side .acts2 button { flex: 1; padding: 3px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
     color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
   #side .kv { padding: 5px 0; border-bottom: 1px solid var(--vscode-panel-border); } #side .kv .k { font-weight: 600; }
@@ -324,7 +326,23 @@ const GRID_SCRIPT = `(() => {
   const saved = vscode.getState() || {};
   /** baris terpilih (index asli) dalam urutan tampil sekarang */
   const selected = (t) => { const s = st(t); return s.rows.filter((r) => !r.hidden && s.sel.has(s.rows.indexOf(r))).map((r) => s.rows.indexOf(r)); };
-  const visibleCols = (t) => [...t.tHead.rows[0].cells].slice(1).map((c, i) => (c.hidden ? -1 : i)).filter((i) => i >= 0);
+  /** urutan kolom sekarang: index kolom asli per posisi (kolom bisa diurutkan ulang di panel Columns) */
+  const order = (t) => [...t.tHead.rows[0].cells].slice(1).map((th) => +th.dataset.c);
+  /** sel kolom asli c pada baris r (posisi bisa berubah setelah kolom dipindah) */
+  const cellOf = (t, r, c) => r.cells[order(t).indexOf(c) + 1];
+  const visibleCols = (t) => order(t).filter((c) => !st(t).hidden.has(c));
+  /** pindahkan kolom asli c ke posisi (0-based) to: sel dipindah di header dan semua baris */
+  function moveCol(t, c, to) {
+    const from = order(t).indexOf(c);
+    const n = order(t).length;
+    to = Math.max(0, Math.min(n - 1, to));
+    if (from < 0 || from === to) return;
+    for (const r of [t.tHead.rows[0], ...st(t).rows]) {
+      const cell = r.cells[from + 1];
+      const ref = r.cells[to + (to > from ? 2 : 1)] ?? null;
+      r.insertBefore(cell, ref);
+    }
+  }
   /** export / copy ke extension: baris terpilih (scope sel) atau semua data, kolom yang tidak disembunyikan */
   function send(t, type, format, scope, header) {
     const part = t.closest('section')?.dataset.part;
@@ -341,11 +359,11 @@ const GRID_SCRIPT = `(() => {
   const match = (v, f) => (f.toLowerCase() === 'null' ? v === null : v !== null && v.toLowerCase().includes(f.toLowerCase()));
   function apply(t) {
     const s = st(t);
-    let rows = s.rows.filter((r) => Object.entries(s.filters).every(([c, f]) => match(text(r.cells[+c + 1]), f)));
+    let rows = s.rows.filter((r) => Object.entries(s.filters).every(([c, f]) => match(text(cellOf(t, r, +c)), f)));
     if (s.sort) {
       const { c, dir } = s.sort;
-      const num = t.tHead.rows[0].cells[c + 1].classList.contains('num');
-      const key = (r) => text(r.cells[c + 1]);
+      const num = cellOf(t, t.tHead.rows[0], c).classList.contains('num');
+      const key = (r) => text(cellOf(t, r, c));
       rows = [...rows].sort((a, b) => {
         const x = key(a), y = key(b);
         if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1; // (null) selalu di bawah
@@ -355,7 +373,8 @@ const GRID_SCRIPT = `(() => {
     const body = t.tBodies[0];
     s.rows.forEach((r) => (r.hidden = true));
     rows.forEach((r, i) => { r.hidden = false; r.cells[0].textContent = String(i + 1); body.appendChild(r); });
-    for (const r of [t.tHead.rows[0], ...s.rows]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(i - 1)));
+    const ord = order(t);
+    for (const r of [t.tHead.rows[0], ...s.rows]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(ord[i - 1])));
     t.tHead.querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('on', b.dataset.c in s.filters));
     t.tHead.querySelectorAll('.mbtn').forEach((b) => b.classList.toggle('on', s.sort?.c === +b.dataset.c));
     const count = t.closest('.grid').nextElementSibling.querySelector('.count');
@@ -380,7 +399,15 @@ const GRID_SCRIPT = `(() => {
     const tb = e.target.closest('table.rs');
     if (tb) active = tb;
     const go = e.target.closest('[data-goto]');
-    if (go) { tableOf().tHead.rows[0].cells[+go.dataset.goto + 1].scrollIntoView({ block: 'nearest', inline: 'center' }); return; }
+    if (go) { cellOf(tableOf(), tableOf().tHead.rows[0], +go.dataset.goto).scrollIntoView({ block: 'nearest', inline: 'center' }); return; }
+    const mv = e.target.closest('[data-move]');
+    if (mv) {
+      const t = tableOf(), c = +mv.dataset.c;
+      moveCol(t, c, order(t).indexOf(c) + +mv.dataset.move);
+      apply(t);
+      renderSide();
+      return;
+    }
     const td = e.target.closest('tbody td');
     if (td && td.closest('table.rs')) {
       // pilih baris: klik = satu baris, Ctrl/Cmd+klik = tambah / kurangi, Shift+klik = rentang dari baris terakhir
@@ -407,7 +434,7 @@ const GRID_SCRIPT = `(() => {
     if (b.classList.contains('sideclose')) { openPane(pane); return; }
     if (b.dataset.a === 'colsall' || b.dataset.a === 'colsnone') {
       const t = tableOf(), s = st(t);
-      s.hidden = b.dataset.a === 'colsall' ? new Set() : new Set([...t.tHead.rows[0].cells].slice(2).map((_, i) => i + 1)); // sisakan kolom pertama
+      s.hidden = b.dataset.a === 'colsall' ? new Set() : new Set(order(t).slice(1)); // sisakan kolom pertama
       apply(t);
       renderSide();
       return;
@@ -507,8 +534,12 @@ const GRID_SCRIPT = `(() => {
       const q = document.getElementById('colq')?.value ?? '';
       body.innerHTML = '<input type="search" id="colq" placeholder="Search columns…" value="' + esc(q) + '">'
         + '<div class="acts2"><button data-a="colsall">Show all</button><button data-a="colsnone">Hide all</button></div>'
-        + heads.map((h, i) => (h.dataset.name.toLowerCase().includes(q.toLowerCase())
-          ? '<div class="col"><input type="checkbox" data-col="' + i + '"' + (s.hidden.has(i) ? '' : ' checked') + '><a data-goto="' + i + '">' + esc(h.dataset.name) + '</a><span class="t">' + esc(h.dataset.type) + '</span></div>' : '')).join('');
+        + heads.map((h) => {
+          const c = +h.dataset.c;
+          return h.dataset.name.toLowerCase().includes(q.toLowerCase())
+            ? '<div class="col" draggable="true" data-c="' + c + '"><input type="checkbox" data-col="' + c + '"' + (s.hidden.has(c) ? '' : ' checked') + '><a data-goto="' + c + '">' + esc(h.dataset.name) + '</a><span class="t">' + esc(h.dataset.type) + '</span>'
+              + '<button class="mv" data-move="-1" data-c="' + c + '" title="Move left">↑</button><button class="mv" data-move="1" data-c="' + c + '" title="Move right">↓</button></div>' : '';
+        }).join('');
       const qi = document.getElementById('colq');
       if (q) { qi.focus(); qi.setSelectionRange(q.length, q.length); }
     } else {
@@ -542,7 +573,7 @@ const GRID_SCRIPT = `(() => {
   }
   function commitCell(td, input, keep) {
     const t = td.closest('table'), s = st(t), tr = td.parentElement;
-    const r = s.rows.indexOf(tr), c = [...tr.cells].indexOf(td) - 1;
+    const r = s.rows.indexOf(tr), c = order(t)[[...tr.cells].indexOf(td) - 1]; // index kolom asli (kolom bisa dipindah)
     const orig = JSON.parse(td.dataset.orig);
     const v = !keep ? orig : input.value === 'NULL' ? null : input.value;
     s.edits ??= new Map();
@@ -569,6 +600,20 @@ const GRID_SCRIPT = `(() => {
       if (k.key === 'Escape') { k.preventDefault(); k.stopPropagation(); done = true; showCell(td, cur); } // done dulu: hapus input memicu blur
     });
     input.addEventListener('blur', () => finish(true));
+  });
+  // drag kolom di panel Columns: lepas di atas kolom lain -> pindah ke posisi itu
+  let dragCol = null;
+  document.addEventListener('dragstart', (e) => { const el = e.target.closest?.('#side .col'); if (el) { dragCol = +el.dataset.c; e.dataTransfer.effectAllowed = 'move'; } });
+  document.addEventListener('dragover', (e) => { if (dragCol !== null && e.target.closest?.('#side .col')) e.preventDefault(); });
+  document.addEventListener('drop', (e) => {
+    const el = e.target.closest?.('#side .col');
+    if (dragCol === null || !el) return;
+    e.preventDefault();
+    const t = tableOf();
+    moveCol(t, dragCol, order(t).indexOf(+el.dataset.c));
+    dragCol = null;
+    apply(t);
+    renderSide();
   });
   document.addEventListener('change', (e) => {
     if (e.target.id === 'xf') syncCopy();
