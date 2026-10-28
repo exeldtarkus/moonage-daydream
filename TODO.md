@@ -1,5 +1,11 @@
 # TODO
 
+> **▶ LANJUT DARI SINI (2026-10-28, commit b62d682)**
+> Berikutnya: README + icon + screenshot (rujukan: `../live-log-viewer/scripts/screenshots.js`; screenshot pakai data contoh, README lewat background agent).
+> Lalu: SQLite (sql.js) → virtual scroll grid → MySQL / PostgreSQL (butuh server test dari user) → publish (butuh token user).
+> Alur per TODO: kerjakan → `npm test` + `npm run test:real` → tandai [x] → 1 commit per TODO → push.
+
+
 ## Tahap 1 — inti (selesai, v0.1.0)
 - [x] Koneksi SQL Server: add / edit / remove / select (password di SecretStorage)
 - [x] Run query dari file `.sql` (`Ctrl+Alt+Enter`, selection atau seluruh file, batch dipisah `GO`)
