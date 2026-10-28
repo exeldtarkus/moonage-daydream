@@ -92,6 +92,8 @@ export interface Driver {
   columns(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<Column[]>;
   /** query "SELECT TOP n" untuk tabel/view, sesuai dialek */
   selectTop(db: string, obj: DbObject, n: number): string;
+  /** kolom primary key (urut key) tabel db.schema.name; kosong bila tidak ada PK */
+  primaryKey(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<string[]>;
   /** tutup koneksi/pool yang di-cache untuk nama koneksi ini */
   close(name: string): Promise<void>;
 }

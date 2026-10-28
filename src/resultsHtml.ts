@@ -90,8 +90,9 @@ function resultHtml(r: QueryResult, canMore = false): string {
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
     return `<h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
-<div class="grid"><table class="rs" data-set="${i}"><thead><tr><th class="n"></th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
-<div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
+<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 ? ' data-edit="1" title="Double-click a cell to edit (generates an UPDATE script)"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+<div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0
+      ? '<span class="editbar" hidden><b class="ecount"></b> change(s)<button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
       ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div>`;
   }).join('');
   const msgs = [...r.messages, ...(r.resultSets.length ? [] : [`${r.rowsAffected.reduce((a, b) => a + b, 0)} row(s) affected`])];
@@ -204,6 +205,14 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
     color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   .foot .morebtn:hover { background: var(--vscode-button-hoverBackground, #1177bb); } .foot .morebtn:disabled { opacity: .5; cursor: progress; }
   .foot .morebtn + .xbtn { margin-left: 8px; }
+  .editbar { display: inline-flex; align-items: center; gap: 6px; color: var(--vscode-editorWarning-foreground, #cca700); }
+  .editbar[hidden] { display: none; }
+  .editbar button { padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
+    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  .editbar .genupd { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
+  tbody td.edited { box-shadow: inset 2px 0 var(--vscode-editorWarning-foreground, #cca700); background: rgba(204, 167, 0, .12) !important; }
+  tbody td input.cell { width: 100%; min-width: 80px; box-sizing: border-box; padding: 2px 4px; font: inherit; color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder); }
   .foot .xbtn { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer;
     font: inherit; color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, transparent); }
   .foot .xbtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
@@ -406,6 +415,19 @@ const GRID_SCRIPT = `(() => {
     const th = b.closest('th');
     if (b.classList.contains('xmlbtn')) { vscode.postMessage({ type: 'planXml' }); return; }
     if (b.classList.contains('pinbtn')) { vscode.postMessage({ type: 'pin' }); return; }
+    if (b.classList.contains('genupd') || b.classList.contains('discard')) {
+      const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
+      if (b.classList.contains('genupd')) {
+        const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
+        const part = t.closest('section')?.dataset.part;
+        vscode.postMessage({ type: 'edits', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits });
+      } else {
+        t.querySelectorAll('td.edited').forEach((td) => { showCell(td, JSON.parse(td.dataset.orig)); td.classList.remove('edited'); });
+        s.edits.clear();
+        syncEdits(t);
+      }
+      return;
+    }
     if (b.classList.contains('morebtn')) {
       const t = b.closest('.foot').previousElementSibling.querySelector('table');
       const part = t.closest('section')?.dataset.part;
@@ -508,6 +530,46 @@ const GRID_SCRIPT = `(() => {
     document.querySelectorAll('.sidetabs button').forEach((b) => b.classList.toggle('on', !same && b.dataset.pane === p));
     renderSide();
   }
+  // edit sel (double-click): disimpan di state, script UPDATE dibuat extension; tidak ada yang dijalankan otomatis
+  const editKey = (r, c) => r + ':' + c;
+  const showCell = (td, v) => { td.innerHTML = v === null ? '<span class="null">(null)</span>' : esc(v); };
+  function syncEdits(t) {
+    const s = st(t);
+    const bar = t.closest('.grid').nextElementSibling.querySelector('.editbar');
+    if (!bar) return;
+    bar.hidden = !s.edits?.size;
+    bar.querySelector('.ecount').textContent = String(s.edits?.size ?? 0);
+  }
+  function commitCell(td, input, keep) {
+    const t = td.closest('table'), s = st(t), tr = td.parentElement;
+    const r = s.rows.indexOf(tr), c = [...tr.cells].indexOf(td) - 1;
+    const orig = JSON.parse(td.dataset.orig);
+    const v = !keep ? orig : input.value === 'NULL' ? null : input.value;
+    s.edits ??= new Map();
+    if (v === orig) s.edits.delete(editKey(r, c)); else s.edits.set(editKey(r, c), v);
+    td.classList.toggle('edited', s.edits.has(editKey(r, c)));
+    showCell(td, v);
+    syncEdits(t);
+  }
+  document.addEventListener('dblclick', (e) => {
+    const td = e.target.closest('tbody td');
+    const t = td?.closest('table[data-edit]');
+    if (!td || !t || td.classList.contains('n') || td.querySelector('input')) return;
+    td.dataset.orig ??= JSON.stringify(text(td));
+    const cur = text(td);
+    td.innerHTML = '<input class="cell" spellcheck="false">';
+    const input = td.firstChild;
+    input.value = cur === null ? 'NULL' : cur;
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (keep) => { if (!done) { done = true; commitCell(td, input, keep); } };
+    input.addEventListener('keydown', (k) => {
+      if (k.key === 'Enter') { k.preventDefault(); finish(true); }
+      if (k.key === 'Escape') { k.preventDefault(); k.stopPropagation(); done = true; showCell(td, cur); } // done dulu: hapus input memicu blur
+    });
+    input.addEventListener('blur', () => finish(true));
+  });
   document.addEventListener('change', (e) => {
     if (e.target.id === 'xf') syncCopy();
     if (e.target.dataset?.col !== undefined) {

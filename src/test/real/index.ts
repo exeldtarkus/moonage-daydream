@@ -406,6 +406,42 @@ async function moreTest(m: typeof import('../../extension')) {
   say(`PASS load more: 100 -> ${sizes.join(' -> ')} rows (= COUNT ${total}), no duplicates`);
 }
 
+/** edit grid -> script UPDATE (BEGIN TRAN, WHERE PK) di tab baru; script hanya diperiksa, TIDAK dijalankan */
+async function editTest(m: typeof import('../../extension')) {
+  const { drivers } = require('../../db') as typeof import('../../db');
+  const c = { ...m.conns.get(CONN)!, database: L.db };
+  const pw = await m.conns.password(CONN);
+  const pick = (await drivers.mssql.run(c, pw, `SELECT TOP 1 s.name, t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id
+    WHERE EXISTS (SELECT 1 FROM sys.indexes i WHERE i.object_id = t.object_id AND i.is_primary_key = 1) ORDER BY t.name`)).resultSets[0].rows[0] as string[];
+  assert.ok(pick, 'a table with a primary key');
+  const [schema, table] = pick;
+  const pk = await drivers.mssql.primaryKey(c, pw, L.db, { schema, name: table });
+  const doc = await fixture('edit', `SELECT TOP 5 * FROM [${schema}].[${table}];\n`);
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: L.db });
+  await vscode.window.showTextDocument(doc);
+  await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  const o = m.results.current!.outcome;
+  const rs = 'result' in o ? o.result.resultSets[0] : undefined;
+  assert.ok(rs && rs.rows.length && resultHtml(m).includes('data-edit="1"'), 'editable grid');
+  const col = rs.columns.findIndex((x) => !pk.some((k) => k.toLowerCase() === x.toLowerCase()));
+  const script = await m.editScript({ type: 'edits', set: 0, edits: [{ row: 0, col, value: 'moonage-edit-test' }] });
+  const text = script?.getText() ?? '';
+  try {
+    assert.ok(text.includes('BEGIN TRAN;') && text.includes(`UPDATE [${L.db}].[${schema}].[${table}]`) && text.includes(`[${rs.columns[col]}] = `)
+      && pk.every((k) => text.includes(`[${k}]`)) && !/^COMMIT/m.test(text), `script: ${text.slice(0, 300)}`);
+    assert.equal(m.conns.binding(script!.uri.toString())?.db, L.db, 'script tab bound to the same database');
+  } finally {
+    if (script) await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor'); // tidak disimpan / dijalankan
+  }
+  // tanpa satu tabel (JOIN) -> ditolak, tidak ada tab baru
+  const join = await fixture('edit-join', 'SELECT TOP 2 o.name, s.name AS s FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id;\n');
+  await m.conns.bind(join.uri.toString(), { conn: CONN, db: 'master' });
+  await vscode.window.showTextDocument(join);
+  await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  assert.equal(await m.editScript({ type: 'edits', set: 0, edits: [{ row: 0, col: 0, value: 'x' }] }), undefined, 'JOIN refused');
+  say(`PASS edit grid: UPDATE script for ${schema}.${table} (PK ${pk.join(', ')}) generated, not executed; JOIN refused`);
+}
+
 /** Format Document: keyword huruf besar + koma di depan (tanpa koneksi DB) */
 async function formatTest(m: typeof import('../../extension')) {
   const doc = await fixture('format', "select name, object_id from sys.objects where name like 'a,%'\n");
@@ -754,6 +790,12 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL auto limit: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await editTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL edit: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await moreTest(m);

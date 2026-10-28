@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { fmtType, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
-import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere } from '../sqlContext';
+import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
 
 test('splitBatches splits on GO lines only', () => {
   assert.deepEqual(splitBatches('select 1\nGO\nselect 2\n  go 5  \r\nselect 3\ngo -- end\n'), ['select 1', 'select 2', 'select 3']);
@@ -177,4 +177,21 @@ test('connect retry: one retry on timeout / instance lookup, not on login failur
   n = 0;
   await assert.rejects(retryOnce(async () => { n++; throw { code: 'ELOGIN' }; }, retryableConnectError));
   assert.equal(n, 1, 'login failure is not retried (no account lockout)');
+});
+
+test('edit grid: literals and UPDATE script by primary key', () => {
+  assert.equal(sqlLiteral("O'Neil"), "N'O''Neil'");
+  assert.equal(sqlLiteral(new Date(Date.UTC(2025, 0, 2, 3, 4, 5, 6))), "'2025-01-02T03:04:05.006'");
+  assert.equal(sqlLiteral(new Uint8Array([1, 255])), '0x01FF');
+  assert.equal(editLiteral(' 12.5 ', 'decimal'), '12.5');
+  assert.throws(() => editLiteral('12a', 'int'), /not a number/);
+  assert.equal(editLiteral('true', 'bit'), '1');
+  assert.equal(editLiteral('NULL', 'varchar'), 'NULL');
+  const script = updateScript('[db].[dbo].[Orders]', ['id', 'name', 'qty'], ['int', 'nvarchar', 'int'],
+    [[1, 'a', 3], [2, "b'c", 4]], ['ID'], [{ row: 1, col: 1, value: "x'y" }, { row: 1, col: 2, value: '7' }, { row: 0, col: 2, value: null }]);
+  assert.ok(script.includes("UPDATE [db].[dbo].[Orders]\nSET [qty] = NULL\nWHERE [id] = 1;"), script);
+  assert.ok(script.includes("SET [name] = N'x''y', [qty] = 7\nWHERE [id] = 2;"));
+  assert.ok(script.includes('BEGIN TRAN;') && script.includes('-- COMMIT;') && !/^COMMIT/m.test(script), 'never commits by itself');
+  assert.throws(() => updateScript('t', ['name'], ['nvarchar'], [['a']], ['id'], [{ row: 0, col: 0, value: 'b' }]), /must be part of the SELECT/);
+  assert.throws(() => updateScript('t', ['id'], ['int'], [[1]], ['id'], [{ row: 0, col: 0, value: '2' }]), /cannot be edited/);
 });

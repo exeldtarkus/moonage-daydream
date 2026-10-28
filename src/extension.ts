@@ -11,7 +11,7 @@ import { SqlCompletion } from './completion';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { splitBatches } from './mssql';
-import { addWhere, autoLimitable, missingSemicolons, parallelSafe, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { addWhere, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 
 let log: vscode.LogOutputChannel;
@@ -53,7 +53,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     : m.type === 'copy' ? exportResult(m, 'clipboard', o)
     : m.type === 'planXml' ? openPlanXml(o)
     : m.type === 'pin' ? results.pin()
-    : m.type === 'more' ? loadMore(m) : undefined);
+    : m.type === 'more' ? loadMore(m)
+    : m.type === 'edits' ? editScript(m) : undefined);
   runningView = new RunningView(running);
   history = new History(ctx.globalState);
 
@@ -736,6 +737,44 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
   }
   if (running.has(key)) return; // diganti run yang lebih baru
   await results.show(title, outcome);
+}
+
+/**
+ * Edit grid -> script UPDATE di tab baru (BEGIN TRAN, WHERE primary key); tidak pernah dijalankan otomatis.
+ * Syarat: statement asal SELECT dari satu tabel yang punya primary key, kolom PK ikut di-SELECT.
+ */
+export async function editScript(m: ResultMessage): Promise<vscode.TextDocument | undefined> {
+  const o = results.current?.outcome;
+  if (!o || !m.edits?.length) return;
+  const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
+  const single = part ? part.o : o;
+  if (!('result' in single)) return;
+  const rs = single.result.resultSets[m.set ?? 0];
+  const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
+  const c = src && fileConn(vscode.Uri.parse(src.uri));
+  try {
+    if (!rs || !src || !c) throw new Error('Editing needs the result of a single SELECT');
+    const refs = tableRefs(src.sql);
+    if (refs.length !== 1) throw new Error('Editing needs a SELECT from exactly one table (no JOIN)');
+    const parts = refs[0].parts;
+    const name = parts[parts.length - 1];
+    const db = parts.length === 3 ? parts[0] : c.database || 'master';
+    const pw = await conns.password(c.name);
+    const schema = (parts.length >= 2 && parts[parts.length - 2])
+      || (await drivers[c.type].objects(c, pw, db, 'table')).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || 'dbo';
+    const pk = await drivers[c.type].primaryKey(c, pw, db, { schema, name });
+    if (!pk.length) throw new Error(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
+    const q = (n: string) => `[${n.replace(/]/g, ']]')}]`;
+    const script = updateScript(`${q(db)}.${q(schema)}.${q(name)}`, rs.columns, rs.types ?? [], rs.rows, pk, m.edits);
+    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: script });
+    await conns.bind(doc.uri.toString(), { conn: c.name, db: c.database || undefined });
+    await vscode.window.showTextDocument(doc, { preview: false });
+    log.info(`edit script: ${m.edits.length} cell(s) on ${db}.${schema}.${name}`);
+    return doc;
+  } catch (e) {
+    log.error(`editScript - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Cannot generate UPDATE script: ${errMsg(e)}`);
+  }
 }
 
 /**

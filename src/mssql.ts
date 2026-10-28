@@ -259,6 +259,15 @@ export const mssqlDriver: Driver = {
       JOIN ${q(db)}.sys.schemas s ON s.schema_id = o.schema_id WHERE o.is_ms_shipped = 0 ORDER BY s.name, o.name`);
   },
 
+  async primaryKey(conn, password, db, obj) {
+    const rows = await select<{ name: string }>(conn, password,
+      `SELECT c.name FROM ${q(db)}.sys.indexes i
+        JOIN ${q(db)}.sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN ${q(db)}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        WHERE i.object_id = OBJECT_ID(@full) AND i.is_primary_key = 1 ORDER BY ic.key_ordinal`,
+      { full: `${q(db)}.${q(obj.schema)}.${q(obj.name)}` });
+    return rows.map((r) => r.name);
+  },
   async columns(conn, password, db, obj) {
     const rows = await select<{ name: string; type: string; max_length: number; precision: number; scale: number; is_nullable: boolean }>(
       conn, password,
