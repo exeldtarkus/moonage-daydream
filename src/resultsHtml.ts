@@ -1,6 +1,7 @@
 import type { QueryResult } from './db';
 import { preview } from './sqlContext';
 import { FORMATS } from './exporter';
+import type { PlanStatement } from './plan';
 
 export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -24,11 +25,20 @@ export interface Source {
   sql: string;
   where?: string;
 }
-export type Single = { result: QueryResult; source?: Source } | { error: string; source?: Source } | { loading: true; uri?: string; cancelling?: boolean };
+/** Explain (estimated, query tidak dijalankan) / Analyze (actual, SELECT dijalankan lalu di-rollback) */
+export interface PlanOutcome {
+  plan: PlanStatement[];
+  mode: 'estimated' | 'actual';
+  xml: string[];
+  durationMs: number;
+  /** Analyze: jumlah baris hasil query per result set */
+  rows?: number[];
+}
+export type Single = PlanOutcome | { result: QueryResult; source?: Source } | { error: string; source?: Source } | { loading: true; uri?: string; cancelling?: boolean };
 /** run paralel: satu Part per statement, diperbarui begitu statement itu selesai */
 export interface Part {
   sql: string;
-  o: Single;
+  o: Exclude<Single, PlanOutcome>;
 }
 export type Outcome = Single | { parts: Part[]; uri: string; start: number; end?: number };
 export const CANCEL_COMMAND = 'moonageDaydream.cancelQuery';
@@ -85,6 +95,26 @@ function resultHtml(r: QueryResult): string {
   return `${sets}${msgs.length ? `<pre class="msg">${esc(msgs.join('\n'))}</pre>` : ''}`;
 }
 
+const fmtNum = (n: number) => (Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { maximumFractionDigits: 2 }));
+
+function planHtml(o: PlanOutcome): string {
+  const actual = o.mode === 'actual';
+  const stmts = o.plan.map((st, i) => {
+    const rows = st.nodes.map((n) => {
+      const hot = n.pct >= 25 ? ' hot' : '';
+      const off = actual && n.actualRows !== undefined && n.estRows > 0 && (n.actualRows / Math.max(1, n.executions ?? 1) > n.estRows * 10 || n.actualRows * 10 < n.estRows);
+      return `<tr><td class="op" style="padding-left:${12 + n.depth * 18}px">${n.depth ? '<span class="tw">└</span>' : ''}<b>${esc(n.op)}</b>${n.logical && n.logical !== n.op ? ` <span class="lg">${esc(n.logical)}</span>` : ''}</td>`
+        + `<td>${esc(n.object ?? '')}</td><td class="num">${fmtNum(n.estRows)}</td>`
+        + (actual ? `<td class="num${off ? ' warn' : ''}"${off ? ' title="Actual rows differ >10x from the estimate (statistics may be stale)"' : ''}>${n.actualRows === undefined ? '' : fmtNum(n.actualRows)}</td><td class="num">${n.executions === undefined ? '' : fmtNum(n.executions)}</td>` : '')
+        + `<td class="pct${hot}"><span class="track"><span class="cbar" style="width:${Math.min(100, n.pct).toFixed(1)}%"></span></span><span class="v">${n.pct.toFixed(1)}%</span></td></tr>`;
+    }).join('');
+    return `<h3>Statement ${i + 1} <span>${esc(preview(st.text))} · cost ${fmtNum(st.cost)}</span></h3>
+<div class="grid"><table class="plan"><thead><tr><th>Operator</th><th>Object</th><th class="num">Est. rows</th>${actual ? '<th class="num">Actual rows</th><th class="num">Executions</th>' : ''}<th>Cost</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }).join('');
+  const rows = o.rows?.length ? `<span>Query returned ${o.rows.map(fmtNum).join(' + ')} row(s)</span>` : '';
+  return `<div class="planbar">${rows}<button class="xmlbtn" title="Open the raw execution plan XML">Open XML</button></div>${stmts || '<div class="msg">No plan returned.</div>'}`;
+}
+
 function partHtml(p: Part, i: number, uri: string): string {
   const o = p.o;
   const state = 'loading' in o ? (o.cancelling ? 'cancelling' : 'running') : 'error' in o ? 'failed' : `${o.result.durationMs} ms`;
@@ -102,6 +132,9 @@ export function render(cspSource: string, title: string, o: Outcome): string {
     const failed = o.parts.filter((p) => 'error' in p.o).length;
     status = left ? `Running ${left} of ${o.parts.length} queries in parallel…` : `${o.parts.length} queries done in ${(o.end ?? Date.now()) - o.start} ms${failed ? ` · ${failed} failed` : ''}`;
     body = o.parts.map((p, i) => partHtml(p, i, o.uri)).join('');
+  } else if ('plan' in o) {
+    status = `${o.mode === 'estimated' ? 'Explain (estimated plan, not executed)' : 'Analyze (actual plan, transaction rolled back)'} · ${o.durationMs} ms`;
+    body = planHtml(o);
   } else if ('loading' in o) {
     status = 'Running…';
     body = `<div class="loading">
@@ -177,6 +210,17 @@ export function render(cspSource: string, title: string, o: Outcome): string {
   .menu button.primary { margin-top: 12px; text-align: center; padding: 6px; border-radius: 2px;
     color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   .menu button.primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+  /* execution plan */
+  .planbar { display: flex; align-items: center; gap: 12px; margin: 4px 0 8px; font-family: var(--vscode-font-family); font-size: 12px; }
+  .planbar .xmlbtn { margin-left: auto; padding: 2px 10px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
+    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  table.plan td.op b { font-weight: 600; } table.plan .lg { opacity: .6; } table.plan .tw { opacity: .4; margin-right: 6px; }
+  table.plan td.pct { min-width: 160px; }
+  table.plan .track { display: inline-block; width: 90px; height: 10px; vertical-align: middle; border-radius: 2px; background: rgba(128, 128, 128, .15); }
+  table.plan .cbar { display: block; height: 100%; border-radius: 2px; background: var(--vscode-charts-blue, #3794ff); }
+  table.plan td.hot .cbar { background: var(--vscode-charts-red, #f14c4c); }
+  table.plan .v { padding-left: 8px; }
+  table.plan td.warn { color: var(--vscode-editorWarning-foreground, #cca700); font-weight: 600; }
   .foot .clock { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
   .foot { display: flex; gap: 16px; padding: 6px 12px; font-family: var(--vscode-font-family); font-size: 12px; opacity: .8;
     border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
@@ -313,6 +357,7 @@ const GRID_SCRIPT = `(() => {
     const b = e.target.closest('button');
     if (!b) { if (!menu.contains(e.target)) menu.hidden = true; return; }
     const th = b.closest('th');
+    if (b.classList.contains('xmlbtn')) { vscode.postMessage({ type: 'planXml' }); return; }
     if (b.classList.contains('xbtn')) {
       e.stopPropagation();
       const t = b.closest('.foot').previousElementSibling.querySelector('table');

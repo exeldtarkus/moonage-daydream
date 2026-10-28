@@ -58,6 +58,11 @@ export interface Driver {
   /** limit: ambil sekian baris pertama lalu hentikan query di server (hanya untuk satu SELECT, lihat autoLimitable) */
   run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal, limit?: number): Promise<QueryResult>;
   /**
+   * execution plan: estimated = query tidak dijalankan; actual = query dijalankan (pemanggil membatasi ke SELECT).
+   * Dijalankan dalam transaksi yang selalu di-rollback. xml = satu plan XML per batch / statement.
+   */
+  plan(conn: ConnectionInfo, password: string, sql: string, mode: 'estimated' | 'actual', signal?: AbortSignal): Promise<{ xml: string[]; result: QueryResult }>;
+  /**
    * export All Data: semua baris result set pertama diteruskan ke sink tanpa limit / MAX_ROWS.
    * row() boleh mengembalikan Promise: query di-pause sampai selesai (backpressure file). Mengembalikan jumlah baris.
    */

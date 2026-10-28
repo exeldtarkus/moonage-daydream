@@ -161,6 +161,24 @@
         "command": "moonageDaydream.formatSql",
         "title": "Format SQL (Moonage)",
         "category": "Moonage Daydream"
+      },
+      {
+        "command": "moonageDaydream.runStatement",
+        "title": "Execute Statement",
+        "category": "Moonage Daydream",
+        "icon": "$(play)"
+      },
+      {
+        "command": "moonageDaydream.explain",
+        "title": "Explain (estimated plan)",
+        "category": "Moonage Daydream",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "moonageDaydream.analyze",
+        "title": "Analyze (actual plan, SELECT only)",
+        "category": "Moonage Daydream",
+        "icon": "$(pulse)"
       }
     ],
     "keybindings": [
@@ -369,6 +387,18 @@
         {
           "command": "moonageDaydream.newQueryForDb",
           "when": "false"
+        },
+        {
+          "command": "moonageDaydream.runStatement",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.explain",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "moonageDaydream.analyze",
+          "when": "editorLangId == sql"
         }
       ],
       "editor/context": [
@@ -376,6 +406,16 @@
           "command": "moonageDaydream.formatSql",
           "when": "editorLangId == sql && !editorReadonly",
           "group": "1_modification@1"
+        },
+        {
+          "command": "moonageDaydream.explain",
+          "when": "editorLangId == sql",
+          "group": "navigation@2"
+        },
+        {
+          "command": "moonageDaydream.analyze",
+          "when": "editorLangId == sql",
+          "group": "navigation@3"
         }
       ]
     },

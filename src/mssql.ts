@@ -53,6 +53,42 @@ async function select<T>(conn: ConnectionInfo, password: string, text: string, p
   return (await req.query<T>(text)).recordset;
 }
 
+/** jalankan satu batch dengan request stream: hanya MAX_ROWS baris per result set disimpan, cancel lewat signal, auto limit */
+async function collect(req: sql.Request, batch: string, out: QueryResult, signal?: AbortSignal, limit?: number, asBatch = false): Promise<void> {
+  req.arrayRowMode = true;
+  req.stream = true; // baris dibaca per event: hanya MAX_ROWS yang disimpan
+  req.on('info', (i: { message: string }) => out.messages.push(i.message)); // PRINT / RAISERROR level rendah
+  const cancel = () => req.cancel(); // kirim attention ke server: query dihentikan di server, bukan hanya di client
+  signal?.addEventListener('abort', cancel);
+  const r = await new Promise<sql.IResult<unknown>>((resolve, reject) => {
+    let err: unknown;
+    let cur: ResultSet | undefined;
+    let limited = false;
+    req.on('recordset', (cols: { name: string; type?: { declaration?: string } }[]) => out.resultSets.push(cur = {
+      columns: cols.map((c) => c.name), types: cols.map((c) => c.type?.declaration ?? ''), rows: [], total: 0,
+    }));
+    req.on('row', (row: unknown[]) => {
+      if (!cur || limited) return;
+      cur.total++;
+      if (cur.rows.length < MAX_ROWS) cur.rows.push(row);
+      if (limit && cur.total >= limit) {
+        limited = true; // auto limit: cukup, hentikan query di server; error "Canceled" berikutnya bukan kegagalan
+        cur.limited = limit;
+        req.cancel();
+      }
+    });
+    req.on('error', (e: unknown) => (err ??= e)); // mode stream: error lewat event, yang pertama yang dilaporkan
+    const done = (_e: unknown, result?: sql.IResult<unknown>) => (err && !(limited && !signal?.aborted) ? reject(err) : resolve(result ?? ({ rowsAffected: [] } as unknown as sql.IResult<unknown>)));
+    // asBatch: SQL batch biasa (bukan sp_executesql), dibutuhkan agar output SET SHOWPLAN_XML / STATISTICS XML ikut kembali
+    if (asBatch) req.batch(batch, done);
+    else req.query(batch, done);
+  }).finally(() => signal?.removeEventListener('abort', cancel));
+  out.rowsAffected.push(...r.rowsAffected);
+}
+
+/** kolom result set plan XML dari SET SHOWPLAN_XML / STATISTICS XML */
+const PLAN_COLUMN = /showplan/i;
+
 export const mssqlDriver: Driver = {
   label: 'SQL Server',
   defaultPort: 1433,
@@ -63,38 +99,49 @@ export const mssqlDriver: Driver = {
     const start = Date.now();
     for (const batch of splitBatches(text)) {
       signal?.throwIfAborted(); // batch GO berikutnya tidak dijalankan
-      const req = p.request();
-      req.arrayRowMode = true;
-      req.stream = true; // baris dibaca per event: hanya MAX_ROWS yang disimpan
-      req.on('info', (i: { message: string }) => out.messages.push(i.message)); // PRINT / RAISERROR level rendah
-      const cancel = () => req.cancel(); // kirim attention ke server: query dihentikan di server, bukan hanya di client
-      signal?.addEventListener('abort', cancel);
-      const r = await new Promise<sql.IResult<unknown>>((resolve, reject) => {
-        let err: unknown;
-        let cur: ResultSet | undefined;
-        let limited = false;
-        req.on('recordset', (cols: { name: string; type?: { declaration?: string } }[]) => out.resultSets.push(cur = {
-          columns: cols.map((c) => c.name), types: cols.map((c) => c.type?.declaration ?? ''), rows: [], total: 0,
-        }));
-        req.on('row', (row: unknown[]) => {
-          if (!cur || limited) return;
-          cur.total++;
-          if (cur.rows.length < MAX_ROWS) cur.rows.push(row);
-          if (limit && cur.total >= limit) {
-            limited = true; // auto limit: cukup, hentikan query di server; error "Canceled" berikutnya bukan kegagalan
-            cur.limited = limit;
-            req.cancel();
-          }
-        });
-        req.on('error', (e: unknown) => (err ??= e)); // mode stream: error lewat event, yang pertama yang dilaporkan
-        req.query(batch, (_e, result) => (err && !(limited && !signal?.aborted) ? reject(err) : resolve(result ?? ({ rowsAffected: [] } as unknown as sql.IResult<unknown>))));
-      }).finally(() => signal?.removeEventListener('abort', cancel));
-      out.rowsAffected.push(...r.rowsAffected);
+      await collect(p.request(), batch, out, signal, limit);
     }
     out.durationMs = Date.now() - start;
     return out;
   },
 
+  async plan(conn, password, text, mode, signal) {
+    const p = await pool(conn, password);
+    // satu koneksi lewat transaksi (SET ... berlaku per sesi), selalu di-rollback: Analyze tidak pernah menyimpan perubahan
+    const tx = new sql.Transaction(p);
+    await tx.begin();
+    const out: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
+    const start = Date.now();
+    const option = mode === 'estimated' ? 'SHOWPLAN_XML' : 'STATISTICS XML';
+    let failure: unknown;
+    try {
+      await new sql.Request(tx).batch(`SET ${option} ON`); // SHOWPLAN_XML harus sendirian dalam batch
+      try {
+        for (const batch of splitBatches(text)) {
+          signal?.throwIfAborted();
+          await collect(new sql.Request(tx), batch, out, signal, undefined, true);
+        }
+      } finally {
+        if (!signal?.aborted) await new sql.Request(tx).batch(`SET ${option} OFF`);
+      }
+    } catch (e) {
+      failure = e;
+      throw e;
+    } finally {
+      try {
+        await tx.rollback();
+      } catch (re) {
+        if (!failure) throw re;
+        // query sudah gagal / dibatalkan: error asli yang dilaporkan (dan di-log pemanggil), error rollback ditempelkan
+        if (failure instanceof Error) failure.message += ` (rollback: ${re instanceof Error ? re.message : re})`;
+      }
+    }
+    out.durationMs = Date.now() - start;
+    const isPlan = (rs: ResultSet) => rs.columns.length === 1 && PLAN_COLUMN.test(rs.columns[0]);
+    const xml = out.resultSets.filter(isPlan).flatMap((rs) => rs.rows.map((r) => String(r[0])));
+    out.resultSets = out.resultSets.filter((rs) => !isPlan(rs));
+    return { xml, result: out };
+  },
   async stream(conn, password, text, signal, sink) {
     const p = await pool(conn, password);
     const req = p.request();

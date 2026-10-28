@@ -11,7 +11,8 @@ import { SqlCompletion } from './completion';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { splitBatches } from './mssql';
-import { addWhere, autoLimitable, missingSemicolons, parallelSafe, singleSelect, splitStatements, statementAt } from './sqlContext';
+import { addWhere, autoLimitable, missingSemicolons, parallelSafe, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { parsePlan } from './plan';
 
 let log: vscode.LogOutputChannel;
 export let conns: Connections;
@@ -49,7 +50,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   results = new Results(ctx);
   results.onMessage = (m) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part)
     : m.type === 'export' ? exportResult(m)
-    : m.type === 'copy' ? exportResult(m, 'clipboard') : undefined);
+    : m.type === 'copy' ? exportResult(m, 'clipboard')
+    : m.type === 'planXml' ? openPlanXml() : undefined);
   runningView = new RunningView(running);
   history = new History(ctx.globalState);
 
@@ -119,6 +121,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand('moonageDaydream.runQuery', runQuery),
+    vscode.commands.registerCommand('moonageDaydream.runStatement', runStatement),
+    vscode.commands.registerCommand('moonageDaydream.explain', (u?: vscode.Uri | string, a?: number, b?: number) => explainQuery('estimated', u, a, b)),
+    vscode.commands.registerCommand('moonageDaydream.analyze', (u?: vscode.Uri | string, a?: number, b?: number) => explainQuery('actual', u, a, b)),
     vscode.commands.registerCommand('moonageDaydream.cancelQuery', cancelQuery),
     vscode.commands.registerCommand('moonageDaydream.setFileConnection', setFileConnection),
     vscode.commands.registerCommand('moonageDaydream.setFileDatabase', setFileDatabase),
@@ -306,19 +311,44 @@ function updateFileStatus() {
   status.command = uri ? 'moonageDaydream.setFileConnection' : 'moonageDaydream.selectConnection';
 }
 
+/** CodeLens: di atas tiap statement Execute | Explain | Analyze (Analyze hanya SELECT); statement pertama juga koneksi | database */
 function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
-  const r = new vscode.Range(0, 0, 0, 0);
   const c = fileConn(doc.uri);
   const q = running.get(doc.uri.toString());
-  return [
-    !q
-      ? new vscode.CodeLens(r, { title: '$(play) Execute', command: 'moonageDaydream.runQuery' })
-      : q.cancelling
-        ? new vscode.CodeLens(r, { title: '$(loading~spin) Cancelling…', command: 'moonageDaydream.cancelQuery', arguments: [doc.uri] })
-        : new vscode.CodeLens(r, { title: '$(debug-stop) Cancel', command: 'moonageDaydream.cancelQuery', arguments: [doc.uri] }),
-    new vscode.CodeLens(r, { title: `$(server) ${c?.name ?? 'Select connection'}`, command: 'moonageDaydream.setFileConnection', arguments: [doc.uri] }),
-    new vscode.CodeLens(r, { title: `$(database) ${c?.database || 'default database'}`, command: 'moonageDaydream.setFileDatabase', arguments: [doc.uri] }),
-  ];
+  // shortcut: file sangat besar (> 20000 baris) hanya dapat CodeLens di baris pertama
+  const segs = doc.lineCount <= 20000 ? statementSegments(doc.getText()) : [];
+  const at = (offset: number) => {
+    const line = doc.positionAt(offset).line;
+    return new vscode.Range(line, 0, line, 0);
+  };
+  const first = segs.length ? at(segs[0].start) : new vscode.Range(0, 0, 0, 0);
+  const lenses: vscode.CodeLens[] = [];
+  if (q) {
+    lenses.push(new vscode.CodeLens(first, q.cancelling
+      ? { title: '$(loading~spin) Cancelling…', command: 'moonageDaydream.cancelQuery', arguments: [doc.uri] }
+      : { title: '$(debug-stop) Cancel', command: 'moonageDaydream.cancelQuery', arguments: [doc.uri] }));
+  } else if (!segs.length) {
+    lenses.push(new vscode.CodeLens(first, { title: '$(play) Execute', command: 'moonageDaydream.runQuery' }));
+  }
+  segs.forEach((seg, i) => {
+    const r = at(seg.start);
+    const args = [doc.uri, seg.start, seg.end];
+    if (!q) {
+      lenses.push(new vscode.CodeLens(r, { title: '$(play) Execute', command: 'moonageDaydream.runStatement', arguments: args, tooltip: 'Run this statement' }));
+      lenses.push(new vscode.CodeLens(r, { title: '$(list-tree) Explain', command: 'moonageDaydream.explain', arguments: args, tooltip: 'Estimated execution plan (the statement is not executed)' }));
+      if (singleSelect([doc.getText(new vscode.Range(doc.positionAt(seg.start), doc.positionAt(seg.end)))])) {
+        lenses.push(new vscode.CodeLens(r, { title: '$(pulse) Analyze', command: 'moonageDaydream.analyze', arguments: args, tooltip: 'Actual execution plan (runs the SELECT inside a rolled back transaction)' }));
+      }
+    }
+    if (i === 0) pushConn(lenses, r, doc, c);
+  });
+  if (!segs.length) pushConn(lenses, first, doc, c);
+  return lenses;
+}
+
+function pushConn(lenses: vscode.CodeLens[], r: vscode.Range, doc: vscode.TextDocument, c: ConnectionInfo | undefined) {
+  lenses.push(new vscode.CodeLens(r, { title: `$(server) ${c?.name ?? 'Select connection'}`, command: 'moonageDaydream.setFileConnection', arguments: [doc.uri] }));
+  lenses.push(new vscode.CodeLens(r, { title: `$(database) ${c?.database || 'default database'}`, command: 'moonageDaydream.setFileDatabase', arguments: [doc.uri] }));
 }
 
 /**
@@ -542,6 +572,82 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
   );
 }
 
+/** daftarkan query yang berjalan untuk file key (Running Queries, CodeLens Cancel); run lama di file itu dibatalkan. end() wajib dipanggil */
+function startRun(key: string, c: ConnectionInfo, text: string) {
+  const prev = running.get(key);
+  if (prev) cancel(prev); // jalankan ulang file yang masih jalan: query lama dihentikan
+  const ac = new AbortController();
+  const q: RunningQuery = { ac, uri: key, conn: c.name, db: c.database, sql: text, start: Date.now() };
+  let finish = () => {};
+  q.done = new Promise<void>((r) => (finish = r));
+  running.set(key, q);
+  lensChanged.fire();
+  runningView.refresh();
+  const end = () => {
+    finish();
+    if (running.get(key) === q) running.delete(key);
+    lensChanged.fire();
+    runningView.refresh();
+  };
+  return { q, ac, end };
+}
+
+/** teks yang dijalankan: offset start/end (CodeLens per statement), blok terpilih, atau statement di kursor */
+async function targetText(uriArg?: vscode.Uri | string, start?: number, end?: number): Promise<{ doc: vscode.TextDocument; text: string } | undefined> {
+  const doc = uriArg ? await vscode.workspace.openTextDocument(typeof uriArg === 'string' ? vscode.Uri.parse(uriArg) : uriArg) : vscode.window.activeTextEditor?.document;
+  if (!doc) return;
+  if (start !== undefined && end !== undefined) return { doc, text: doc.getText(new vscode.Range(doc.positionAt(start), doc.positionAt(end))) };
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document !== doc) return { doc, text: '' };
+  return { doc, text: editor.selection.isEmpty ? statementAt(doc.getText(), doc.offsetAt(editor.selection.active)) : doc.getText(editor.selection) };
+}
+
+/** CodeLens Execute di atas statement: jalankan statement itu saja */
+async function runStatement(uriArg?: vscode.Uri | string, start?: number, end?: number) {
+  const t = await targetText(uriArg, start, end);
+  if (t?.text.trim()) await execute(t.doc, t.text);
+}
+
+/**
+ * Explain = estimated plan (query tidak dijalankan, aman untuk statement apa pun).
+ * Analyze = actual plan: query dijalankan, jadi hanya untuk SELECT; tetap di dalam transaksi yang di-rollback.
+ */
+export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode.Uri | string, start?: number, end?: number) {
+  const t = await targetText(uriArg, start, end);
+  if (!t?.text.trim()) return;
+  const stmts = splitBatches(t.text).flatMap(splitStatements);
+  if (mode === 'actual' && !stmts.every((st) => singleSelect([st]))) {
+    vscode.window.showWarningMessage('Analyze runs the query, so it is only available for SELECT. Use Explain for other statements.');
+    return;
+  }
+  const c = fileConn(t.doc.uri) ?? (await pickConnection('Select connection'));
+  if (!c) return;
+  const key = t.doc.uri.toString();
+  const title = `${c.database ? `${c.name} / ${c.database}` : c.name} · ${mode === 'estimated' ? 'Explain' : 'Analyze'}`;
+  const run = startRun(key, c, t.text);
+  await results.show(title, { loading: true, uri: key });
+  let outcome: Outcome;
+  try {
+    const r = await drivers[c.type].plan(c, await conns.password(c.name), t.text, mode, run.ac.signal);
+    outcome = { plan: r.xml.flatMap(parsePlan), mode, xml: r.xml, durationMs: r.result.durationMs, rows: mode === 'actual' ? r.result.resultSets.map((rs) => rs.total) : undefined };
+  } catch (e) {
+    log.error(`explainQuery ${mode} - EXCEPTION CAUGHT | ${c.name}${run.ac.signal.aborted ? ' (cancelled by user)' : ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    outcome = { error: run.ac.signal.aborted ? 'Query cancelled.' : errMsg(e) };
+  } finally {
+    run.end();
+  }
+  if (running.has(key)) return; // diganti run yang lebih baru
+  await results.show(title, outcome);
+}
+
+/** tombol Open XML di hasil plan: XML asli di tab baru */
+async function openPlanXml() {
+  const o = results.current?.outcome;
+  if (!o || !('plan' in o)) return;
+  const doc = await vscode.workspace.openTextDocument({ language: 'xml', content: o.xml.join('\n\n') });
+  await vscode.window.showTextDocument(doc, { preview: false });
+}
+
 /** jalankan text untuk file doc (koneksi / database dari binding file); source = statement asal untuk filter WHERE */
 async function execute(doc: vscode.TextDocument, text: string, source?: Source) {
   const uri = doc.uri;
@@ -554,16 +660,8 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   }
 
   const key = uri.toString();
-  const prev = running.get(key);
-  if (prev) cancel(prev); // jalankan ulang file yang masih jalan: query lama dihentikan
-  const ac = new AbortController();
-  const q: RunningQuery = { ac, uri: key, conn: c.name, db: c.database, sql: text, start: Date.now() };
-  let finish = () => {};
-  q.done = new Promise<void>((r) => (finish = r));
-  running.set(key, q);
+  const { q, ac, end } = startRun(key, c, text);
   log.info(`runQuery start: ${c.name} / ${c.database}`);
-  lensChanged.fire();
-  runningView.refresh();
   const title = c.database ? `${c.name} / ${c.database}` : c.name;
   // beberapa SELECT tanpa variabel / #temp: tiap statement di koneksi sendiri, hasil tampil begitu statement itu selesai
   const stmts = splitBatches(text).flatMap(splitStatements);
@@ -605,11 +703,8 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
     log.error(`runQuery - EXCEPTION CAUGHT | ${c.name}${ac.signal.aborted ? ' (cancelled by user)' : ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     outcome = { error: ac.signal.aborted ? 'Query cancelled.' : errMsg(e), source: src };
   } finally {
-    finish();
     log.info(`runQuery end after ${Date.now() - q.start} ms${ac.signal.aborted ? ' (cancelled)' : ''}: ${c.name} / ${c.database}`);
-    if (running.get(key) === q) running.delete(key);
-    lensChanged.fire();
-    runningView.refresh();
+    end();
   }
   const errors = 'parts' in outcome ? outcome.parts.flatMap((p) => ('error' in p.o ? [p.o.error] : [])) : 'error' in outcome ? [outcome.error] : [];
   await history.add({

@@ -25,7 +25,7 @@
 - [x] Beberapa SELECT (tanpa variabel / #temp / INTO) dijalankan paralel per statement: hasil tampil per statement, Cancel per statement
 
 ## Tahap 3 — nanti
-- [ ] CodeLens `Execute` per statement (sekarang satu di baris pertama: selection / seluruh file), Explain / Analyze
+- [x] CodeLens `Execute | Explain | Analyze` per statement (Explain = estimated plan, Analyze = actual plan khusus SELECT, rollback)
 - [x] Autocomplete database / schema / tabel / view, termasuk lintas database (`DB.schema.table`, `DB..table`)
 - [x] Autocomplete kolom dari tabel di FROM / JOIN (WHERE, SELECT, ON, `alias.`)
 - [ ] Autocomplete keyword SQL, FROM dengan koma (`FROM a, b`)

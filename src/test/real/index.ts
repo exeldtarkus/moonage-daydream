@@ -267,7 +267,7 @@ async function exportTest(m: typeof import('../../extension')) {
       await m.applyWhere('');
       const copied = await m.exportResult({ type: 'copy', set: 0, scope: 'sel', rows: [0, 1], cols: [0, 1], format: 'tsv', header: false }, 'clipboard');
       const tsv = (await vscode.env.clipboard.readText()).trimEnd().split('\r\n');
-      assert.ok(copied === 2 && tsv.length === 2 && tsv[0].split('\t').length === 2, `Ctrl+C TSV: ${JSON.stringify(tsv[0])}`);
+      assert.ok(copied === 2 && tsv.length === 2 && tsv[0].split('\t').length === 2, `Ctrl+C TSV: copied=${copied} ${JSON.stringify(tsv)} current=${Object.keys(m.results.current?.outcome ?? {})}`);
       const allCopied = await m.exportResult({ type: 'copy', set: 0, scope: 'all', format: 'json' }, 'clipboard');
       const clipJson = JSON.parse(await vscode.env.clipboard.readText());
       assert.ok(allCopied === total && clipJson.length === total, `copy all data JSON ${clipJson.length} = ${total}`);
@@ -279,6 +279,42 @@ async function exportTest(m: typeof import('../../extension')) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** CodeLens per statement + Explain (estimated, tidak dijalankan) / Analyze (actual, hanya SELECT, rollback) */
+async function planTest(m: typeof import('../../extension')) {
+  const sql = "SELECT name, type_desc\nFROM sys.objects\nWHERE name LIKE 'sys%';\n\nSELECT COUNT(*) AS n\nFROM sys.all_objects;\n";
+  const doc = await fixture('plan', sql);
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
+  await vscode.window.showTextDocument(doc);
+  const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
+  const exec = lenses.filter((l) => l.command?.command === 'moonageDaydream.runStatement');
+  assert.deepEqual(exec.map((l) => l.range.start.line), [0, 4], 'Execute lens above each statement');
+  assert.equal(lenses.filter((l) => l.command?.command === 'moonageDaydream.analyze').length, 2, 'Analyze for SELECT statements');
+
+  await vscode.commands.executeCommand(exec[1].command!.command, ...exec[1].command!.arguments!);
+  let html = resultHtml(m);
+  assert.ok(html.includes('>n<') || html.includes('</span>n<'), 'Execute lens ran only the 2nd statement');
+  assert.ok(!html.includes('type_desc'), 'first statement not run');
+
+  const explain = lenses.find((l) => l.command?.command === 'moonageDaydream.explain' && l.range.start.line === 0)!;
+  await vscode.commands.executeCommand(explain.command!.command, ...explain.command!.arguments!);
+  html = resultHtml(m);
+  assert.ok(html.includes('Explain (estimated plan, not executed)') && html.includes('<table class="plan">') && !html.includes('Actual rows'), `estimated plan: ${html.match(/class="(?:top|err)">([^<]*)/g)?.join(' | ') ?? html.slice(0, 300)}`);
+  const ops = (html.match(/<td class="op"/g) ?? []).length;
+
+  const analyze = lenses.find((l) => l.command?.command === 'moonageDaydream.analyze' && l.range.start.line === 4)!;
+  await vscode.commands.executeCommand(analyze.command!.command, ...analyze.command!.arguments!);
+  html = resultHtml(m);
+  assert.ok(html.includes('Analyze (actual plan, transaction rolled back)') && html.includes('Actual rows') && html.includes('Query returned 1 row(s)'), 'actual plan');
+
+  // Analyze menjalankan query: selain SELECT ditolak sebelum ke server (tidak ada yang dijalankan)
+  const dml = await fixture('plan-dml', 'UPDATE dbo.NoSuchTable SET a = 1 WHERE 1 = 0;\n');
+  await m.conns.bind(dml.uri.toString(), { conn: CONN, db: 'master' });
+  const before = resultHtml(m);
+  await m.explainQuery('actual', dml.uri, 0, dml.getText().length);
+  assert.equal(resultHtml(m), before, 'Analyze refused for UPDATE');
+  say(`PASS plan: lenses on lines 0 and 4, Execute 2nd statement only, Explain ${ops} operator(s), Analyze actual rows, Analyze refused for UPDATE`);
 }
 
 /** Format Document: keyword huruf besar + koma di depan (tanpa koneksi DB) */
@@ -401,7 +437,7 @@ async function fileBindingTest(m: typeof import('../../extension')) {
     await vscode.window.showTextDocument(doc);
     const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
     const titles = lenses.filter((l) => l.command?.command.startsWith('moonageDaydream.')).map((l) => l.command!.title);
-    assert.deepEqual(titles, ['$(play) Execute', `$(server) ${CONN}`, `$(database) ${db}`], `codelens ${JSON.stringify(titles)}`);
+    assert.deepEqual(titles, ['$(play) Execute', '$(list-tree) Explain', '$(pulse) Analyze', `$(server) ${CONN}`, `$(database) ${db}`], `codelens ${JSON.stringify(titles)}`);
     await vscode.commands.executeCommand('moonageDaydream.runQuery');
     await sleep(1000);
     assert.ok(resultHtml(m).includes(`<td>${db}</td>`), `DB_NAME() should be ${db}: ${resultHtml(m).match(/class="err">([^<]*)/)?.[1] ?? 'other db'}`);
@@ -617,6 +653,12 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL auto limit: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await planTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL plan: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await exportTest(m);
