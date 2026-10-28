@@ -13,6 +13,9 @@ export interface ConnectionInfo {
   database: string;
   /** mssql: encrypt + trustServerCertificate (untuk server lokal / sertifikat self-signed) */
   trustServerCertificate: boolean;
+  /** mssql: 'windows' = Windows authentication lewat NTLM (domain + user + password); default SQL Server login */
+  auth?: 'sql' | 'windows';
+  domain?: string;
 }
 
 // shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil

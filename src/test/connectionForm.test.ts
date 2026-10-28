@@ -25,3 +25,14 @@ test('formHtml escapes values and never renders the password', () => {
   assert.ok(html.includes('value="a&quot;&lt;b&gt;"') && !html.includes('a"<b>'));
   assert.ok(html.includes('Leave empty to keep current password') && !html.includes('value="x"'));
 });
+
+test('Windows authentication (NTLM): validation and connection fields', () => {
+  const win = { ...ok, auth: 'windows', domain: ' CORP ', user: 'jdoe' };
+  assert.equal(validate({ ...win, domain: '' }, { get: () => undefined }), 'Domain is required for Windows authentication');
+  assert.equal(validate(win, { get: () => undefined }), undefined);
+  const c = toConnection(win);
+  assert.equal(c.auth, 'windows');
+  assert.equal(c.domain, 'CORP');
+  assert.equal(toConnection(ok).auth, undefined, 'SQL login stays default');
+  assert.ok(formHtml('csp', c).includes('<option value="windows" selected>') && !formHtml('csp', c).includes('id="domainrow" hidden'));
+});

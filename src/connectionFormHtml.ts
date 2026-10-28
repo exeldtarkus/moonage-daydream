@@ -11,6 +11,9 @@ export interface FormData {
   password: string;
   database: string;
   trust: boolean;
+  /** 'sql' (default) | 'windows' (NTLM) */
+  auth?: string;
+  domain?: string;
 }
 
 /** validasi form; return pesan error atau undefined */
@@ -19,6 +22,8 @@ export function validate(d: FormData, conns: { get(name: string): unknown }, old
   if (d.name.trim() !== oldName && conns.get(d.name.trim())) return `Connection name "${d.name.trim()}" is already used`;
   if (!d.host.trim()) return 'Host is required';
   if (!/^\d+$/.test(d.port) || +d.port < 1 || +d.port > 65535) return 'Port must be 1-65535';
+  if (d.auth === 'windows' && !d.domain?.trim()) return 'Domain is required for Windows authentication';
+  if (d.auth === 'windows' && !d.user.trim()) return 'Username is required for Windows authentication';
   return undefined;
 }
 
@@ -26,6 +31,7 @@ export function toConnection(d: FormData): ConnectionInfo {
   return {
     name: d.name.trim(), type: 'mssql', host: d.host.trim(), port: +d.port, instance: d.instance.trim() || undefined,
     user: d.user.trim(), database: d.database.trim(), trustServerCertificate: d.trust,
+    ...(d.auth === 'windows' ? { auth: 'windows' as const, domain: d.domain?.trim() } : {}),
   };
 }
 
@@ -42,6 +48,8 @@ export function formHtml(cspSource: string, old?: ConnectionInfo): string {
   h2 { font-weight: 600; margin: 0 0 16px; }
   .row { display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 12px; margin-bottom: 12px; }
   label { font-weight: 600; } label .req { color: var(--vscode-textLink-foreground); }
+  .row[hidden] { display: none; }
+  select { padding: 5px 6px; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); }
   input[type=text], input[type=password], input[type=number] { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit;
     color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }
   input:focus { outline: 1px solid var(--vscode-focusBorder); }
@@ -67,6 +75,10 @@ export function formHtml(cspSource: string, old?: ConnectionInfo): string {
     <div class="hostport"><input type="text" id="host" ${v(old?.host ?? 'localhost')} required><input type="number" id="port" min="1" max="65535" ${v(old?.port ?? 1433)} title="Port"></div></div>
   <div class="row"><label for="instance">Instance name</label><input type="text" id="instance" ${v(old?.instance)} placeholder="e.g. SQLEXPRESS"></div>
   <div class="hint">When set, the port is resolved by SQL Server Browser (UDP 1434) and the port above is ignored.</div>
+  <div class="row"><label for="auth">Authentication</label><select id="auth">
+    <option value="sql"${old?.auth === 'windows' ? '' : ' selected'}>SQL Server login</option>
+    <option value="windows"${old?.auth === 'windows' ? ' selected' : ''}>Windows (NTLM: domain \\ user + password)</option></select></div>
+  <div class="row" id="domainrow"${old?.auth === 'windows' ? '' : ' hidden'}><label for="domain">Domain <span class="req">*</span></label><input type="text" id="domain" ${v(old?.domain)} placeholder="e.g. CORP"></div>
   <div class="row"><label for="user">Username</label><input type="text" id="user" ${v(old?.user ?? 'sa')}></div>
   <div class="row"><label for="password">Password</label>
     <div class="pw"><input type="password" id="password" placeholder="${old ? 'Leave empty to keep current password' : ''}"><button type="button" class="secondary" id="show">Show</button></div></div>
@@ -84,7 +96,9 @@ export function formHtml(cspSource: string, old?: ConnectionInfo): string {
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
   const data = () => ({ name: $('name').value, host: $('host').value, port: $('port').value, instance: $('instance').value,
-    user: $('user').value, password: $('password').value, database: $('database').value, trust: $('trust').checked });
+    user: $('user').value, password: $('password').value, database: $('database').value, trust: $('trust').checked,
+    auth: $('auth').value, domain: $('domain').value });
+  $('auth').onchange = () => { $('domainrow').hidden = $('auth').value !== 'windows'; };
   const busy = (b) => ['test', 'save'].forEach((id) => ($(id).disabled = b));
   const status = (cls, text) => { $('status').className = cls; $('status').textContent = text; };
   $('show').onclick = () => { const p = $('password'); p.type = p.type === 'password' ? 'text' : 'password'; $('show').textContent = p.type === 'password' ? 'Show' : 'Hide'; };

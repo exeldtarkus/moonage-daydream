@@ -22,11 +22,16 @@ export async function retryOnce<T>(f: () => Promise<T>, retryable: (e: unknown) 
   }
 }
 
-const poolConfig = (conn: ConnectionInfo, password: string): sql.config => ({
+/**
+ * konfigurasi pool. Windows authentication = NTLM dengan domain / user / password eksplisit
+ * (tedious tidak bisa SSO memakai user Windows yang sedang login).
+ */
+export const poolConfig = (conn: ConnectionInfo, password: string): sql.config => ({
   server: conn.host,
   port: conn.instance ? undefined : conn.port, // tedious: port dan instanceName tidak boleh bersamaan
-  user: conn.user,
-  password,
+  ...(conn.auth === 'windows'
+    ? { authentication: { type: 'ntlm', options: { domain: conn.domain ?? '', userName: conn.user, password } } }
+    : { user: conn.user, password }),
   database: conn.database || undefined,
   options: { encrypt: true, trustServerCertificate: conn.trustServerCertificate, instanceName: conn.instance || undefined },
 });

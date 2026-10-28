@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { fmtType, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
+import { fmtType, poolConfig, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
 import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
@@ -194,4 +194,14 @@ test('edit grid: literals and UPDATE script by primary key', () => {
   assert.ok(script.includes('BEGIN TRAN;') && script.includes('-- COMMIT;') && !/^COMMIT/m.test(script), 'never commits by itself');
   assert.throws(() => updateScript('t', ['name'], ['nvarchar'], [['a']], ['id'], [{ row: 0, col: 0, value: 'b' }]), /must be part of the SELECT/);
   assert.throws(() => updateScript('t', ['id'], ['int'], [[1]], ['id'], [{ row: 0, col: 0, value: '2' }]), /cannot be edited/);
+});
+
+test('poolConfig: SQL login vs Windows (NTLM)', () => {
+  const base = { name: 'n', type: 'mssql' as const, host: 'h', port: 1433, user: 'u', database: '', trustServerCertificate: true };
+  const sqlLogin = poolConfig(base, 'pw');
+  assert.equal(sqlLogin.user, 'u');
+  assert.equal(sqlLogin.authentication, undefined);
+  const win = poolConfig({ ...base, auth: 'windows', domain: 'CORP' }, 'pw');
+  assert.deepEqual(win.authentication, { type: 'ntlm', options: { domain: 'CORP', userName: 'u', password: 'pw' } });
+  assert.equal(win.user, undefined);
 });

@@ -43,7 +43,7 @@
 - [ ] MySQL / MariaDB
 - [ ] PostgreSQL
 - [ ] SQLite
-- [ ] SQL Server Windows Authentication
+- [x] SQL Server Windows Authentication (NTLM: domain + user + password; SSO user Windows aktif tidak didukung tedious)
 
 ## Rilis
 - [ ] README + icon + screenshot
