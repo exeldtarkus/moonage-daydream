@@ -4,6 +4,30 @@ import { Column, ConnectionInfo, DbObject, ObjectKind, drivers } from './db';
 import { ident, identifierChain, statementAt, tableRefs } from './sqlContext';
 
 type Obj = DbObject & { kind: ObjectKind };
+
+/** keyword T-SQL yang sering dipakai (multi kata disisipkan utuh) */
+const KEYWORDS = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'EXISTS', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL', 'AS', 'ON',
+  'JOIN', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'FULL OUTER JOIN', 'CROSS JOIN', 'CROSS APPLY', 'OUTER APPLY',
+  'GROUP BY', 'ORDER BY', 'HAVING', 'ASC', 'DESC', 'TOP', 'DISTINCT', 'UNION', 'UNION ALL', 'EXCEPT', 'INTERSECT', 'WITH', 'WITH (NOLOCK)',
+  'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'MERGE', 'OUTPUT', 'INTO',
+  'DECLARE', 'BEGIN', 'COMMIT', 'ROLLBACK', 'BEGIN TRAN', 'EXEC', 'IF', 'WHILE', 'RETURN', 'GO', 'OFFSET', 'FETCH NEXT', 'ROWS ONLY', 'NULL', 'OVER', 'PARTITION BY'];
+/** fungsi T-SQL: disisipkan dengan kurung, kursor di dalam */
+const FUNCTIONS = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'ISNULL', 'COALESCE', 'NULLIF', 'CAST', 'CONVERT', 'TRY_CONVERT', 'TRY_CAST',
+  'GETDATE', 'SYSDATETIME', 'DATEADD', 'DATEDIFF', 'DATEPART', 'DATENAME', 'EOMONTH', 'FORMAT', 'YEAR', 'MONTH', 'DAY',
+  'LEN', 'DATALENGTH', 'SUBSTRING', 'LEFT', 'RIGHT', 'LTRIM', 'RTRIM', 'TRIM', 'UPPER', 'LOWER', 'REPLACE', 'CHARINDEX', 'CONCAT', 'STRING_AGG', 'STUFF',
+  'ROUND', 'ABS', 'CEILING', 'FLOOR', 'ROW_NUMBER', 'RANK', 'DENSE_RANK', 'LAG', 'LEAD', 'IIF', 'NEWID', 'OBJECT_ID', 'DB_NAME', 'SCOPE_IDENTITY'];
+
+/** keyword / fungsi: huruf mengikuti setting format.keywordCase (preserve = ikuti huruf yang diketik) */
+export function keywordItems(word: string, keywordCase: string, range: vscode.Range): vscode.CompletionItem[] {
+  const lower = keywordCase === 'lower' || (keywordCase === 'preserve' && word !== '' && word === word.toLowerCase());
+  const k = (t: string) => (lower ? t.toLowerCase() : t);
+  return [
+    ...KEYWORDS.map((kw) => Object.assign(new vscode.CompletionItem(k(kw), vscode.CompletionItemKind.Keyword), { range, sortText: `3${kw}` })),
+    ...FUNCTIONS.map((f) => Object.assign(new vscode.CompletionItem({ label: k(f), description: 'function' }, vscode.CompletionItemKind.Function), {
+      range, sortText: `4${f}`, insertText: new vscode.SnippetString(`${k(f)}($1)`),
+    })),
+  ];
+}
 // shortcut: cache metadata 5 menit per koneksi / database; Refresh di Connections mengosongkannya
 const TTL = 5 * 60_000;
 
@@ -69,16 +93,20 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
   }
 
   async provideCompletionItems(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.CompletionItem[]> {
-    const c = this.fileConn(doc.uri);
-    if (!c) return [];
     const { parts, word } = identifierChain(doc.lineAt(pos.line).text.slice(0, pos.character));
     const range = new vscode.Range(pos.translate(0, -word.length - (doc.lineAt(pos.line).text[pos.character - word.length - 1] === '[' ? 1 : 0)), pos);
+    const kwCase = vscode.workspace.getConfiguration('moonageDaydream.format', doc).get('keywordCase', 'upper');
+    // keyword tetap ada tanpa koneksi / saat metadata gagal dimuat
+    const keywords = () => (parts.length ? [] : rank(keywordItems(word, kwCase, range), word));
+    const c = this.fileConn(doc.uri);
+    if (!c) return keywords();
     const current = c.database || 'master'; // shortcut: koneksi tanpa database default dianggap master
     try {
       const stmt = statementAt(doc.getText(), doc.offsetAt(pos));
       if (parts.length === 0) {
         const [cols, dbs, objs] = await Promise.all([this.columns(c, current, stmt), this.databases(c), this.objects(c, current)]);
-        return rank([...cols.map((x) => this.colItem(x, range)), ...dbs.map((db) => this.dbItem(db, range)), ...objs.map((o) => this.objItem(o, range, true))], word);
+        return rank([...cols.map((x) => this.colItem(x, range)), ...dbs.map((db) => this.dbItem(db, range)), ...objs.map((o) => this.objItem(o, range, true)),
+          ...keywordItems(word, kwCase, range)], word);
       }
       if (parts.length === 1) {
         // `X.`: X database (-> schema) atau schema di database file ini (-> tabel)
@@ -102,7 +130,7 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
       return rank(objs.filter((o) => o.schema.toLowerCase() === (schema || 'dbo').toLowerCase()).map((o) => this.objItem(o, range, false)), word);
     } catch (e) {
       this.log.error(`SqlCompletion - EXCEPTION CAUGHT | ${c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
-      return [];
+      return keywords();
     }
   }
 

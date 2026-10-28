@@ -388,6 +388,18 @@ async function completionTest(m: typeof import('../../extension')) {
     assert.ok(list.items.every((i) => i.filterText === fold(i.filterText!)), `filterText follows typed case "${typed}"`);
     say(`PASS completion exact match: typed "${typed}" -> "${topLabel}" preselected first of ${list.items.length}`);
   }
+  // keyword / fungsi SQL + kolom dari FROM a, b (koma)
+  const kw = (await labels(0));
+  assert.ok(kw.includes('WHERE') && kw.includes('LEFT JOIN') && kw.includes('ISNULL'), 'keywords and functions');
+  const commaDoc = await fixture('completion-comma', `SELECT * FROM ${L.table} a, sys.objects o WHERE o.\nSELECT * FROM ${L.table} a, sys.objects o WHERE a.`);
+  await m.conns.bind(commaDoc.uri.toString(), { conn: CONN, db: L.db });
+  const fields = async (line: number) => (await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', commaDoc.uri, new vscode.Position(line, commaDoc.lineAt(line).text.length)))
+    .items.filter((i) => i.kind === vscode.CompletionItemKind.Field).map((i) => (typeof i.label === 'string' ? i.label : i.label.label));
+  const oCols = await fields(0);
+  const aCols = await fields(1);
+  assert.ok(oCols.includes('object_id') && !oCols.includes(cols[0]), `o. -> sys.objects columns (${oCols.length})`);
+  assert.ok(cols.every((x) => aCols.includes(x)), `a. -> first table columns (${aCols.length})`);
+  say(`PASS completion keywords (WHERE, LEFT JOIN, ISNULL) + FROM a, b: o. -> ${oCols.length} cols, a. -> ${aCols.length} cols`);
   say(`PASS completion columns: WHERE -> ${afterWhere.length} column(s), alias t. -> ${afterAlias.length} column(s)`);
 }
 

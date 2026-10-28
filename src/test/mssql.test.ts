@@ -105,6 +105,10 @@ test('tableRefs finds FROM / JOIN tables and aliases', () => {
   );
   assert.deepEqual(tableRefs("select 'from x' from T"), [{ parts: ['T'], alias: undefined }], 'from inside string ignored');
   assert.deepEqual(tableRefs('select * from SalesDb.'), []);
+  assert.deepEqual(tableRefs('select * from dbo.Orders o, SalesDb..Lines AS l, Items where o.id = l.id'), [
+    { parts: ['dbo', 'Orders'], alias: 'o' }, { parts: ['SalesDb', '', 'Lines'], alias: 'l' }, { parts: ['Items'], alias: undefined },
+  ], 'FROM a, b, c');
+  assert.deepEqual(tableRefs("select a, b from t where x in ('p', 'q')"), [{ parts: ['t'], alias: undefined }], 'commas after FROM list are not tables');
 });
 
 test('formatSql: uppercase keywords, leading commas, strings untouched', () => {

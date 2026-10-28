@@ -104,17 +104,27 @@ export function missingSemicolons(sql: string): { start: number; end: number }[]
 const NOT_ALIAS = /^(where|join|inner|left|right|full|outer|cross|on|group|order|having|union|except|intersect|with|as|go|select|set|values|option|for|apply|pivot|unpivot)$/i;
 const NAME = String.raw`(?:\[[^\]]*\]|[\w$#@]+)`;
 
-/** tabel di FROM / JOIN statement: `Shop..T p`, `dbo.T AS x`, `[My DB].dbo.T` -> parts (db, schema, nama) + alias */
+/** tabel di FROM / JOIN statement: `Shop..T p`, `dbo.T AS x`, `[My DB].dbo.T`, `FROM a x, b y` -> parts (db, schema, nama) + alias */
 export function tableRefs(stmt: string): { parts: string[]; alias?: string }[] {
   const masked = maskSql(stmt);
-  const re = new RegExp(String.raw`\b(?:from|join)\s+(${NAME}?(?:\s*\.\s*${NAME}?){0,2})(?:\s+(?:as\s+)?(${NAME}))?`, 'gi');
+  const ref = String.raw`(${NAME}?(?:\s*\.\s*${NAME}?){0,2})(?:\s+(?:as\s+)?(${NAME}))?`;
+  const re = new RegExp(String.raw`\b(?:from|join)\s+${ref}`, 'gi');
+  const more = new RegExp(String.raw`\s*,\s*${ref}`, 'iy'); // FROM a, b, c (koma di level FROM)
   const out: { parts: string[]; alias?: string }[] = [];
+  const push = (raw: string, alias?: string) => {
+    const parts = raw.split('.').map((p) => p.trim().replace(/^\[|\]$/g, ''));
+    if (!parts[parts.length - 1]) return false; // `FROM db.` belum selesai diketik
+    out.push({ parts, alias: alias && !NOT_ALIAS.test(alias) ? alias.replace(/^\[|\]$/g, '') : undefined });
+    return true;
+  };
   for (let m; (m = re.exec(stmt)); ) {
     if (masked[m.index] !== stmt[m.index]) continue; // `from` di dalam string / komentar
-    const parts = m[1].split('.').map((p) => p.trim().replace(/^\[|\]$/g, ''));
-    if (!parts[parts.length - 1]) continue; // `FROM db.` belum selesai diketik
-    const alias = m[2] && !NOT_ALIAS.test(m[2]) ? m[2].replace(/^\[|\]$/g, '') : undefined;
-    out.push({ parts, alias });
+    if (!push(m[1], m[2])) continue;
+    more.lastIndex = re.lastIndex;
+    for (let c; (c = more.exec(stmt)) && masked[c.index + c[0].indexOf(',')] === ','; ) {
+      if (!push(c[1], c[2])) break;
+      re.lastIndex = more.lastIndex;
+    }
   }
   return out;
 }

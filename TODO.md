@@ -28,7 +28,7 @@
 - [x] CodeLens `Execute | Explain | Analyze` per statement (Explain = estimated plan, Analyze = actual plan khusus SELECT, rollback)
 - [x] Autocomplete database / schema / tabel / view, termasuk lintas database (`DB.schema.table`, `DB..table`)
 - [x] Autocomplete kolom dari tabel di FROM / JOIN (WHERE, SELECT, ON, `alias.`)
-- [ ] Autocomplete keyword SQL, FROM dengan koma (`FROM a, b`)
+- [x] Autocomplete keyword / fungsi SQL, kolom dari FROM dengan koma (`FROM a, b`)
 - [x] Formatter SQL (Format Document / Selection, Shift+Alt+F): keyword huruf besar, koma di depan (setting `moonageDaydream.format.*`)
 - [x] Klik kanan database di Connections: New SQL File (tab terikat ke koneksi + database)
 - [x] Auto limit 100 (setting `moonageDaydream.query.autoLimit`): satu SELECT tanpa TOP / OFFSET FETCH / INTO diambil 100 baris lalu dihentikan di server
