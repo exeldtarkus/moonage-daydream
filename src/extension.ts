@@ -3,7 +3,7 @@ import { Connections } from './connections';
 import { Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, Session, address, drivers } from './db';
+import { ConnectionInfo, PAGE_ROWS, Session, address, drivers } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, newSqlFile } from './sqlFiles';
@@ -52,7 +52,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     : m.type === 'export' ? exportResult(m, undefined, o)
     : m.type === 'copy' ? exportResult(m, 'clipboard', o)
     : m.type === 'planXml' ? openPlanXml(o)
-    : m.type === 'pin' ? results.pin() : undefined);
+    : m.type === 'pin' ? results.pin()
+    : m.type === 'more' ? loadMore(m) : undefined);
   runningView = new RunningView(running);
   history = new History(ctx.globalState);
 
@@ -735,6 +736,39 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
   }
   if (running.has(key)) return; // diganti run yang lebih baru
   await results.show(title, outcome);
+}
+
+/**
+ * Load more: statement asal (+ WHERE aktif) dijalankan ulang, baris yang sudah dimuat dilewati, PAGE_ROWS berikutnya ditambahkan.
+ * shortcut: urutan baris hanya stabil dengan ORDER BY; tanpa itu SQL Server boleh mengembalikan urutan lain.
+ */
+export async function loadMore(m: ResultMessage): Promise<number | undefined> {
+  const o = results.current?.outcome;
+  if (!o || m.set !== 0) return;
+  const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
+  const single = part ? part.o : o;
+  if (!('result' in single)) return;
+  const rs = single.result.resultSets[0];
+  const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
+  const c = src && fileConn(vscode.Uri.parse(src.uri));
+  if (!rs || !src || !c) return;
+  const offset = rs.rows.length;
+  try {
+    const sql = src.where ? addWhere(src.sql, src.where) : src.sql;
+    const next = (await drivers[c.type].run(c, await conns.password(c.name), sql, undefined, offset + PAGE_ROWS, offset)).resultSets[0];
+    rs.rows.push(...(next?.rows ?? []));
+    if (rs.limited) {
+      rs.total = next?.total ?? rs.total; // auto limit: total = baris yang terbaca sejauh ini
+      rs.limited = next?.limited ? offset + PAGE_ROWS : undefined;
+    }
+    log.info(`load more: +${next?.rows.length ?? 0} rows (now ${rs.rows.length})`);
+    return next?.rows.length ?? 0;
+  } catch (e) {
+    log.error(`loadMore - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Load more failed: ${errMsg(e)}`);
+  } finally {
+    results.refresh();
+  }
 }
 
 /** tombol Open XML di hasil plan: XML asli di tab baru */

@@ -1,4 +1,4 @@
-import type { QueryResult } from './db';
+import { GRID_MAX_ROWS, PAGE_ROWS, QueryResult } from './db';
 import { preview } from './sqlContext';
 import { FORMATS } from './exporter';
 import type { PlanStatement } from './plan';
@@ -76,7 +76,8 @@ function whereBar(where: string | undefined, part?: number): string {
     + `${where ? '<button type="button" class="clear" title="Clear filter">×</button>' : ''}</form>`;
 }
 
-function resultHtml(r: QueryResult): string {
+/** canMore: statement asal diketahui (satu SELECT) -> tombol Load more di result set pertama */
+function resultHtml(r: QueryResult, canMore = false): string {
   const sets = r.resultSets.map((s, i) => {
     // kolom angka rata kanan; tanpa info tipe: tebak dari nilai baris pertama
     const num = s.columns.map((_, c) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number'));
@@ -90,7 +91,8 @@ function resultHtml(r: QueryResult): string {
     }).join('');
     return `<h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
 <div class="grid"><table class="rs" data-set="${i}"><thead><tr><th class="n"></th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
-<div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span><button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div>`;
+<div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
+      ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div>`;
   }).join('');
   const msgs = [...r.messages, ...(r.resultSets.length ? [] : [`${r.rowsAffected.reduce((a, b) => a + b, 0)} row(s) affected`])];
   return `${sets}${msgs.length ? `<pre class="msg">${esc(msgs.join('\n'))}</pre>` : ''}`;
@@ -121,7 +123,7 @@ function partHtml(p: Part, i: number, uri: string, pinned: boolean): string {
   const state = 'loading' in o ? (o.cancelling ? 'cancelling' : 'running') : 'error' in o ? 'failed' : `${o.result.durationMs} ms`;
   const head = `<h2>Query ${i + 1} <span>${esc(preview(p.sql))} · ${state}</span></h2>`;
   if ('loading' in o) return `<section data-part="${i}">${head}<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div></section>`;
-  return `<section data-part="${i}">${head}${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result)}</section>`;
+  return `<section data-part="${i}">${head}${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned)}</section>`;
 }
 
 /** pinned: snapshot di tab sendiri (tanpa toolbar WHERE / tombol Pin; filter, sort, export tetap) */
@@ -149,7 +151,7 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
     body = `${o.source && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = `${o.source && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result)}`;
+    body = `${o.source && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned)}`;
   }
   return `<!DOCTYPE html>
 <html>
@@ -198,6 +200,10 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .menu input { margin: 4px 10px; width: calc(100% - 20px); box-sizing: border-box; padding: 4px 6px; font: inherit;
     color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); }
   .menu hr { border: 0; border-top: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-panel-border)); margin: 4px 0; }
+  .foot .morebtn { margin-left: auto; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
+    color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
+  .foot .morebtn:hover { background: var(--vscode-button-hoverBackground, #1177bb); } .foot .morebtn:disabled { opacity: .5; cursor: progress; }
+  .foot .morebtn + .xbtn { margin-left: 8px; }
   .foot .xbtn { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer;
     font: inherit; color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, transparent); }
   .foot .xbtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
@@ -400,6 +406,14 @@ const GRID_SCRIPT = `(() => {
     const th = b.closest('th');
     if (b.classList.contains('xmlbtn')) { vscode.postMessage({ type: 'planXml' }); return; }
     if (b.classList.contains('pinbtn')) { vscode.postMessage({ type: 'pin' }); return; }
+    if (b.classList.contains('morebtn')) {
+      const t = b.closest('.foot').previousElementSibling.querySelector('table');
+      const part = t.closest('section')?.dataset.part;
+      b.disabled = true;
+      b.textContent = 'Loading…';
+      vscode.postMessage({ type: 'more', set: +t.dataset.set, part: part === undefined ? undefined : +part });
+      return;
+    }
     if (b.classList.contains('xbtn')) {
       e.stopPropagation();
       const t = b.closest('.foot').previousElementSibling.querySelector('table');

@@ -72,7 +72,7 @@ async function select<T>(conn: ConnectionInfo, password: string, text: string, p
 }
 
 /** jalankan satu batch dengan request stream: hanya MAX_ROWS baris per result set disimpan, cancel lewat signal, auto limit */
-async function collect(req: sql.Request, batch: string, out: QueryResult, signal?: AbortSignal, limit?: number, asBatch = false): Promise<void> {
+async function collect(req: sql.Request, batch: string, out: QueryResult, signal?: AbortSignal, limit?: number, asBatch = false, skip = 0): Promise<void> {
   req.arrayRowMode = true;
   req.stream = true; // baris dibaca per event: hanya MAX_ROWS yang disimpan
   req.on('info', (i: { message: string }) => out.messages.push(i.message)); // PRINT / RAISERROR level rendah
@@ -88,7 +88,7 @@ async function collect(req: sql.Request, batch: string, out: QueryResult, signal
     req.on('row', (row: unknown[]) => {
       if (!cur || limited) return;
       cur.total++;
-      if (cur.rows.length < MAX_ROWS) cur.rows.push(row);
+      if (cur.total > skip && cur.rows.length < MAX_ROWS) cur.rows.push(row); // skip: halaman sebelumnya sudah dimuat
       if (limit && cur.total >= limit) {
         limited = true; // auto limit: cukup, hentikan query di server; error "Canceled" berikutnya bukan kegagalan
         cur.limited = limit;
@@ -111,13 +111,13 @@ export const mssqlDriver: Driver = {
   label: 'SQL Server',
   defaultPort: 1433,
 
-  async run(conn, password, text, signal, limit) {
+  async run(conn, password, text, signal, limit, skip) {
     const p = await pool(conn, password);
     const out: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
     const start = Date.now();
     for (const batch of splitBatches(text)) {
       signal?.throwIfAborted(); // batch GO berikutnya tidak dijalankan
-      await collect(p.request(), batch, out, signal, limit);
+      await collect(p.request(), batch, out, signal, limit, false, skip);
     }
     out.durationMs = Date.now() - start;
     return out;

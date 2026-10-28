@@ -384,6 +384,28 @@ async function txTest(m: typeof import('../../extension')) {
   }
 }
 
+/** Load more: auto limit 100 -> +1000 per klik sampai semua baris (ORDER BY: tanpa duplikat), tombol hilang saat habis */
+async function moreTest(m: typeof import('../../extension')) {
+  const doc = await fixture('more', 'SELECT name, object_id\nFROM sys.all_objects\nORDER BY object_id;\n');
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
+  await vscode.window.showTextDocument(doc);
+  await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  const rs = () => { const o = m.results.current!.outcome; return 'result' in o ? o.result.resultSets[0] : undefined; };
+  assert.ok(rs()?.rows.length === 100 && resultHtml(m).includes('class="morebtn"'), 'auto limit 100 + Load more');
+  const sizes: number[] = [];
+  for (let i = 0; i < 5 && resultHtml(m).includes('class="morebtn"'); i++) {
+    await m.loadMore({ type: 'more', set: 0 });
+    sizes.push(rs()!.rows.length);
+  }
+  const ids = rs()!.rows.map((r) => r[1]);
+  const { drivers } = require('../../db') as typeof import('../../db');
+  const total = Number((await drivers.mssql.run({ ...m.conns.get(CONN)!, database: 'master' }, await m.conns.password(CONN), 'SELECT COUNT(*) FROM sys.all_objects')).resultSets[0].rows[0][0]);
+  assert.equal(ids.length, total, `all rows loaded ${sizes.join(' -> ')} = ${total}`);
+  assert.equal(new Set(ids).size, ids.length, 'no duplicates');
+  assert.ok(!resultHtml(m).includes('class="morebtn"') && (resultHtml(m).match(/<tr><td class="n">/g) ?? []).length === total, 'button gone, all rows rendered');
+  say(`PASS load more: 100 -> ${sizes.join(' -> ')} rows (= COUNT ${total}), no duplicates`);
+}
+
 /** Format Document: keyword huruf besar + koma di depan (tanpa koneksi DB) */
 async function formatTest(m: typeof import('../../extension')) {
   const doc = await fixture('format', "select name, object_id from sys.objects where name like 'a,%'\n");
@@ -732,6 +754,12 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL auto limit: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await moreTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL load more: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await txTest(m);

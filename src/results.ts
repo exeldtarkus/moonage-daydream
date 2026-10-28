@@ -101,6 +101,12 @@ export class Results implements vscode.WebviewViewProvider {
     if (changed) this.repaint(uri);
   }
 
+  /** gambar ulang hasil yang sedang tampil apa pun jenisnya (mis. setelah Load more) */
+  refresh(): void {
+    const w = this.location === 'panel' ? this.view?.webview : this.panel?.webview;
+    if (w && this.last) this.paint(w);
+  }
+
   /** gambar ulang hasil yang sedang tampil (run paralel: statement selesai satu per satu) tanpa memindah fokus */
   repaint(uri: string): void {
     const o = this.last?.outcome;

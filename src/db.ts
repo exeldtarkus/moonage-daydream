@@ -18,6 +18,9 @@ export interface ConnectionInfo {
 // shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil
 // dan cancel tetap responsif di tabel besar; ganti ke paging / virtual scroll bila perlu melihat semua baris
 export const MAX_ROWS = 1000;
+/** Load more: baris per halaman dan batas total baris di grid */
+export const PAGE_ROWS = 1000;
+export const GRID_MAX_ROWS = 50_000;
 
 export interface ResultSet {
   columns: string[];
@@ -66,8 +69,8 @@ export interface Driver {
   label: string;
   defaultPort: number;
   /** `signal` abort = cancel query di server */
-  /** limit: ambil sekian baris pertama lalu hentikan query di server (hanya untuk satu SELECT, lihat autoLimitable) */
-  run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal, limit?: number): Promise<QueryResult>;
+  /** skip: baris pertama sebanyak ini dilewati (Load more); limit: ambil sekian baris pertama lalu hentikan query di server (hanya untuk satu SELECT, lihat autoLimitable) */
+  run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal, limit?: number, skip?: number): Promise<QueryResult>;
   /**
    * transaksi manual: satu koneksi khusus; transaksi dibuka otomatis saat run pertama dan tetap terbuka sampai commit / rollback.
    */

@@ -36,7 +36,8 @@
 - [x] Linter: statement tanpa `;` ditandai merah (setting `moonageDaydream.lint.semicolon`), Quick Fix "Add ;"
 - [x] Transaction strategy: mode Auto-commit / Manual per file (Manual = BEGIN TRAN otomatis, tombol Commit / Rollback, status transaksi di status bar, peringatan bila transaksi masih terbuka saat file / koneksi ditutup)
 - [ ] Edit data langsung di grid
-- [ ] Paging / virtual scroll di grid (sekarang 1000 baris pertama per result set; sisanya hanya dihitung)
+- [x] Paging: tombol Load more (+1000 baris, maks 50.000 di grid)
+- [ ] Virtual scroll di grid (render hanya baris yang terlihat untuk ribuan baris)
 
 ## Database lain (lewat `src/db.ts` → `drivers`)
 - [ ] MySQL / MariaDB
