@@ -48,10 +48,11 @@ export function activate(ctx: vscode.ExtensionContext) {
   updateStatus();
   status.show();
   results = new Results(ctx);
-  results.onMessage = (m) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part)
-    : m.type === 'export' ? exportResult(m)
-    : m.type === 'copy' ? exportResult(m, 'clipboard')
-    : m.type === 'planXml' ? openPlanXml() : undefined);
+  results.onMessage = (m, o) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part)
+    : m.type === 'export' ? exportResult(m, undefined, o)
+    : m.type === 'copy' ? exportResult(m, 'clipboard', o)
+    : m.type === 'planXml' ? openPlanXml(o)
+    : m.type === 'pin' ? results.pin() : undefined);
   runningView = new RunningView(running);
   history = new History(ctx.globalState);
 
@@ -122,6 +123,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.runQuery', runQuery),
     vscode.commands.registerCommand('moonageDaydream.runStatement', runStatement),
+    vscode.commands.registerCommand('moonageDaydream.pinResults', () => results.pin()),
     vscode.commands.registerCommand('moonageDaydream.explain', (u?: vscode.Uri | string, a?: number, b?: number) => explainQuery('estimated', u, a, b)),
     vscode.commands.registerCommand('moonageDaydream.analyze', (u?: vscode.Uri | string, a?: number, b?: number) => explainQuery('actual', u, a, b)),
     vscode.commands.registerCommand('moonageDaydream.cancelQuery', cancelQuery),
@@ -495,8 +497,8 @@ export async function applyWhere(where: string, part?: number) {
  * target: 'clipboard' = Copy (format teks, All Data dibatasi CLIPBOARD_MAX_ROWS); Uri diisi test (tanpa dialog Save).
  * Mengembalikan jumlah baris yang ditulis.
  */
-export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clipboard'): Promise<number | undefined> {
-  const o = results.current?.outcome;
+export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clipboard', outcome?: Outcome): Promise<number | undefined> {
+  const o = outcome ?? results.current?.outcome; // outcome: tab pin (snapshot) asal pesan
   if (!o || m.set === undefined) return;
   const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
   const single = part ? part.o : o;
@@ -641,8 +643,8 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
 }
 
 /** tombol Open XML di hasil plan: XML asli di tab baru */
-async function openPlanXml() {
-  const o = results.current?.outcome;
+async function openPlanXml(outcome?: Outcome) {
+  const o = outcome ?? results.current?.outcome;
   if (!o || !('plan' in o)) return;
   const doc = await vscode.workspace.openTextDocument({ language: 'xml', content: o.xml.join('\n\n') });
   await vscode.window.showTextDocument(doc, { preview: false });

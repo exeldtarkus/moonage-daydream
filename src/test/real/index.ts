@@ -317,6 +317,39 @@ async function planTest(m: typeof import('../../extension')) {
   say(`PASS plan: lenses on lines 0 and 4, Execute 2nd statement only, Explain ${ops} operator(s), Analyze actual rows, Analyze refused for UPDATE`);
 }
 
+/** Pin: snapshot hasil di tab sendiri, pin kedua di sebelahnya (side by side), tidak tertimpa run baru; export dari pin pakai snapshot */
+async function pinTest(m: typeof import('../../extension')) {
+  const doc = await fixture('pin', 'SELECT DB_NAME() AS db_name;\n');
+  const run = async (db: string) => {
+    await m.conns.bind(doc.uri.toString(), { conn: CONN, db });
+    await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+    await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  };
+  try {
+    await run('master');
+    await vscode.commands.executeCommand('moonageDaydream.pinResults');
+    await run('msdb');
+    await vscode.commands.executeCommand('moonageDaydream.pinResults');
+    const [a, b] = m.results.pinned;
+    assert.ok(a && b, `two pins (${m.results.pinned.length})`);
+    assert.ok(a.panel.webview.html.includes('<td>master</td>') && b.panel.webview.html.includes('<td>msdb</td>'), 'each pin keeps its own result');
+    assert.ok(!a.panel.webview.html.includes('<form class="where">') && !a.panel.webview.html.includes('class="pinbtn"'), 'pin: no WHERE bar / Pin button');
+    await run('tempdb'); // run baru tidak menimpa pin
+    assert.ok(a.panel.viewColumn && b.panel.viewColumn && a.panel.viewColumn !== b.panel.viewColumn, `side by side columns ${a.panel.viewColumn} / ${b.panel.viewColumn}`);
+    assert.ok(a.panel.webview.html.includes('<td>master</td>') && resultHtml(m).includes('<td>tempdb</td>'), 'pins unchanged after a new run');
+    const clip0 = await vscode.env.clipboard.readText();
+    try {
+      await m.exportResult({ type: 'copy', set: 0, scope: 'all', format: 'tsv', header: false }, 'clipboard', a.outcome);
+      assert.equal((await vscode.env.clipboard.readText()).trim(), 'master', 'export from a pin uses the pin snapshot');
+    } finally {
+      await vscode.env.clipboard.writeText(clip0);
+    }
+    say(`PASS pin: master + msdb pinned side by side (columns ${a.panel.viewColumn}/${b.panel.viewColumn}), unchanged after tempdb run, copy from pin = master`);
+  } finally {
+    [...m.results.pinned].forEach((p) => p.panel.dispose());
+  }
+}
+
 /** Format Document: keyword huruf besar + koma di depan (tanpa koneksi DB) */
 async function formatTest(m: typeof import('../../extension')) {
   const doc = await fixture('format', "select name, object_id from sys.objects where name like 'a,%'\n");
@@ -665,6 +698,12 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL auto limit: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await pinTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL pin: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await planTest(m);

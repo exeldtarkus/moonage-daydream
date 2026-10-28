@@ -10,7 +10,7 @@
 - [x] Koneksi SQL Server named instance (`host\instance`, port via SQL Server Browser)
 - [x] Koneksi + database per file `.sql` (CodeLens `Execute | koneksi | database`, status bar ikut file aktif)
 - [x] Explorer di sidebar: koneksi → database → tables / views / procedures → kolom, + "Select Top 100"
-- [ ] Hasil banyak query **side by side** (pembeda dari DBCode), plus pin hasil
+- [x] Pin hasil ke tab sendiri, pin berikutnya berdampingan (side by side) untuk membandingkan run berbeda
 - [x] Export hasil (All Data dari server / Current Selection) ke Excel .xlsx, CSV, JSON, JSON pretty, Markdown, HTML
 - [x] Copy ke clipboard: Ctrl+C baris terpilih (TSV), tombol Copy di popup Export (semua format teks)
 - [x] Toolbar hasil: filter WHERE (input di atas grid, query dijalankan ulang dengan WHERE tambahan)

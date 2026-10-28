@@ -179,6 +179,12 @@
         "title": "Analyze (actual plan, SELECT only)",
         "category": "Moonage Daydream",
         "icon": "$(pulse)"
+      },
+      {
+        "command": "moonageDaydream.pinResults",
+        "title": "Pin Results (keep in its own tab, side by side)",
+        "category": "Moonage Daydream",
+        "icon": "$(pinned)"
       }
     ],
     "keybindings": [
@@ -260,6 +266,11 @@
           "command": "moonageDaydream.refreshSqlFiles",
           "when": "view == moonageDaydream.sqlFiles",
           "group": "navigation@2"
+        },
+        {
+          "command": "moonageDaydream.pinResults",
+          "when": "view == moonageDaydream.results",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [

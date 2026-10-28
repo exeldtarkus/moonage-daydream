@@ -115,15 +115,16 @@ function planHtml(o: PlanOutcome): string {
   return `<div class="planbar">${rows}<button class="xmlbtn" title="Open the raw execution plan XML">Open XML</button></div>${stmts || '<div class="msg">No plan returned.</div>'}`;
 }
 
-function partHtml(p: Part, i: number, uri: string): string {
+function partHtml(p: Part, i: number, uri: string, pinned: boolean): string {
   const o = p.o;
   const state = 'loading' in o ? (o.cancelling ? 'cancelling' : 'running') : 'error' in o ? 'failed' : `${o.result.durationMs} ms`;
   const head = `<h2>Query ${i + 1} <span>${esc(preview(p.sql))} · ${state}</span></h2>`;
   if ('loading' in o) return `<section data-part="${i}">${head}<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div></section>`;
-  return `<section data-part="${i}">${head}${whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result)}</section>`;
+  return `<section data-part="${i}">${head}${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result)}</section>`;
 }
 
-export function render(cspSource: string, title: string, o: Outcome): string {
+/** pinned: snapshot di tab sendiri (tanpa toolbar WHERE / tombol Pin; filter, sort, export tetap) */
+export function render(cspSource: string, title: string, o: Outcome, pinned = false): string {
   const nonce = Array.from({ length: 24 }, () => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 62)]).join('');
   let body: string;
   let status: string;
@@ -131,7 +132,7 @@ export function render(cspSource: string, title: string, o: Outcome): string {
     const left = o.parts.filter((p) => 'loading' in p.o).length;
     const failed = o.parts.filter((p) => 'error' in p.o).length;
     status = left ? `Running ${left} of ${o.parts.length} queries in parallel…` : `${o.parts.length} queries done in ${(o.end ?? Date.now()) - o.start} ms${failed ? ` · ${failed} failed` : ''}`;
-    body = o.parts.map((p, i) => partHtml(p, i, o.uri)).join('');
+    body = o.parts.map((p, i) => partHtml(p, i, o.uri, pinned)).join('');
   } else if ('plan' in o) {
     status = `${o.mode === 'estimated' ? 'Explain (estimated plan, not executed)' : 'Analyze (actual plan, transaction rolled back)'} · ${o.durationMs} ms`;
     body = planHtml(o);
@@ -144,10 +145,10 @@ export function render(cspSource: string, title: string, o: Outcome): string {
 </div>`;
   } else if ('error' in o) {
     status = 'Failed';
-    body = `${o.source ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
+    body = `${o.source && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = `${o.source ? whereBar(o.source.where) : ''}${resultHtml(o.result)}`;
+    body = `${o.source && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result)}`;
   }
   return `<!DOCTYPE html>
 <html>
@@ -157,7 +158,10 @@ export function render(cspSource: string, title: string, o: Outcome): string {
 <style>
   body { margin: 0; padding: 8px 12px; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground);
     font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
-  .top { opacity: .7; margin-bottom: 8px; }
+  .top { opacity: .85; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .pinbtn { margin-left: auto; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font-family: var(--vscode-font-family); font-size: 12px;
+    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  .pinbtn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
   h3 { font-size: 12px; margin: 12px 0 4px; } h3 span { font-weight: normal; opacity: .7; }
   /* grid gaya DBCode: header tebal + ikon tipe, baris lega selang-seling, angka rata kanan, footer Rows / waktu */
   .grid { overflow: auto; max-height: 70vh; border: 1px solid var(--vscode-panel-border); border-bottom: 0; }
@@ -258,7 +262,7 @@ export function render(cspSource: string, title: string, o: Outcome): string {
 </style>
 </head>
 <body>
-${running(o) ? '<div class="bar"></div>' : ''}${'loading' in o ? '' : `<div class="top">${esc(title)} · ${status}</div>`}
+${running(o) ? '<div class="bar"></div>' : ''}${'loading' in o ? '' : `<div class="top">${pinned ? '📌 ' : ''}${esc(title)} · ${status}${pinned || running(o) ? '' : '<button class="pinbtn" title="Pin: keep this result in its own tab (next to the others) so new runs do not replace it">📌 Pin</button>'}</div>`}
 ${body}
 <div id="menu" class="menu" hidden></div>
 <script nonce="${nonce}">const FORMAT_OPTIONS = ${JSON.stringify(FORMAT_OPTIONS)};${GRID_SCRIPT}</script>
@@ -358,6 +362,7 @@ const GRID_SCRIPT = `(() => {
     if (!b) { if (!menu.contains(e.target)) menu.hidden = true; return; }
     const th = b.closest('th');
     if (b.classList.contains('xmlbtn')) { vscode.postMessage({ type: 'planXml' }); return; }
+    if (b.classList.contains('pinbtn')) { vscode.postMessage({ type: 'pin' }); return; }
     if (b.classList.contains('xbtn')) {
       e.stopPropagation();
       const t = b.closest('.foot').previousElementSibling.querySelector('table');

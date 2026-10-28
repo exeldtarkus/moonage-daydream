@@ -30,7 +30,9 @@ export class Results implements vscode.WebviewViewProvider {
   private last: { title: string; outcome: Outcome } | undefined;
 
   /** pesan dari script grid (mis. filter WHERE); diisi extension */
-  onMessage: ((msg: ResultMessage) => unknown) | undefined;
+  onMessage: ((msg: ResultMessage, outcome: Outcome | undefined) => unknown) | undefined;
+  /** tab hasil yang di-pin (snapshot, tidak ditimpa run berikutnya) */
+  readonly pinned: { panel: vscode.WebviewPanel; title: string; outcome: Outcome }[] = [];
 
   constructor(private ctx: vscode.ExtensionContext) {}
 
@@ -51,7 +53,7 @@ export class Results implements vscode.WebviewViewProvider {
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = { enableScripts: true, enableCommandUris: [CANCEL_COMMAND] }; // script grid (filter / sort / WHERE) + tombol Cancel
-    view.webview.onDidReceiveMessage((m) => this.onMessage?.(m));
+    view.webview.onDidReceiveMessage((m) => this.onMessage?.(m, this.last?.outcome));
     view.onDidDispose(() => (this.view = undefined));
     this.paint(view.webview);
   }
@@ -72,7 +74,7 @@ export class Results implements vscode.WebviewViewProvider {
         this.panel?.dispose();
         this.panel = vscode.window.createWebviewPanel(VIEW_ID, 'Results', { viewColumn: vscode.ViewColumn.Beside, preserveFocus: this.location === 'right' },
           { enableScripts: true, enableCommandUris: [CANCEL_COMMAND] });
-        this.panel.webview.onDidReceiveMessage((m) => this.onMessage?.(m));
+        this.panel.webview.onDidReceiveMessage((m) => this.onMessage?.(m, this.last?.outcome));
         this.panel.onDidDispose(() => (this.panel = undefined));
         if (this.location === 'left') {
           // panel baru (aktif) ada di group kanan: pindahkan group-nya ke kiri editor
@@ -105,6 +107,24 @@ export class Results implements vscode.WebviewViewProvider {
     if (!o || !('parts' in o ? o.uri === uri : 'loading' in o && o.uri === uri)) return;
     const w = this.location === 'panel' ? this.view?.webview : this.panel?.webview;
     if (w) this.paint(w);
+  }
+
+  /** Pin: hasil yang tampil disalin ke tab sendiri di samping (pin berikutnya di sebelahnya -> side by side) */
+  pin(): vscode.WebviewPanel | undefined {
+    const last = this.last;
+    if (!last || 'loading' in last.outcome) return;
+    const time = new Date().toLocaleTimeString();
+    // pin berikutnya di kolom kanan pin terakhir (grup baru) supaya berdampingan, bukan bertumpuk sebagai tab
+    const prev = this.pinned[this.pinned.length - 1]?.panel.viewColumn;
+    const panel = vscode.window.createWebviewPanel('moonageDaydream.pinned', `📌 ${last.title} · ${time}`,
+      { viewColumn: prev ? prev + 1 : vscode.ViewColumn.Beside, preserveFocus: true },
+      { enableScripts: true, retainContextWhenHidden: true });
+    const entry = { panel, title: last.title, outcome: last.outcome };
+    this.pinned.push(entry);
+    panel.onDidDispose(() => this.pinned.splice(this.pinned.indexOf(entry), 1));
+    panel.webview.onDidReceiveMessage((m) => this.onMessage?.(m, entry.outcome));
+    panel.webview.html = render(panel.webview.cspSource, `${last.title} · ${time}`, last.outcome, true);
+    return panel;
   }
 
   private paint(w: vscode.Webview) {
