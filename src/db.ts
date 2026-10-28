@@ -1,0 +1,71 @@
+import { mssqlDriver } from './mssql';
+
+export type DbType = 'mssql';
+
+export interface ConnectionInfo {
+  name: string;
+  type: DbType;
+  host: string;
+  port: number;
+  /** mssql named instance (mis. SQLEXPRESS); bila diisi, port dicari lewat SQL Server Browser (UDP 1434) dan `port` diabaikan */
+  instance?: string;
+  user: string;
+  database: string;
+  /** mssql: encrypt + trustServerCertificate (untuk server lokal / sertifikat self-signed) */
+  trustServerCertificate: boolean;
+}
+
+// shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil
+// dan cancel tetap responsif di tabel besar; ganti ke paging / virtual scroll bila perlu melihat semua baris
+export const MAX_ROWS = 1000;
+
+export interface ResultSet {
+  columns: string[];
+  /** maksimal MAX_ROWS baris pertama */
+  rows: unknown[][];
+  /** jumlah baris sebenarnya */
+  total: number;
+}
+
+export interface QueryResult {
+  resultSets: ResultSet[];
+  rowsAffected: number[];
+  messages: string[];
+  durationMs: number;
+}
+
+export type ObjectKind = 'table' | 'view' | 'procedure';
+
+export interface DbObject {
+  schema: string;
+  name: string;
+}
+
+export interface Column {
+  name: string;
+  type: string;
+  nullable: boolean;
+}
+
+export interface Driver {
+  label: string;
+  defaultPort: number;
+  /** `signal` abort = cancel query di server */
+  run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal): Promise<QueryResult>;
+  /** explorer (read-only, query ke katalog) */
+  databases(conn: ConnectionInfo, password: string): Promise<string[]>;
+  objects(conn: ConnectionInfo, password: string, db: string, kind: ObjectKind): Promise<DbObject[]>;
+  columns(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<Column[]>;
+  /** query "SELECT TOP n" untuk tabel/view, sesuai dialek */
+  selectTop(db: string, obj: DbObject, n: number): string;
+  /** tutup koneksi/pool yang di-cache untuk nama koneksi ini */
+  close(name: string): Promise<void>;
+}
+
+// tambah DB lain: buat file driver baru lalu daftarkan di sini (+ tambah ke DbType)
+export const drivers: Record<DbType, Driver> = {
+  mssql: mssqlDriver,
+};
+
+/** alamat untuk ditampilkan: host\instance atau host:port */
+export const address = (c: ConnectionInfo) => (c.instance ? `${c.host}\\${c.instance}` : `${c.host}:${c.port}`);

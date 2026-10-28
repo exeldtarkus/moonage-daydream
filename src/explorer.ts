@@ -1,0 +1,93 @@
+import * as vscode from 'vscode';
+import type { Connections } from './connections';
+import { ConnectionInfo, DbObject, ObjectKind, address, drivers } from './db';
+
+export type Node =
+  | { kind: 'conn'; c: ConnectionInfo }
+  | { kind: 'db'; c: ConnectionInfo; db: string }
+  | { kind: 'folder'; c: ConnectionInfo; db: string; objKind: ObjectKind }
+  | { kind: 'obj'; c: ConnectionInfo; db: string; objKind: ObjectKind; obj: DbObject }
+  | { kind: 'col'; label: string; description: string }
+  | { kind: 'msg'; label: string; error?: boolean };
+
+const FOLDERS: { objKind: ObjectKind; label: string; icon: string }[] = [
+  { objKind: 'table', label: 'Tables', icon: 'table' },
+  { objKind: 'view', label: 'Views', icon: 'eye' },
+  { objKind: 'procedure', label: 'Stored Procedures', icon: 'symbol-method' },
+];
+const icon = (k: ObjectKind) => FOLDERS.find((f) => f.objKind === k)!.icon;
+
+/** Sidebar: koneksi → database → Tables / Views / Stored Procedures → objek → kolom. */
+export class Explorer implements vscode.TreeDataProvider<Node> {
+  private changed = new vscode.EventEmitter<Node | undefined>();
+  readonly onDidChangeTreeData = this.changed.event;
+
+  constructor(private conns: Connections, private log: vscode.LogOutputChannel) {}
+
+  refresh(node?: Node): void {
+    this.changed.fire(node);
+  }
+
+  getTreeItem(n: Node): vscode.TreeItem {
+    const C = vscode.TreeItemCollapsibleState.Collapsed;
+    switch (n.kind) {
+      case 'conn': {
+        const active = this.conns.active === n.c.name;
+        return Object.assign(new vscode.TreeItem(n.c.name, C), {
+          description: `${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}`,
+          tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
+          iconPath: new vscode.ThemeIcon(active ? 'vm-active' : 'server'),
+          contextValue: 'conn',
+        });
+      }
+      case 'db':
+        return Object.assign(new vscode.TreeItem(n.db, C), { iconPath: new vscode.ThemeIcon('database'), contextValue: 'db' });
+      case 'folder': {
+        const f = FOLDERS.find((x) => x.objKind === n.objKind)!;
+        return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder') });
+      }
+      case 'obj':
+        return Object.assign(
+          new vscode.TreeItem(`${n.obj.schema}.${n.obj.name}`, n.objKind === 'procedure' ? vscode.TreeItemCollapsibleState.None : C),
+          { iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: n.objKind },
+        );
+      case 'col':
+        return Object.assign(new vscode.TreeItem(n.label), { description: n.description, iconPath: new vscode.ThemeIcon('symbol-field') });
+      case 'msg':
+        return Object.assign(new vscode.TreeItem(n.label), {
+          iconPath: n.error ? new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground')) : undefined,
+          tooltip: n.label,
+        });
+    }
+  }
+
+  async getChildren(n?: Node): Promise<Node[]> {
+    if (!n) return this.conns.list().map((c) => ({ kind: 'conn', c }));
+    if (n.kind === 'col' || n.kind === 'msg') return [];
+    const d = drivers[n.c.type];
+    try {
+      const pw = await this.conns.password(n.c.name);
+      let out: Node[];
+      switch (n.kind) {
+        case 'conn':
+          out = (await d.databases(n.c, pw)).map((db) => ({ kind: 'db', c: n.c, db }));
+          break;
+        case 'db':
+          out = FOLDERS.map((f) => ({ kind: 'folder', c: n.c, db: n.db, objKind: f.objKind }));
+          break;
+        case 'folder':
+          out = (await d.objects(n.c, pw, n.db, n.objKind)).map((obj) => ({ kind: 'obj', c: n.c, db: n.db, objKind: n.objKind, obj }));
+          break;
+        case 'obj':
+          out = (await d.columns(n.c, pw, n.db, n.obj)).map((col) => ({
+            kind: 'col', label: col.name, description: `${col.type}${col.nullable ? ', null' : ', not null'}`,
+          }));
+          break;
+      }
+      return out.length ? out : [{ kind: 'msg', label: '(empty)' }];
+    } catch (e) {
+      this.log.error(`Explorer.getChildren - EXCEPTION CAUGHT | ${n.c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+      return [{ kind: 'msg', label: e instanceof Error ? e.message : String(e), error: true }];
+    }
+  }
+}

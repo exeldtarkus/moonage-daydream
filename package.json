@@ -1,0 +1,414 @@
+{
+  "name": "moonage-daydream",
+  "displayName": "Moonage Daydream",
+  "description": "Database client: connect (SQL Server first), run queries from .sql files and view the results.",
+  "version": "0.1.0",
+  "publisher": "exeltarkus",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:sql",
+    "onUri",
+    "onView:moonageDaydream.explorer",
+    "onView:moonageDaydream.sqlFiles"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "moonageDaydream.addConnection",
+        "title": "Add Connection",
+        "category": "Moonage Daydream",
+        "icon": "$(add)"
+      },
+      {
+        "command": "moonageDaydream.editConnection",
+        "title": "Edit Connection",
+        "category": "Moonage Daydream"
+      },
+      {
+        "command": "moonageDaydream.removeConnection",
+        "title": "Remove Connection",
+        "category": "Moonage Daydream"
+      },
+      {
+        "command": "moonageDaydream.selectConnection",
+        "title": "Select Connection",
+        "category": "Moonage Daydream",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "moonageDaydream.runQuery",
+        "title": "Run Query (selection or whole file)",
+        "category": "Moonage Daydream",
+        "icon": "$(play)"
+      },
+      {
+        "command": "moonageDaydream.moveResults",
+        "title": "Move Results To…",
+        "category": "Moonage Daydream",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "moonageDaydream.refreshExplorer",
+        "title": "Refresh",
+        "category": "Moonage Daydream",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "moonageDaydream.selectTop",
+        "title": "Select Top 100",
+        "category": "Moonage Daydream",
+        "icon": "$(play)"
+      },
+      {
+        "command": "moonageDaydream.setFileConnection",
+        "title": "Change Connection for This File",
+        "category": "Moonage Daydream"
+      },
+      {
+        "command": "moonageDaydream.setFileDatabase",
+        "title": "Change Database for This File",
+        "category": "Moonage Daydream"
+      },
+      {
+        "command": "moonageDaydream.cancelQuery",
+        "title": "Cancel Query",
+        "category": "Moonage Daydream",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "moonageDaydream.cancelRunning",
+        "title": "Cancel",
+        "category": "Moonage Daydream",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "moonageDaydream.cancelAllQueries",
+        "title": "Cancel All Running Queries",
+        "category": "Moonage Daydream",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "moonageDaydream.openHistory",
+        "title": "Open in Editor",
+        "category": "Moonage Daydream",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "moonageDaydream.runHistory",
+        "title": "Run Again",
+        "category": "Moonage Daydream",
+        "icon": "$(play)"
+      },
+      {
+        "command": "moonageDaydream.copyHistory",
+        "title": "Copy SQL",
+        "category": "Moonage Daydream",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "moonageDaydream.removeHistory",
+        "title": "Remove from History",
+        "category": "Moonage Daydream",
+        "icon": "$(close)"
+      },
+      {
+        "command": "moonageDaydream.clearHistory",
+        "title": "Clear History",
+        "category": "Moonage Daydream",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "moonageDaydream.sqlFilesFlat",
+        "title": "Show SQL Files as List",
+        "category": "Moonage Daydream",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "moonageDaydream.sqlFilesTree",
+        "title": "Show SQL Files as Folders",
+        "category": "Moonage Daydream",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "moonageDaydream.refreshSqlFiles",
+        "title": "Refresh SQL Files",
+        "category": "Moonage Daydream",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "moonageDaydream.newSqlFile",
+        "title": "New SQL File",
+        "category": "Moonage Daydream",
+        "icon": "$(new-file)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "moonageDaydream.runQuery",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "editorTextFocus && editorLangId == sql"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "moonageDaydream.runQuery",
+          "when": "editorLangId == sql",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "moonageDaydream.moveResults",
+          "when": "view == moonageDaydream.results",
+          "group": "navigation"
+        },
+        {
+          "command": "moonageDaydream.addConnection",
+          "when": "view == moonageDaydream.explorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "moonageDaydream.refreshExplorer",
+          "when": "view == moonageDaydream.explorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "moonageDaydream.cancelAllQueries",
+          "when": "view == moonageDaydream.running",
+          "group": "navigation"
+        },
+        {
+          "command": "moonageDaydream.clearHistory",
+          "when": "view == moonageDaydream.history",
+          "group": "navigation"
+        },
+        {
+          "command": "moonageDaydream.newSqlFile",
+          "when": "view == moonageDaydream.sqlFiles",
+          "group": "navigation@0"
+        },
+        {
+          "command": "moonageDaydream.sqlFilesFlat",
+          "when": "view == moonageDaydream.sqlFiles && !moonageDaydream.sqlFilesFlat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "moonageDaydream.sqlFilesTree",
+          "when": "view == moonageDaydream.sqlFiles && moonageDaydream.sqlFilesFlat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "moonageDaydream.refreshSqlFiles",
+          "when": "view == moonageDaydream.sqlFiles",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "moonageDaydream.selectTop",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)$/",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.selectTop",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)$/",
+          "group": "1_query"
+        },
+        {
+          "command": "moonageDaydream.selectConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.selectConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "1_conn@1"
+        },
+        {
+          "command": "moonageDaydream.editConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "1_conn@2"
+        },
+        {
+          "command": "moonageDaydream.removeConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "1_conn@3"
+        },
+        {
+          "command": "moonageDaydream.refreshExplorer",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn|db)$/",
+          "group": "2_refresh"
+        },
+        {
+          "command": "moonageDaydream.cancelRunning",
+          "when": "view == moonageDaydream.running && viewItem == running",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.cancelRunning",
+          "when": "view == moonageDaydream.running && viewItem == running",
+          "group": "1"
+        },
+        {
+          "command": "moonageDaydream.runHistory",
+          "when": "view == moonageDaydream.history && viewItem == history",
+          "group": "inline@1"
+        },
+        {
+          "command": "moonageDaydream.copyHistory",
+          "when": "view == moonageDaydream.history && viewItem == history",
+          "group": "inline@2"
+        },
+        {
+          "command": "moonageDaydream.openHistory",
+          "when": "view == moonageDaydream.history && viewItem == history",
+          "group": "1@1"
+        },
+        {
+          "command": "moonageDaydream.runHistory",
+          "when": "view == moonageDaydream.history && viewItem == history",
+          "group": "1@2"
+        },
+        {
+          "command": "moonageDaydream.copyHistory",
+          "when": "view == moonageDaydream.history && viewItem == history",
+          "group": "1@3"
+        },
+        {
+          "command": "moonageDaydream.removeHistory",
+          "when": "view == moonageDaydream.history && viewItem == history",
+          "group": "2"
+        },
+        {
+          "command": "moonageDaydream.newSqlFile",
+          "when": "view == moonageDaydream.sqlFiles && viewItem == sqlFolder",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.newSqlFile",
+          "when": "view == moonageDaydream.sqlFiles && viewItem == sqlFolder",
+          "group": "1_new"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "moonageDaydream.cancelRunning",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.openHistory",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.runHistory",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.copyHistory",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.removeHistory",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.selectTop",
+          "when": "false"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "moonageDaydream",
+          "title": "Moonage Daydream",
+          "icon": "media/results.svg"
+        }
+      ],
+      "activitybar": [
+        {
+          "id": "moonageDaydreamExplorer",
+          "title": "Moonage Daydream",
+          "icon": "media/results.svg"
+        }
+      ]
+    },
+    "views": {
+      "moonageDaydream": [
+        {
+          "type": "webview",
+          "id": "moonageDaydream.results",
+          "name": "Results"
+        }
+      ],
+      "moonageDaydreamExplorer": [
+        {
+          "id": "moonageDaydream.explorer",
+          "name": "Connections"
+        },
+        {
+          "id": "moonageDaydream.sqlFiles",
+          "name": "SQL Files"
+        },
+        {
+          "id": "moonageDaydream.running",
+          "name": "Running Queries"
+        },
+        {
+          "id": "moonageDaydream.history",
+          "name": "Query History"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "moonageDaydream.explorer",
+        "contents": "No connection yet.\n[Add Connection](command:moonageDaydream.addConnection)"
+      },
+      {
+        "view": "moonageDaydream.running",
+        "contents": "No query is running."
+      },
+      {
+        "view": "moonageDaydream.history",
+        "contents": "No query yet. Run a query (Ctrl+Alt+Enter) and it shows up here."
+      },
+      {
+        "view": "moonageDaydream.sqlFiles",
+        "contents": "No .sql files in this workspace.\n[New SQL File](command:moonageDaydream.newSqlFile)"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "dev": "npm run compile && bash scripts/dev.sh",
+    "test:real": "npm run compile && bash scripts/real-test.sh",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "package": "vsce package --skip-license --allow-missing-repository",
+    "install:local": "node scripts/install-local.js"
+  },
+  "dependencies": {
+    "mssql": "^12.7.13"
+  },
+  "devDependencies": {
+    "@types/mssql": "^12.3.0",
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^5.4.0"
+  }
+}
