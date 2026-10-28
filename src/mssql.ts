@@ -73,7 +73,9 @@ export const mssqlDriver: Driver = {
         let err: unknown;
         let cur: ResultSet | undefined;
         let limited = false;
-        req.on('recordset', (cols: { name: string }[]) => out.resultSets.push(cur = { columns: cols.map((c) => c.name), rows: [], total: 0 }));
+        req.on('recordset', (cols: { name: string; type?: { declaration?: string } }[]) => out.resultSets.push(cur = {
+          columns: cols.map((c) => c.name), types: cols.map((c) => c.type?.declaration ?? ''), rows: [], total: 0,
+        }));
         req.on('row', (row: unknown[]) => {
           if (!cur || limited) return;
           cur.total++;
@@ -93,6 +95,56 @@ export const mssqlDriver: Driver = {
     return out;
   },
 
+  async stream(conn, password, text, signal, sink) {
+    const p = await pool(conn, password);
+    const req = p.request();
+    req.arrayRowMode = true;
+    req.stream = true;
+    const cancel = () => req.cancel();
+    signal?.addEventListener('abort', cancel);
+    let n = 0;
+    let sets = 0;
+    let failed: unknown;
+    let chain = Promise.resolve();
+    let busy = 0;
+    // hanya result set pertama; baris diproses berurutan lewat chain, query di-pause selama sink menulis (backpressure)
+    const step = (f: () => Promise<void> | void) => {
+      busy++;
+      req.pause();
+      chain = chain.then(f).then(() => {
+        if (--busy === 0) req.resume();
+      }, (e: unknown) => {
+        busy--;
+        failed ??= e;
+        req.cancel();
+      });
+    };
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let err: unknown;
+        req.on('recordset', (cols: { name: string }[]) => {
+          if (++sets === 1) step(() => sink.columns(cols.map((c) => c.name)));
+        });
+        req.on('row', (row: unknown[]) => {
+          if (sets !== 1 || failed) return;
+          n++;
+          if (busy) return step(() => sink.row(row)); // masih menunggu tulisan sebelumnya: jaga urutan
+          try {
+            const r = sink.row(row);
+            if (r) step(() => r);
+          } catch (e) {
+            failed ??= e; // mis. batas baris Excel: hentikan query, error dilaporkan ke pemanggil
+            req.cancel();
+          }
+        });
+        req.on('error', (e: unknown) => (err ??= e));
+        req.query(text, () => chain.then(() => (failed ?? err ? reject(failed ?? err) : resolve())));
+      });
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+    }
+    return n;
+  },
   async databases(conn, password) {
     const rows = await select<{ name: string }>(conn, password, 'SELECT name FROM sys.databases WHERE HAS_DBACCESS(name) = 1 ORDER BY name');
     return rows.map((r) => r.name);

@@ -1,12 +1,13 @@
 import type { QueryResult } from './db';
 import { preview } from './sqlContext';
+import { FORMATS } from './exporter';
 
 export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 export function cell(v: unknown): string {
-  if (v === null || v === undefined) return '<span class="null">NULL</span>';
+  if (v === null || v === undefined) return '<span class="null">(null)</span>';
   if (v instanceof Date) return esc(v.toISOString());
   if (v instanceof Uint8Array) {
     const hex = Buffer.from(v.subarray(0, 64)).toString('hex').toUpperCase();
@@ -17,7 +18,13 @@ export function cell(v: unknown): string {
 }
 
 /** loading.uri = file yang query-nya berjalan (untuk tombol Cancel); cancelling = Cancel sudah diklik */
-export type Single = { result: QueryResult } | { error: string } | { loading: true; uri?: string; cancelling?: boolean };
+/** statement asal sebuah hasil (satu SELECT): dasar filter WHERE di toolbar; where = filter yang sedang aktif */
+export interface Source {
+  uri: string;
+  sql: string;
+  where?: string;
+}
+export type Single = { result: QueryResult; source?: Source } | { error: string; source?: Source } | { loading: true; uri?: string; cancelling?: boolean };
 /** run paralel: satu Part per statement, diperbarui begitu statement itu selesai */
 export interface Part {
   sql: string;
@@ -34,13 +41,45 @@ const cancelBtn = (uri: string, cancelling?: boolean, index?: number) => cancell
 const spinner = (label: string) =>
   `<div class="spin"><i></i><i></i><i></i></div><div class="label">${label}<span class="dots"><b>.</b><b>.</b><b>.</b></span></div>`;
 
+/** ikon jam footer (SVG inline: karakter ⏱ tidak ada di semua font) */
+const CLOCK = '<svg class="clock" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 5.5V9l2.2 1.4M6.5 1.5h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+const NUMERIC = /^(tinyint|smallint|int|bigint|decimal|numeric|float|real|money|smallmoney)$/;
+/** ikon tipe di header kolom (gaya DBCode): # angka, abc teks, dt tanggal, 0x biner, bit */
+function typeTag(type: string): string {
+  if (NUMERIC.test(type)) return '#';
+  if (/date|time/.test(type)) return 'dt';
+  if (/binary|image|timestamp|rowversion/.test(type)) return '0x';
+  if (type === 'bit') return 'bit';
+  return type ? 'abc' : '';
+}
+
+const EXPORT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 12.5h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const FORMAT_OPTIONS = Object.entries(FORMATS).map(([k, f]) => `<option value="${k}">${f.label}</option>`).join('');
+const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+const DOTS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.5" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="12.5" r="1.3" fill="currentColor"/></svg>';
+
+/** toolbar WHERE di atas grid (part = index query pada run paralel) */
+function whereBar(where: string | undefined, part?: number): string {
+  return `<form class="where"${part === undefined ? '' : ` data-part="${part}"`}><label>WHERE</label>`
+    + `<input name="where" spellcheck="false" placeholder="e.g. name LIKE 'RF%'  (Enter to run again on the server)" value="${esc(where ?? '')}">`
+    + `${where ? '<button type="button" class="clear" title="Clear filter">×</button>' : ''}</form>`;
+}
+
 function resultHtml(r: QueryResult): string {
   const sets = r.resultSets.map((s, i) => {
+    // kolom angka rata kanan; tanpa info tipe: tebak dari nilai baris pertama
+    const num = s.columns.map((_, c) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number'));
     const rows = s.rows
-      .map((row, n) => `<tr><td class="n">${n + 1}</td>${row.map((v) => `<td>${cell(v)}</td>`).join('')}</tr>`).join('');
+      .map((row, n) => `<tr><td class="n">${n + 1}</td>${row.map((v, c) => `<td${num[c] ? ' class="num"' : ''}>${cell(v)}</td>`).join('')}</tr>`).join('');
     const more = s.limited ? ` · auto limit ${s.limited}, add TOP n for more` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
+    const head = s.columns.map((c, k) => {
+      const t = s.types?.[k] ?? '';
+      return `<th data-c="${k}"${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
+        + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
+    }).join('');
     return `<h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
-<div class="grid"><table><thead><tr><th class="n">#</th>${s.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+<div class="grid"><table class="rs" data-set="${i}"><thead><tr><th class="n"></th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+<div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span><button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div>`;
   }).join('');
   const msgs = [...r.messages, ...(r.resultSets.length ? [] : [`${r.rowsAffected.reduce((a, b) => a + b, 0)} row(s) affected`])];
   return `${sets}${msgs.length ? `<pre class="msg">${esc(msgs.join('\n'))}</pre>` : ''}`;
@@ -50,11 +89,12 @@ function partHtml(p: Part, i: number, uri: string): string {
   const o = p.o;
   const state = 'loading' in o ? (o.cancelling ? 'cancelling' : 'running') : 'error' in o ? 'failed' : `${o.result.durationMs} ms`;
   const head = `<h2>Query ${i + 1} <span>${esc(preview(p.sql))} · ${state}</span></h2>`;
-  if ('loading' in o) return `<section>${head}<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div></section>`;
-  return `<section>${head}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result)}</section>`;
+  if ('loading' in o) return `<section data-part="${i}">${head}<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div></section>`;
+  return `<section data-part="${i}">${head}${whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result)}</section>`;
 }
 
 export function render(cspSource: string, title: string, o: Outcome): string {
+  const nonce = Array.from({ length: 24 }, () => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 62)]).join('');
   let body: string;
   let status: string;
   if ('parts' in o) {
@@ -71,28 +111,70 @@ export function render(cspSource: string, title: string, o: Outcome): string {
 </div>`;
   } else if ('error' in o) {
     status = 'Failed';
-    body = `<div class="err">${esc(o.error)}</div>`;
+    body = `${o.source ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = resultHtml(o.result);
+    body = `${o.source ? whereBar(o.source.where) : ''}${resultHtml(o.result)}`;
   }
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
   body { margin: 0; padding: 8px 12px; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground);
     font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
   .top { opacity: .7; margin-bottom: 8px; }
   h3 { font-size: 12px; margin: 12px 0 4px; } h3 span { font-weight: normal; opacity: .7; }
-  .grid { overflow: auto; max-height: 70vh; border: 1px solid var(--vscode-panel-border); }
-  table { border-collapse: collapse; white-space: nowrap; }
-  th, td { padding: 2px 8px; border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); text-align: left; }
-  th { position: sticky; top: 0; background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
-  tr:hover td { background: var(--vscode-list-hoverBackground); }
-  .n { color: var(--vscode-editorLineNumber-foreground); text-align: right; user-select: none; }
-  .null { opacity: .5; font-style: italic; }
+  /* grid gaya DBCode: header tebal + ikon tipe, baris lega selang-seling, angka rata kanan, footer Rows / waktu */
+  .grid { overflow: auto; max-height: 70vh; border: 1px solid var(--vscode-panel-border); border-bottom: 0; }
+  table { border-collapse: separate; border-spacing: 0; white-space: nowrap; min-width: 100%; }
+  th, td { padding: 0 14px; height: 30px; text-align: left; border-bottom: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, .15)); }
+  th { position: sticky; top: 0; z-index: 1; height: 34px; font-weight: 600; font-family: var(--vscode-font-family);
+    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+    border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); }
+  th .ty { margin-right: 6px; font-size: 10px; font-weight: normal; opacity: .55; font-family: var(--vscode-editor-font-family); }
+  tbody tr:nth-child(even) td { background: var(--vscode-list-inactiveSelectionBackground, rgba(128, 128, 128, .06)); }
+  tbody tr:hover td { background: var(--vscode-list-hoverBackground); }
+  .num { text-align: right; }
+  .n { width: 1%; padding: 0 12px; color: var(--vscode-editorLineNumber-foreground); text-align: left; user-select: none;
+    position: sticky; left: 0; background: var(--vscode-editor-background); border-right: 1px solid var(--vscode-panel-border); }
+  th.n { z-index: 2; background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
+  .null { opacity: .5; }
+  /* toolbar WHERE + tombol header + menu kolom */
+  .where { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-family: var(--vscode-font-family); }
+  .where label { font-size: 11px; font-weight: 600; opacity: .8; }
+  .where input { flex: 1; min-width: 0; padding: 4px 8px; font-family: var(--vscode-editor-font-family); font-size: 12px;
+    color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }
+  .where input:focus { outline: 1px solid var(--vscode-focusBorder); }
+  .where .clear, .hb button { border: 0; background: none; color: inherit; cursor: pointer; opacity: .6; padding: 2px; }
+  .where .clear:hover, .hb button:hover, .hb button.on { opacity: 1; color: var(--vscode-textLink-foreground); }
+  .hb { margin-left: 10px; white-space: nowrap; } .hb button { width: 18px; height: 18px; vertical-align: middle; }
+  .hb svg { width: 13px; height: 13px; }
+  .menu { position: fixed; z-index: 10; min-width: 190px; padding: 4px 0; overflow: auto; box-sizing: border-box; font-family: var(--vscode-font-family); font-size: 12px;
+    color: var(--vscode-menu-foreground, var(--vscode-editor-foreground)); background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border)); border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+  .menu button { display: block; width: 100%; padding: 4px 14px; text-align: left; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+  .menu button:hover { background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground)); }
+  .menu input { margin: 4px 10px; width: calc(100% - 20px); box-sizing: border-box; padding: 4px 6px; font: inherit;
+    color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); }
+  .menu hr { border: 0; border-top: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-panel-border)); margin: 4px 0; }
+  .foot .xbtn { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer;
+    font: inherit; color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, transparent); }
+  .foot .xbtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
+  .foot .xbtn svg { width: 12px; height: 12px; }
+  tbody tr.sel td { background: var(--vscode-list-activeSelectionBackground, #094771) !important; color: var(--vscode-list-activeSelectionForeground, inherit); }
+  tbody td { cursor: default; }
+  .menu.export { padding: 10px 12px; min-width: 230px; }
+  .menu.export label { display: block; margin: 6px 0 4px; font-weight: 600; }
+  .menu select { width: 100%; padding: 4px; font: inherit; color: var(--vscode-dropdown-foreground, inherit);
+    background: var(--vscode-dropdown-background, var(--vscode-input-background)); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); }
+  .menu button.primary { margin-top: 12px; text-align: center; padding: 6px; border-radius: 2px;
+    color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
+  .menu button.primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+  .foot .clock { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
+  .foot { display: flex; gap: 16px; padding: 6px 12px; font-family: var(--vscode-font-family); font-size: 12px; opacity: .8;
+    border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   .err { color: var(--vscode-errorForeground); white-space: pre-wrap; }
   .msg { white-space: pre-wrap; opacity: .8; }
   /* loading: spinner tiga cincin di tengah + progress bar tipis di atas, hanya CSS (webview hasil tanpa script) */
@@ -129,8 +211,157 @@ export function render(cspSource: string, title: string, o: Outcome): string {
 <body>
 ${running(o) ? '<div class="bar"></div>' : ''}${'loading' in o ? '' : `<div class="top">${esc(title)} · ${status}</div>`}
 ${body}
+<div id="menu" class="menu" hidden></div>
+<script nonce="${nonce}">const FORMAT_OPTIONS = ${JSON.stringify(FORMAT_OPTIONS)};${GRID_SCRIPT}</script>
 </body>
 </html>`;
 }
 
 const running = (o: Outcome) => ('parts' in o ? o.parts.some((p) => 'loading' in p.o) : 'loading' in o);
+
+/**
+ * script grid (webview): toolbar WHERE -> postMessage ke extension (query dijalankan ulang di server);
+ * filter / sort / hide kolom hanya di baris yang sudah dimuat (DOM), tanpa ke server.
+ */
+const GRID_SCRIPT = `(() => {
+  const vscode = acquireVsCodeApi();
+  const menu = document.getElementById('menu');
+  const state = new Map();
+  const st = (t) => {
+    if (!state.has(t)) state.set(t, { rows: [...t.tBodies[0].rows], filters: {}, sort: null, hidden: new Set(), sel: new Set(), anchor: null });
+    return state.get(t);
+  };
+  const saved = vscode.getState() || {};
+  /** baris terpilih (index asli) dalam urutan tampil sekarang */
+  const selected = (t) => { const s = st(t); return s.rows.filter((r) => !r.hidden && s.sel.has(s.rows.indexOf(r))).map((r) => s.rows.indexOf(r)); };
+  function paintSel(t) { const s = st(t); s.rows.forEach((r, i) => r.classList.toggle('sel', s.sel.has(i))); }
+  const text = (td) => (td.querySelector('.null') ? null : td.textContent);
+  const match = (v, f) => (f.toLowerCase() === 'null' ? v === null : v !== null && v.toLowerCase().includes(f.toLowerCase()));
+  function apply(t) {
+    const s = st(t);
+    let rows = s.rows.filter((r) => Object.entries(s.filters).every(([c, f]) => match(text(r.cells[+c + 1]), f)));
+    if (s.sort) {
+      const { c, dir } = s.sort;
+      const num = t.tHead.rows[0].cells[c + 1].classList.contains('num');
+      const key = (r) => text(r.cells[c + 1]);
+      rows = [...rows].sort((a, b) => {
+        const x = key(a), y = key(b);
+        if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1; // (null) selalu di bawah
+        return dir * (num ? Number(x) - Number(y) : x.localeCompare(y, undefined, { numeric: true }));
+      });
+    }
+    const body = t.tBodies[0];
+    s.rows.forEach((r) => (r.hidden = true));
+    rows.forEach((r, i) => { r.hidden = false; r.cells[0].textContent = String(i + 1); body.appendChild(r); });
+    for (const r of [t.tHead.rows[0], ...s.rows]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(i - 1)));
+    t.tHead.querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('on', b.dataset.c in s.filters));
+    t.tHead.querySelectorAll('.mbtn').forEach((b) => b.classList.toggle('on', s.sort?.c === +b.dataset.c));
+    const count = t.closest('.grid').nextElementSibling.querySelector('.count');
+    const filtered = rows.length !== s.rows.length;
+    count.textContent = filtered ? rows.length + ' / ' + count.dataset.total + ' (filtered)' : count.dataset.total;
+  }
+  /** popup di bawah tombol; tidak muat -> di atas tombol; tetap dalam layar (diukur setelah isi + class terpasang) */
+  function open(btn, html, init, cls) {
+    menu.className = 'menu' + (cls ? ' ' + cls : '');
+    menu.innerHTML = html;
+    menu.hidden = false;
+    init?.();
+    const r = btn.getBoundingClientRect();
+    menu.style.maxHeight = innerHeight - 8 + 'px';
+    const h = menu.offsetHeight, w = menu.offsetWidth;
+    menu.style.left = Math.max(4, Math.min(r.left, innerWidth - w - 4)) + 'px';
+    const top = r.bottom + 2 + h <= innerHeight ? r.bottom + 2 : r.top - h - 2;
+    menu.style.top = Math.max(4, Math.min(top, innerHeight - h - 4)) + 'px';
+  }
+  document.addEventListener('click', (e) => {
+    const td = e.target.closest('tbody td');
+    if (td && td.closest('table.rs')) {
+      // pilih baris: klik = satu baris, Ctrl/Cmd+klik = tambah / kurangi, Shift+klik = rentang dari baris terakhir
+      const t = td.closest('table'), s = st(t), tr = td.parentElement, i = s.rows.indexOf(tr);
+      const visible = s.rows.filter((r) => !r.hidden);
+      if (e.shiftKey && s.anchor !== null) {
+        const a = visible.indexOf(s.rows[s.anchor]), z = visible.indexOf(tr);
+        if (!(e.ctrlKey || e.metaKey)) s.sel.clear();
+        visible.slice(Math.min(a, z), Math.max(a, z) + 1).forEach((r) => s.sel.add(s.rows.indexOf(r)));
+      } else if (e.ctrlKey || e.metaKey) {
+        s.sel.has(i) ? s.sel.delete(i) : s.sel.add(i);
+        s.anchor = i;
+      } else {
+        s.sel = new Set([i]);
+        s.anchor = i;
+      }
+      paintSel(t);
+      return;
+    }
+    const b = e.target.closest('button');
+    if (!b) { if (!menu.contains(e.target)) menu.hidden = true; return; }
+    const th = b.closest('th');
+    if (b.classList.contains('xbtn')) {
+      e.stopPropagation();
+      const t = b.closest('.foot').previousElementSibling.querySelector('table');
+      const n = selected(t).length;
+      menu.table = t;
+      open(b, '<label>Export</label><select id="xs"><option value="all">All Data</option><option value="sel"' + (n ? '' : ' disabled') + '>Current Selection (' + n + ' rows)</option></select>'
+        + '<label>Format</label><select id="xf">' + FORMAT_OPTIONS + '</select><button data-a="xsave" class="primary">Save</button>', () => {
+        document.getElementById('xs').value = n ? 'sel' : 'all';
+        if (saved.format) document.getElementById('xf').value = saved.format;
+      }, 'export');
+      return;
+    }
+    if (b.classList.contains('fbtn') || b.classList.contains('mbtn')) {
+      e.stopPropagation();
+      const t = th.closest('table');
+      const c = +b.dataset.c;
+      const s = st(t);
+      menu.table = t; menu.col = c;
+      if (b.classList.contains('fbtn')) {
+        open(b, '<input id="f" placeholder="contains…  (null = empty)" value="' + (s.filters[c] ?? '').replace(/"/g, '&quot;') + '"><hr><button data-a="clearf">Clear filter</button>', () => document.getElementById('f').focus());
+      } else {
+        open(b, '<button data-a="asc">Sort ascending</button><button data-a="desc">Sort descending</button><button data-a="nosort">Clear sort</button><hr>'
+          + '<button data-a="hide">Hide column</button>' + (s.hidden.size ? '<button data-a="showall">Show all columns (' + s.hidden.size + ' hidden)</button>' : ''));
+      }
+      return;
+    }
+    if (menu.contains(b)) {
+      const t = menu.table, c = menu.col, s = st(t);
+      const a = b.dataset.a;
+      if (a === 'xsave') {
+        const format = document.getElementById('xf').value, scope = document.getElementById('xs').value;
+        saved.format = format;
+        vscode.setState(saved);
+        const part = t.closest('section')?.dataset.part;
+        vscode.postMessage({ type: 'export', format, scope, set: +t.dataset.set, part: part === undefined ? undefined : +part,
+          rows: scope === 'sel' ? selected(t) : undefined, cols: [...t.tHead.rows[0].cells].slice(1).map((c, i) => (c.hidden ? -1 : i)).filter((i) => i >= 0) });
+        menu.hidden = true;
+        return;
+      }
+      if (a === 'asc' || a === 'desc') s.sort = { c, dir: a === 'asc' ? 1 : -1 };
+      if (a === 'nosort') s.sort = null;
+      if (a === 'hide') s.hidden.add(c);
+      if (a === 'showall') s.hidden.clear();
+      if (a === 'clearf') delete s.filters[c];
+      menu.hidden = true;
+      apply(t);
+      return;
+    }
+    if (b.classList.contains('clear')) {
+      const form = b.closest('form');
+      form.where.value = '';
+      form.requestSubmit();
+    }
+  });
+  document.addEventListener('input', (e) => {
+    if (e.target.id !== 'f') return;
+    const s = st(menu.table);
+    if (e.target.value) s.filters[menu.col] = e.target.value; else delete s.filters[menu.col];
+    apply(menu.table);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || (e.key === 'Enter' && e.target.id === 'f')) menu.hidden = true;
+  });
+  document.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = e.target;
+    vscode.postMessage({ type: 'where', where: f.where.value, part: f.dataset.part === undefined ? undefined : +f.dataset.part });
+  });
+})();`;

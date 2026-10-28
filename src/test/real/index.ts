@@ -2,7 +2,7 @@
 // run: npm run test:real   (hanya SELECT; laporan di ~/.claude/bg-logs/moonage-real-test.log)
 import * as vscode from 'vscode';
 import * as assert from 'node:assert/strict';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Location } from '../../results';
@@ -30,7 +30,15 @@ async function fixture(name: string, content: string): Promise<vscode.TextDocume
   const file = join(FIXTURES, `${name}.sql`);
   mkdirSync(FIXTURES, { recursive: true });
   if (!existsSync(file) || readFileSync(file, 'utf8') !== content) writeFileSync(file, content);
-  return vscode.workspace.openTextDocument(vscode.Uri.file(file));
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+  // editan user yang belum disimpan tidak pernah dibuang: test berhenti dengan pesan jelas
+  if (doc.isDirty) throw new Error(`${name}.sql punya perubahan yang belum disimpan di editor; simpan / tutup dulu`);
+  if (doc.getText() !== content) {
+    // file baru ditulis ulang tapi editor yang terbuka belum memuat isi barunya: muat ulang dari disk (aman, tidak dirty)
+    await vscode.window.showTextDocument(doc);
+    await vscode.commands.executeCommand('workbench.action.files.revert');
+  }
+  return doc;
 }
 
 const untitledTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs)
@@ -170,6 +178,93 @@ async function autoLimitTest(m: typeof import('../../extension')) {
   say(`PASS auto limit: SELECT * without TOP -> 100 rows in ${Date.now() - t} ms`);
 }
 
+/** linter: statement tanpa ; diberi error merah + Quick Fix "Add ;" (file dikembalikan sesudahnya) */
+async function lintTest(m: typeof import('../../extension')) {
+  const doc = await fixture('lint', 'SELECT 1;\nSELECT *\nFROM sys.objects\nWHERE name = \'x\'\n');
+  await vscode.window.showTextDocument(doc);
+  const diags = m.lint.get(doc.uri) ?? [];
+  assert.equal(diags.length, 1, `one diagnostic: ${diags.length}`);
+  assert.equal(diags[0].severity, vscode.DiagnosticSeverity.Error);
+  assert.equal(doc.getText(diags[0].range), "'x'");
+  const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>('vscode.executeCodeActionProvider', doc.uri, diags[0].range);
+  const fix = actions.find((a) => a.title === 'Add ;');
+  assert.ok(fix?.edit, 'quick fix Add ;');
+  await vscode.workspace.applyEdit(fix.edit);
+  assert.equal((m.lint.get(doc.uri) ?? []).length, 0, 'diagnostic gone after fix');
+  assert.ok(doc.getText().includes("'x';"));
+  await vscode.commands.executeCommand('workbench.action.files.revert');
+  say(`PASS lint: missing ; -> red error on "'x'", Quick Fix "Add ;" clears it`);
+}
+
+/** Ctrl+Enter: keybinding user memanggil dbcode.editor.execute; tanpa DBCode command itu menjalankan query Moonage */
+async function ctrlEnterTest(m: typeof import('../../extension')) {
+  if (!m.ownRunner()) return say('SKIP ctrl+enter: DBCode ada di jendela ini, Ctrl+Enter milik DBCode');
+  const doc = await fixture('ctrl-enter', 'SELECT 42 AS answer;\n');
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
+  await vscode.window.showTextDocument(doc);
+  await vscode.commands.executeCommand('dbcode.editor.execute');
+  assert.ok(/<td class="num">42<\/td>/.test(resultHtml(m)), 'dbcode.editor.execute alias runs the Moonage query');
+  say('PASS ctrl+enter: dbcode.editor.execute (no DBCode in this window) -> Moonage runQuery');
+}
+
+/** toolbar WHERE: statement asal dijalankan ulang di server dengan filter, filter kosong = query asal (hanya SELECT) */
+async function whereTest(m: typeof import('../../extension')) {
+  const doc = await fixture('where', 'SELECT name, database_id\nFROM sys.databases\nORDER BY name;\n');
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
+  await vscode.window.showTextDocument(doc);
+  await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  const rows = () => (resultHtml(m).match(/<tr><td class="n">/g) ?? []).length;
+  const all = rows();
+  assert.ok(resultHtml(m).includes('<form class="where">') && all > 1, `WHERE bar + ${all} rows`);
+  await m.applyWhere("name = 'master'");
+  assert.equal(rows(), 1, 'filtered on the server');
+  assert.ok(resultHtml(m).includes(`value="name = 'master'"`) && resultHtml(m).includes('<td>master</td>'), 'filter kept in the input');
+  await m.applyWhere("name LIKE 'm%'"); // filter baru mengganti, bukan menumpuk
+  assert.ok(rows() >= 2, `replaced filter: ${rows()} rows (master, model, msdb)`);
+  await m.applyWhere('');
+  assert.equal(rows(), all, 'empty filter runs the original query');
+  say(`PASS WHERE toolbar: ${all} rows -> name = 'master' 1 row -> LIKE 'm%' ${'replaced'} -> clear ${all} rows`);
+}
+
+/** export: All Data di-stream dari server (lewat auto limit), WHERE aktif ikut, Current Selection, Excel (hanya SELECT) */
+async function exportTest(m: typeof import('../../extension')) {
+  const dir = join(FIXTURES, 'export');
+  mkdirSync(dir, { recursive: true });
+  const file = (n: string) => vscode.Uri.file(join(dir, n));
+  try {
+    const doc = await fixture('export', 'SELECT name, object_id, create_date\nFROM sys.all_objects;\n');
+    await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
+    await vscode.window.showTextDocument(doc);
+    await vscode.commands.executeCommand('moonageDaydream.runQuery');
+    assert.ok(resultHtml(m).includes('auto limit 100'), 'grid shows 100 rows (auto limit)');
+    const { drivers } = require('../../db') as typeof import('../../db');
+    const c = m.conns.get(CONN)!;
+    const pw = await m.conns.password(CONN);
+    const count = async (where = '') => Number((await drivers.mssql.run({ ...c, database: 'master' }, pw, `SELECT COUNT(*) FROM sys.all_objects ${where}`)).resultSets[0].rows[0][0]);
+    const total = await count();
+
+    const all = await m.exportResult({ type: 'export', set: 0, scope: 'all', format: 'json' }, file('all.json'));
+    const json = JSON.parse(readFileSync(file('all.json').fsPath, 'utf8'));
+    assert.ok(all === total && json.length === total && 'create_date' in json[0], `all data ${all} / ${json.length} = COUNT ${total}`);
+
+    const sel = await m.exportResult({ type: 'export', set: 0, scope: 'sel', rows: [0, 2], cols: [0, 2], format: 'markdown' }, file('sel.md'));
+    const md = readFileSync(file('sel.md').fsPath, 'utf8').trim().split('\n');
+    assert.ok(sel === 2 && md.length === 4 && md[0] === '| name | create_date |', `selection markdown: ${md[0]}`);
+
+    const xl = await m.exportResult({ type: 'export', set: 0, scope: 'all', format: 'xlsx' }, file('all.xlsx'));
+    assert.ok(xl === total && readFileSync(file('all.xlsx').fsPath).readUInt32LE(0) === 0x04034b50 && !existsSync(file('all.xlsx').fsPath + '.sheet.tmp'), 'xlsx written');
+
+    await m.applyWhere("name LIKE 'sys%'");
+    const filtered = await m.exportResult({ type: 'export', set: 0, scope: 'all', format: 'csv' }, file('where.csv'));
+    const want = await count("WHERE name LIKE 'sys%'");
+    const lines = readFileSync(file('where.csv').fsPath, 'utf8').trim().split('\r\n').length - 1;
+    assert.ok(filtered === want && lines === want, `WHERE kept: ${filtered} / ${lines} = ${want}`);
+    say(`PASS export: all data ${all} rows (grid 100), selection 2 rows markdown, xlsx ${xl} rows, WHERE csv ${filtered} rows`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** Format Document: keyword huruf besar + koma di depan (tanpa koneksi DB) */
 async function formatTest(m: typeof import('../../extension')) {
   const doc = await fixture('format', "select name, object_id from sys.objects where name like 'a,%'\n");
@@ -229,6 +324,18 @@ async function completionTest(m: typeof import('../../extension')) {
   assert.ok(cols.length && cols.every((x) => afterWhere.includes(x)), `columns after WHERE: ${afterWhere.length}/${cols.length}`);
   const afterAlias = await at(3, colDoc.lineAt(3).text.length);
   assert.ok(cols.every((x) => afterAlias.includes(x)), `columns after alias: ${afterAlias.length}/${cols.length}`);
+  // nama sama persis tapi beda huruf besar / kecil (ketik huruf kecil dan huruf besar): item itu dipilih dan paling atas
+  for (const typed of [L.bigTable.toLowerCase(), L.bigTable.toUpperCase()]) {
+    const exactDoc = await fixture(`completion-exact-${typed === typed.toLowerCase() ? 'lower' : 'upper'}`, `SELECT * FROM ${L.bigDb}.dbo.${typed}`);
+    await m.conns.bind(exactDoc.uri.toString(), { conn: CONN, db: L.bigDb });
+    const list = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', exactDoc.uri, new vscode.Position(0, exactDoc.lineAt(0).text.length));
+    const top = [...list.items].sort((a, b) => (a.sortText ?? '').localeCompare(b.sortText ?? ''))[0];
+    const topLabel = typeof top.label === 'string' ? top.label : top.label.label;
+    assert.ok(top.preselect && topLabel.toLowerCase() === typed.toLowerCase(), `exact match first for "${typed}": ${topLabel}`);
+    const fold = (t: string) => (typed === typed.toUpperCase() ? t.toUpperCase() : t.toLowerCase());
+    assert.ok(list.items.every((i) => i.filterText === fold(i.filterText!)), `filterText follows typed case "${typed}"`);
+    say(`PASS completion exact match: typed "${typed}" -> "${topLabel}" preselected first of ${list.items.length}`);
+  }
   say(`PASS completion columns: WHERE -> ${afterWhere.length} column(s), alias t. -> ${afterAlias.length} column(s)`);
 }
 
@@ -445,6 +552,7 @@ export async function run(only?: string): Promise<void> {
         const html = (loc === 'panel' ? m.results.view?.webview.html : m.results.panel?.webview.html) ?? '';
         assert.ok(!html.includes('class="err"'), `query error: ${html.match(/class="err">([^<]*)/)?.[1]}`);
         assert.ok(html.includes('Query 1') && html.includes('Query 2') && /2 queries done in/.test(html), 'two SELECTs rendered (parallel)');
+        assert.ok(html.includes('<span class="ty">dt</span>create_date') && html.includes('<span class="ty">abc</span>name'), 'column type icons from SQL Server');
         const col = resultTabColumn();
         const edCol = editor.viewColumn!;
         if (loc === 'panel') {
@@ -493,6 +601,30 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL auto limit: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await exportTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL export: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await whereTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL where: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await ctrlEnterTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL ctrl+enter: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await lintTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL lint: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await formatTest(m);

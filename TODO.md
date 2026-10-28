@@ -11,7 +11,11 @@
 - [x] Koneksi + database per file `.sql` (CodeLens `Execute | koneksi | database`, status bar ikut file aktif)
 - [x] Explorer di sidebar: koneksi → database → tables / views / procedures → kolom, + "Select Top 100"
 - [ ] Hasil banyak query **side by side** (pembeda dari DBCode), plus pin hasil
-- [ ] Export hasil ke CSV / JSON, copy ke clipboard
+- [x] Export hasil (All Data dari server / Current Selection) ke Excel .xlsx, CSV, JSON, JSON pretty, Markdown, HTML
+- [ ] Copy hasil / selection ke clipboard
+- [x] Toolbar hasil: filter WHERE (input di atas grid, query dijalankan ulang dengan WHERE tambahan)
+- [x] Filter per kolom (ikon filter + menu ⋮ di header kolom: filter nilai, sort, hide) — di baris yang sudah dimuat
+- [ ] Panel samping hasil: Columns (pilih / urutkan kolom), Inspector (detail baris terpilih), Export / Share
 - [x] Form Add / Edit Connection (tab editor, tombol Test / Save)
 - [x] Sidebar Running Queries (cancel per query / cancel all) dan Query History (open, run again, copy, clear)
 - [x] Tabel besar: baris di-stream, hanya 1000 pertama disimpan (memori tetap kecil, cancel tetap responsif)
@@ -28,6 +32,8 @@
 - [x] Formatter SQL (Format Document / Selection, Shift+Alt+F): keyword huruf besar, koma di depan (setting `moonageDaydream.format.*`)
 - [x] Klik kanan database di Connections: New SQL File (tab terikat ke koneksi + database)
 - [x] Auto limit 100 (setting `moonageDaydream.query.autoLimit`): satu SELECT tanpa TOP / OFFSET FETCH / INTO diambil 100 baris lalu dihentikan di server
+- [x] Linter: statement tanpa `;` ditandai merah (setting `moonageDaydream.lint.semicolon`), Quick Fix "Add ;"
+- [ ] Transaction strategy: mode Auto-commit / Manual per koneksi atau file (Manual = BEGIN TRAN otomatis, tombol Commit / Rollback, status transaksi di status bar, peringatan bila transaksi masih terbuka saat file / koneksi ditutup)
 - [ ] Edit data langsung di grid
 - [ ] Riwayat query
 - [ ] Paging / virtual scroll di grid (sekarang 1000 baris pertama per result set; sisanya hanya dihitung)

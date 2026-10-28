@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { fmtType, q, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
-import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable } from '../sqlContext';
+import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere } from '../sqlContext';
 
 test('splitBatches splits on GO lines only', () => {
   assert.deepEqual(splitBatches('select 1\nGO\nselect 2\n  go 5  \r\nselect 3\ngo -- end\n'), ['select 1', 'select 2', 'select 3']);
@@ -12,7 +12,7 @@ test('splitBatches splits on GO lines only', () => {
 });
 
 test('cell formats values and escapes', () => {
-  assert.equal(cell(null), '<span class="null">NULL</span>');
+  assert.equal(cell(null), '<span class="null">(null)</span>');
   assert.equal(cell('<b>'), '&lt;b&gt;');
   assert.equal(cell(new Date('2026-01-02T03:04:05Z')), '2026-01-02T03:04:05.000Z');
   assert.equal(cell(Buffer.from([1, 255])), '0x01FF');
@@ -26,7 +26,10 @@ test('render shows result sets, messages and errors', () => {
   } });
   assert.ok(html.includes('Result 1 <span>1 row(s)<') && html.includes('Result 2 <span>0 row(s)<'));
   assert.ok(html.includes('Result 3 <span>5000 row(s) (showing first 2)'));
-  assert.ok(html.includes('<th>a&lt;b</th>') && html.includes('hello') && html.includes('Done in 7 ms'));
+  assert.ok(html.includes('<span class="ty"></span>a&lt;b<span class="hb">') && html.includes('hello') && html.includes('Done in 7 ms'));
+  assert.ok(html.includes('<td class="num">1</td>') && html.includes('Rows: <b class="count" data-total="2">5000</b>') && html.includes('</svg><b>7ms</b>'), 'numbers right-aligned, footer');
+  const typed = render('csp', 't', { result: { resultSets: [{ columns: ['n', 's'], types: ['int', 'nvarchar'], rows: [], total: 0 }], rowsAffected: [], messages: [], durationMs: 1 } });
+  assert.ok(typed.includes('<th data-c="0" class="num" title="int"><span class="ty">#</span>n<span class="hb">') && typed.includes('<span class="ty">abc</span>s'), 'type icons');
   const upd = render('csp', 'local', { result: { resultSets: [], rowsAffected: [2, 3], messages: [], durationMs: 1 } });
   assert.ok(upd.includes('5 row(s) affected'));
   assert.ok(render('csp', 'local', { error: 'Login failed <x>' }).includes('Login failed &lt;x&gt;'));
@@ -128,4 +131,34 @@ test('autoLimitable: only a single SELECT without TOP / FETCH / INTO', () => {
   assert.equal(autoLimitable(['update t set a = 1']), false);
   assert.equal(autoLimitable(["select 'top' as x from t"]), true, 'TOP inside a string does not count');
   assert.equal(autoLimitable(['select 1;', 'select 2;']), false, 'multiple statements: not limited');
+});
+
+test('missingSemicolons marks the last token of unterminated statements', () => {
+  const at = (sql: string) => missingSemicolons(sql).map((r) => sql.slice(r.start, r.end));
+  assert.deepEqual(at('SELECT 1;\nSELECT *\nFROM t -- note;\n'), ['t']);
+  assert.deepEqual(at("SELECT 'a;'\nGO\nSELECT 2;\nGO"), ["'a;'"]);
+  assert.deepEqual(at('SELECT 1;\n-- only comment\n'), []);
+  assert.deepEqual(at('select *\nfrom dbo.Orders\nwhere a = 1'), ['1']);
+});
+
+test('addWhere adds the filter to the top-level SELECT', () => {
+  assert.equal(addWhere('SELECT * FROM t;', "a LIKE 'RF%'"), "SELECT * FROM t\nWHERE a LIKE 'RF%'");
+  assert.equal(addWhere('SELECT * FROM t WHERE x = 1 OR y = 2 ORDER BY a', 'b > 3'), 'SELECT * FROM t WHERE (x = 1 OR y = 2)\n    AND (b > 3)\nORDER BY a');
+  assert.equal(addWhere('SELECT a, COUNT(*) FROM t GROUP BY a', 'a <> 0'), 'SELECT a, COUNT(*) FROM t\nWHERE a <> 0\nGROUP BY a');
+  assert.equal(
+    addWhere('WITH c AS (SELECT * FROM s WHERE k = 1) SELECT * FROM c', 'z = 9'),
+    'WITH c AS (SELECT * FROM s WHERE k = 1) SELECT * FROM c\nWHERE z = 9', 'WHERE inside CTE untouched');
+  assert.equal(addWhere("SELECT 'where' AS w FROM t -- order by\n", 'q = 1'), "SELECT 'where' AS w FROM t -- order by\nWHERE q = 1", 'keywords in strings / comments ignored');
+  assert.equal(addWhere('SELECT * FROM t', '  '), 'SELECT * FROM t', 'empty filter = original');
+  assert.throws(() => addWhere('SELECT a FROM t UNION SELECT a FROM u', 'a = 1'), /UNION/);
+  assert.throws(() => addWhere('SELECT 1', 'a = 1'), /FROM/);
+});
+
+test('render: WHERE toolbar for single SELECT source, nonce script', () => {
+  const r = { resultSets: [{ columns: ['a'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 };
+  const html = render('csp', 't', { result: r, source: { uri: 'file:///a.sql', sql: 'SELECT a FROM t', where: "a = 'x\"y'" } });
+  assert.ok(html.includes('<form class="where"><label>WHERE</label>') && html.includes('value="a = \'x&quot;y\'"') && html.includes('class="clear"'));
+  const nonce = /script-src 'nonce-([A-Za-z0-9]+)'/.exec(html)?.[1];
+  assert.ok(nonce && html.includes(`<script nonce="${nonce}">`), 'CSP nonce matches script');
+  assert.ok(!render('csp', 't', { result: r }).includes('class="where"'), 'no source: no WHERE bar');
 });

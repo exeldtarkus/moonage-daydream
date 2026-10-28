@@ -78,7 +78,7 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
       const stmt = statementAt(doc.getText(), doc.offsetAt(pos));
       if (parts.length === 0) {
         const [cols, dbs, objs] = await Promise.all([this.columns(c, current, stmt), this.databases(c), this.objects(c, current)]);
-        return [...cols.map((x) => this.colItem(x, range)), ...dbs.map((db) => this.dbItem(db, range)), ...objs.map((o) => this.objItem(o, range, true))];
+        return rank([...cols.map((x) => this.colItem(x, range)), ...dbs.map((db) => this.dbItem(db, range)), ...objs.map((o) => this.objItem(o, range, true))], word);
       }
       if (parts.length === 1) {
         // `X.`: X database (-> schema) atau schema di database file ini (-> tabel)
@@ -94,12 +94,12 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
             command: { command: 'editor.action.triggerSuggest', title: '' }, // langsung lanjut ke tabel setelah titik diketik
           })));
         }
-        return items;
+        return rank(items, word);
       }
       // `DB.schema.` atau `DB..` (schema default dbo)
       const [db, schema] = parts;
       const objs = await this.objects(c, db);
-      return objs.filter((o) => o.schema.toLowerCase() === (schema || 'dbo').toLowerCase()).map((o) => this.objItem(o, range, false));
+      return rank(objs.filter((o) => o.schema.toLowerCase() === (schema || 'dbo').toLowerCase()).map((o) => this.objItem(o, range, false)), word);
     } catch (e) {
       this.log.error(`SqlCompletion - EXCEPTION CAUGHT | ${c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return [];
@@ -120,4 +120,21 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
       sortText: `1${o.name}`,
     });
   }
+}
+
+/**
+ * Urutan saran tidak tergantung huruf besar / kecil: filterText mengikuti gaya huruf yang diketik
+ * (VS Code memberi skor lebih tinggi pada huruf yang sama persis), nama yang sama persis dipilih & di paling atas.
+ */
+export function rank(items: vscode.CompletionItem[], word: string): vscode.CompletionItem[] {
+  const fold = (t: string) => (word === word.toUpperCase() && word !== word.toLowerCase() ? t.toUpperCase() : t.toLowerCase());
+  for (const i of items) {
+    const label = typeof i.label === 'string' ? i.label : i.label.label;
+    i.filterText = fold(i.filterText ?? label);
+    if (word && label.split('.').pop()!.toLowerCase() === word.toLowerCase()) {
+      i.preselect = true;
+      i.sortText = ` ${i.sortText ?? label}`;
+    }
+  }
+  return items;
 }

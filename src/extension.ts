@@ -4,13 +4,14 @@ import { Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, address, drivers } from './db';
-import { Results, LOCATIONS, VIEW_ID } from './results';
+import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
+import { ExportFormat, FORMATS, openSink } from './exporter';
 import { SqlFiles, SqlNode, newSqlFile } from './sqlFiles';
 import { SqlCompletion } from './completion';
 import { formatSql } from './sqlFormat';
-import type { Outcome } from './resultsHtml';
+import type { Outcome, Source } from './resultsHtml';
 import { splitBatches } from './mssql';
-import { autoLimitable, parallelSafe, splitStatements, statementAt } from './sqlContext';
+import { addWhere, autoLimitable, missingSemicolons, parallelSafe, singleSelect, splitStatements, statementAt } from './sqlContext';
 
 let log: vscode.LogOutputChannel;
 export let conns: Connections;
@@ -26,6 +27,8 @@ export let sqlFiles: SqlFiles;
 export let completion: SqlCompletion;
 /** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
 export let ownFormatter = false;
+export const lint = vscode.languages.createDiagnosticCollection('moonageDaydream');
+const LINT_SOURCE = 'Moonage';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : String(e));
@@ -37,11 +40,14 @@ export function activate(ctx: vscode.ExtensionContext) {
   status.command = 'moonageDaydream.selectConnection';
   explorer = new Explorer(conns, log);
   updateFormatterContext(ctx);
+  vscode.workspace.textDocuments.forEach(lintDoc);
+  updateDbcodeAlias();
   sqlFiles = new SqlFiles(ctx.globalState, conns, log);
   completion = new SqlCompletion(conns, fileConn, log);
   updateStatus();
   status.show();
   results = new Results(ctx);
+  results.onMessage = (m) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part) : m.type === 'export' ? exportResult(m) : undefined);
   runningView = new RunningView(running);
   history = new History(ctx.globalState);
 
@@ -121,8 +127,18 @@ export function activate(ctx: vscode.ExtensionContext) {
       const edits = formatEdits(doc, range, { tabSize: Number(editor.options.tabSize) || 4, insertSpaces: editor.options.insertSpaces !== false });
       edits.forEach((e) => builder.replace(e.range, e.newText)); // builder hanya valid selama callback (sinkron)
     }),
+    lint,
+    vscode.workspace.onDidOpenTextDocument(lintDoc),
+    vscode.workspace.onDidChangeTextDocument((e) => lintDoc(e.document)),
+    vscode.workspace.onDidCloseTextDocument((d) => lint.delete(d.uri)),
+    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('moonageDaydream.lint') && vscode.workspace.textDocuments.forEach(lintDoc)),
+    vscode.languages.registerCodeActionsProvider({ language: 'sql' }, { provideCodeActions: semicolonFixes }, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }),
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('editor.defaultFormatter') && updateFormatterContext(ctx)),
-    vscode.extensions.onDidChange(() => updateFormatterContext(ctx)),
+    vscode.extensions.onDidChange(() => {
+      updateFormatterContext(ctx);
+      updateDbcodeAlias();
+    }),
+    { dispose: () => dbcodeAlias?.dispose() },
     vscode.languages.registerDocumentFormattingEditProvider({ language: 'sql' }, {
       provideDocumentFormattingEdits: (doc, o) => formatEdits(doc, new vscode.Range(0, 0, doc.lineCount, 0), o),
     }),
@@ -174,6 +190,56 @@ function sqlWatcher(): vscode.Disposable {
   const refresh = () => sqlFiles.refresh();
   return vscode.Disposable.from(w, w.onDidCreate(refresh), w.onDidDelete(refresh), vscode.workspace.onDidChangeWorkspaceFolders(refresh));
 }
+
+/** linter: statement tanpa `;` (sebelum GO / akhir file) diberi tanda di token terakhirnya; severity dari setting lint.semicolon */
+function lintDoc(doc: vscode.TextDocument) {
+  if (doc.languageId !== 'sql') return;
+  const level = vscode.workspace.getConfiguration('moonageDaydream.lint', doc).get<string>('semicolon', 'error');
+  if (level === 'off') return lint.delete(doc.uri);
+  const severity = level === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error;
+  lint.set(doc.uri, missingSemicolons(doc.getText()).map((r) => Object.assign(
+    new vscode.Diagnostic(new vscode.Range(doc.positionAt(r.start), doc.positionAt(r.end)), 'Statement is not terminated with ;', severity),
+    { source: LINT_SOURCE, code: 'missing-semicolon' },
+  )));
+}
+
+/** Quick Fix "Add ;" untuk diagnostic missing-semicolon */
+function semicolonFixes(doc: vscode.TextDocument, _range: vscode.Range, ctx: vscode.CodeActionContext): vscode.CodeAction[] {
+  return ctx.diagnostics.filter((d) => d.source === LINT_SOURCE && d.code === 'missing-semicolon').map((d) => {
+    const fix = new vscode.CodeAction('Add ;', vscode.CodeActionKind.QuickFix);
+    fix.edit = new vscode.WorkspaceEdit();
+    fix.edit.insert(doc.uri, d.range.end, ';');
+    fix.diagnostics = [d];
+    fix.isPreferred = true;
+    return fix;
+  });
+}
+
+const DBCODE = 'dbcode.dbcode';
+let dbcodeAlias: vscode.Disposable | undefined;
+
+/**
+ * Ctrl+Enter user (keybindings.json -> dbcode.editor.execute) menang atas keybinding extension.
+ * Jendela tanpa DBCode: daftarkan command dengan id itu yang menjalankan query Moonage; ada DBCode: lepas, DBCode yang jalan.
+ */
+function updateDbcodeAlias() {
+  const own = ownRunner();
+  void vscode.commands.executeCommand('setContext', 'moonageDaydream.ownRunner', own);
+  if (!own) {
+    dbcodeAlias?.dispose();
+    dbcodeAlias = undefined;
+  } else if (!dbcodeAlias) {
+    try {
+      dbcodeAlias = vscode.commands.registerCommand('dbcode.editor.execute', () => runQuery());
+    } catch (e) {
+      log.error(`updateDbcodeAlias - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    }
+  }
+  log.info(`Ctrl+Enter for sql: ${own ? 'Moonage' : 'DBCode'}`);
+}
+
+/** Ctrl+Enter dipakai Moonage bila DBCode tidak ada di jendela ini */
+export const ownRunner = () => !vscode.extensions.getExtension(DBCODE);
 
 /**
  * Shift+Alt+F: formatter default [sql] di settings user (mis. DBCode) dipakai bila extension-nya ada di jendela ini;
@@ -366,8 +432,104 @@ async function runQuery(opts?: unknown) {
     : (opts as { all?: unknown } | undefined)?.all === true ? doc.getText()
     : statementAt(doc.getText(), doc.offsetAt(editor.selection.active));
   if (!text.trim()) return;
+  await execute(doc, text);
+}
 
-  const uri = editor.document.uri;
+/**
+ * toolbar WHERE di hasil: statement asal (bukan yang sudah difilter) dijalankan ulang dengan kondisi baru;
+ * part = query ke-n pada run paralel. Kondisi kosong = statement asal.
+ */
+export async function applyWhere(where: string, part?: number) {
+  const o = results.current?.outcome;
+  const src: Source | undefined = !o ? undefined
+    : 'parts' in o ? (part !== undefined && o.parts[part] ? { uri: o.uri, sql: o.parts[part].sql } : undefined)
+    : 'source' in o ? o.source : undefined;
+  if (!src) return;
+  let sql: string;
+  try {
+    sql = addWhere(src.sql, where);
+  } catch (e) {
+    log.error(`applyWhere - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(errMsg(e));
+    return;
+  }
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(src.uri));
+  await execute(doc, sql, { uri: src.uri, sql: src.sql, where: where.trim() || undefined });
+}
+
+/**
+ * Export dari panel hasil. scope sel = baris terpilih (data yang sudah dimuat); all = semua data:
+ * statement asal (+ filter WHERE aktif) dijalankan ulang tanpa limit dan di-stream ke file; tanpa statement asal = baris yang dimuat.
+ * target diisi test (tanpa dialog Save). Mengembalikan jumlah baris yang ditulis.
+ */
+export async function exportResult(m: ResultMessage, target?: vscode.Uri): Promise<number | undefined> {
+  const o = results.current?.outcome;
+  if (!o || m.set === undefined) return;
+  const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
+  const single = part ? part.o : o;
+  if (!('result' in single)) return;
+  const rs = single.result.resultSets[m.set];
+  if (!rs) return;
+  const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
+  const format = (m.format && m.format in FORMATS ? m.format : 'csv') as ExportFormat;
+  const cols = m.cols?.length ? m.cols : rs.columns.map((_, i) => i);
+  const pick = (row: unknown[]) => cols.map((i) => row[i]);
+  const fromServer = m.scope !== 'sel' && !!src && m.set === 0 && (rs.total > rs.rows.length || !!rs.limited);
+  const base = src ? vscode.Uri.parse(src.uri) : undefined;
+  const dir = (base && vscode.workspace.getWorkspaceFolder(base)?.uri) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+  const uri = target ?? await vscode.window.showSaveDialog({
+    defaultUri: dir && vscode.Uri.joinPath(dir, `result.${FORMATS[format].ext}`),
+    filters: { [FORMATS[format].label]: [FORMATS[format].ext] },
+    title: `Export ${m.scope === 'sel' ? `${m.rows?.length ?? 0} selected row(s)` : 'all data'} as ${FORMATS[format].label}`,
+  });
+  if (!uri) return;
+  return vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Exporting ${FORMATS[format].label}…`, cancellable: true },
+    async (progress, token) => {
+      const sink = await openSink(format, uri.fsPath, cols.map((i) => rs.columns[i]));
+      let n = 0;
+      try {
+        if (m.scope === 'sel') {
+          for (const i of m.rows ?? []) if (rs.rows[i]) n++, await sink.row(pick(rs.rows[i]));
+        } else if (fromServer) {
+          const c = fileConn(base!);
+          if (!c) throw new Error('Connection for this result no longer exists');
+          const ac = new AbortController();
+          token.onCancellationRequested(() => ac.abort());
+          const sql = src!.where ? addWhere(src!.sql, src!.where) : src!.sql;
+          n = await drivers[c.type].stream(c, await conns.password(c.name), sql, ac.signal, {
+            columns: () => undefined,
+            row: (v) => {
+              if (++n % 10000 === 0) progress.report({ message: `${n.toLocaleString()} rows` });
+              return sink.row(pick(v));
+            },
+          });
+        } else {
+          for (const row of rs.rows) n++, await sink.row(pick(row));
+        }
+        await sink.end();
+      } catch (e) {
+        await sink.abort();
+        log.error(`exportResult - EXCEPTION CAUGHT | ${token.isCancellationRequested ? '(cancelled by user) ' : ''}${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        if (!token.isCancellationRequested && !target) vscode.window.showErrorMessage(`Export failed: ${errMsg(e)}`);
+        if (target) throw e;
+        return undefined;
+      }
+      const partial = m.scope !== 'sel' && !fromServer && rs.total > rs.rows.length;
+      log.info(`export ${format} ${n} rows -> ${uri.fsPath}${partial ? ' (loaded rows only)' : ''}`);
+      if (!target) {
+        void vscode.window.showInformationMessage(
+          `Exported ${n.toLocaleString()} row(s) to ${uri.fsPath}${partial ? ` (loaded rows only: ${rs.total} rows in result)` : ''}`, 'Open',
+        ).then((a) => a && vscode.commands.executeCommand(format === 'xlsx' ? 'revealFileInOS' : 'vscode.open', uri));
+      }
+      return n;
+    },
+  );
+}
+
+/** jalankan text untuk file doc (koneksi / database dari binding file); source = statement asal untuk filter WHERE */
+async function execute(doc: vscode.TextDocument, text: string, source?: Source) {
+  const uri = doc.uri;
   const c = fileConn(uri) ?? (await pickConnection('Select connection to run on'));
   if (!c) return;
   if (!conns.binding(uri.toString())) {
@@ -390,6 +552,8 @@ async function runQuery(opts?: unknown) {
   const title = c.database ? `${c.name} / ${c.database}` : c.name;
   // beberapa SELECT tanpa variabel / #temp: tiap statement di koneksi sendiri, hasil tampil begitu statement itu selesai
   const stmts = splitBatches(text).flatMap(splitStatements);
+  // satu SELECT: toolbar WHERE aktif (dasarnya statement asal, bukan versi yang sudah difilter)
+  const src = source ?? (singleSelect(stmts) ? { uri: key, sql: stmts[0] } : undefined);
   let outcome: Outcome = parallelSafe(stmts)
     ? { parts: stmts.map((sql) => ({ sql, o: { loading: true } })), uri: key, start: q.start }
     : { loading: true, uri: key };
@@ -405,7 +569,7 @@ async function runQuery(opts?: unknown) {
         // satu SELECT tanpa TOP: ambil autoLimit baris pertama lalu hentikan di server
         const limitFor = (stmts: string[]) => (autoLimit > 0 && autoLimitable(stmts) ? autoLimit : undefined);
         if (!('parts' in o)) {
-          outcome = { result: await drivers[c.type].run(c, pw, text, ac.signal, limitFor(stmts)) };
+          outcome = { result: await drivers[c.type].run(c, pw, text, ac.signal, limitFor(stmts)), source: src };
           return;
         }
         const acs = (q.parts = o.parts.map(() => new AbortController()));
@@ -424,7 +588,7 @@ async function runQuery(opts?: unknown) {
     );
   } catch (e) {
     log.error(`runQuery - EXCEPTION CAUGHT | ${c.name}${ac.signal.aborted ? ' (cancelled by user)' : ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    outcome = { error: ac.signal.aborted ? 'Query cancelled.' : errMsg(e) };
+    outcome = { error: ac.signal.aborted ? 'Query cancelled.' : errMsg(e), source: src };
   } finally {
     finish();
     log.info(`runQuery end after ${Date.now() - q.start} ms${ac.signal.aborted ? ' (cancelled)' : ''}: ${c.name} / ${c.database}`);

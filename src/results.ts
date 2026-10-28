@@ -7,6 +7,17 @@ export const LOCATIONS: { id: Location; label: string }[] = [
   { id: 'right', label: 'Right of the editor' },
   { id: 'left', label: 'Left of the editor' },
 ];
+/** pesan dari script grid: filter WHERE, export */
+export interface ResultMessage {
+  type: string;
+  where?: string;
+  part?: number;
+  set?: number;
+  scope?: 'all' | 'sel';
+  rows?: number[];
+  cols?: number[];
+  format?: string;
+}
 export const VIEW_ID = 'moonageDaydream.results';
 const LOCATION_KEY = 'resultsLocation';
 
@@ -16,7 +27,15 @@ export class Results implements vscode.WebviewViewProvider {
   panel: vscode.WebviewPanel | undefined;
   private last: { title: string; outcome: Outcome } | undefined;
 
+  /** pesan dari script grid (mis. filter WHERE); diisi extension */
+  onMessage: ((msg: ResultMessage) => unknown) | undefined;
+
   constructor(private ctx: vscode.ExtensionContext) {}
+
+  /** hasil yang sedang tampil */
+  get current(): { title: string; outcome: Outcome } | undefined {
+    return this.last;
+  }
 
   get location(): Location {
     return this.ctx.globalState.get<Location>(LOCATION_KEY, 'panel');
@@ -29,7 +48,8 @@ export class Results implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
-    view.webview.options = { enableCommandUris: [CANCEL_COMMAND] }; // hanya tombol Cancel di loading
+    view.webview.options = { enableScripts: true, enableCommandUris: [CANCEL_COMMAND] }; // script grid (filter / sort / WHERE) + tombol Cancel
+    view.webview.onDidReceiveMessage((m) => this.onMessage?.(m));
     view.onDidDispose(() => (this.view = undefined));
     this.paint(view.webview);
   }
@@ -49,7 +69,8 @@ export class Results implements vscode.WebviewViewProvider {
       } else {
         this.panel?.dispose();
         this.panel = vscode.window.createWebviewPanel(VIEW_ID, 'Results', { viewColumn: vscode.ViewColumn.Beside, preserveFocus: this.location === 'right' },
-          { enableCommandUris: [CANCEL_COMMAND] });
+          { enableScripts: true, enableCommandUris: [CANCEL_COMMAND] });
+        this.panel.webview.onDidReceiveMessage((m) => this.onMessage?.(m));
         this.panel.onDidDispose(() => (this.panel = undefined));
         if (this.location === 'left') {
           // panel baru (aktif) ada di group kanan: pindahkan group-nya ke kiri editor

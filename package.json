@@ -181,6 +181,12 @@
         "key": "shift+alt+f",
         "mac": "shift+alt+f",
         "when": "editorTextFocus && editorLangId == sql && !editorReadonly && moonageDaydream.ownFormatter"
+      },
+      {
+        "command": "moonageDaydream.runQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql && moonageDaydream.ownRunner"
       }
     ],
     "menus": {
@@ -462,6 +468,16 @@
           "type": "boolean",
           "default": true,
           "description": "Put the semicolon that ends a statement on its own line when formatting SQL."
+        },
+        "moonageDaydream.lint.semicolon": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "off"
+          ],
+          "default": "error",
+          "description": "Mark SQL statements that are not terminated with ; (before GO / end of file)."
         }
       }
     },

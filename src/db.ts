@@ -21,6 +21,8 @@ export const MAX_ROWS = 1000;
 
 export interface ResultSet {
   columns: string[];
+  /** tipe kolom dari driver (mis. int, nvarchar); kosong bila tidak diketahui */
+  types?: string[];
   /** maksimal MAX_ROWS baris pertama */
   rows: unknown[][];
   /** jumlah baris sebenarnya (berhenti di limit bila auto limit berlaku) */
@@ -55,6 +57,12 @@ export interface Driver {
   /** `signal` abort = cancel query di server */
   /** limit: ambil sekian baris pertama lalu hentikan query di server (hanya untuk satu SELECT, lihat autoLimitable) */
   run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal, limit?: number): Promise<QueryResult>;
+  /**
+   * export All Data: semua baris result set pertama diteruskan ke sink tanpa limit / MAX_ROWS.
+   * row() boleh mengembalikan Promise: query di-pause sampai selesai (backpressure file). Mengembalikan jumlah baris.
+   */
+  stream(conn: ConnectionInfo, password: string, sql: string, signal: AbortSignal | undefined,
+    sink: { columns(cols: string[]): Promise<void> | void; row(values: unknown[]): Promise<void> | void }): Promise<number>;
   /** explorer (read-only, query ke katalog) */
   databases(conn: ConnectionInfo, password: string): Promise<string[]>;
   objects(conn: ConnectionInfo, password: string, db: string, kind: ObjectKind): Promise<DbObject[]>;
