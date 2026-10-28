@@ -9,3 +9,6 @@ docs/**
 TODO.md
 .vscode-test/**
 test-extention/**
+node_modules/**
+out/**
+!out/extension.js

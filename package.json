@@ -566,14 +566,15 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run compile && npm run bundle",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "dev": "npm run compile && bash scripts/dev.sh",
     "test:real": "npm run compile && bash scripts/real-test.sh",
     "test": "npm run compile && node --test out/test/*.test.js",
-    "package": "vsce package --skip-license --allow-missing-repository",
-    "install:local": "node scripts/install-local.js"
+    "package": "vsce package --skip-license",
+    "install:local": "node scripts/install-local.js",
+    "bundle": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --external:./test/real --format=cjs --platform=node --target=node18 --minify"
   },
   "dependencies": {
     "mssql": "^12.7.13",
@@ -584,6 +585,14 @@
     "@types/node": "^20.19.43",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/exeldtarkus/moonage-daydream.git"
+  },
+  "bugs": {
+    "url": "https://github.com/exeldtarkus/moonage-daydream/issues"
   }
 }

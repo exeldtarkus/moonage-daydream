@@ -47,5 +47,6 @@
 
 ## Rilis
 - [ ] README + icon + screenshot
-- [ ] Field `repository` di package.json, lalu publish (Open VSX / Marketplace)
-- [ ] Bundle dengan esbuild (VSIX sekarang 9 MB / 5000+ file karena node_modules mssql)
+- [x] Field `repository` di package.json
+- [ ] Publish (Open VSX / Marketplace) — butuh token / upload manual oleh user
+- [x] Bundle dengan esbuild saat package (VSIX 9 MB / 5000+ file -> 603 KB / 6 file)
