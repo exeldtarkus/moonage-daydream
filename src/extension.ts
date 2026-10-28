@@ -3,7 +3,7 @@ import { Connections } from './connections';
 import { Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, address, drivers } from './db';
+import { ConnectionInfo, Session, address, drivers } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, newSqlFile } from './sqlFiles';
@@ -124,6 +124,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.runQuery', runQuery),
     vscode.commands.registerCommand('moonageDaydream.runStatement', runStatement),
     vscode.commands.registerCommand('moonageDaydream.pinResults', () => results.pin()),
+    vscode.commands.registerCommand('moonageDaydream.toggleTransactionMode', (u?: vscode.Uri | string, mode?: 'auto' | 'manual') => setTransactionMode(u, mode)),
+    vscode.commands.registerCommand('moonageDaydream.commitTransaction', (u?: vscode.Uri | string) => endTransaction('commit', u)),
+    vscode.commands.registerCommand('moonageDaydream.rollbackTransaction', (u?: vscode.Uri | string) => endTransaction('rollback', u)),
+    vscode.workspace.onDidCloseTextDocument(onCloseTx),
     vscode.commands.registerCommand('moonageDaydream.explain', (u?: vscode.Uri | string, a?: number, b?: number) => explainQuery('estimated', u, a, b)),
     vscode.commands.registerCommand('moonageDaydream.analyze', (u?: vscode.Uri | string, a?: number, b?: number) => explainQuery('actual', u, a, b)),
     vscode.commands.registerCommand('moonageDaydream.cancelQuery', cancelQuery),
@@ -190,6 +194,8 @@ export function activate(ctx: vscode.ExtensionContext) {
 
 export async function deactivate() {
   for (const q of running.values()) q.ac.abort();
+  // transaksi manual yang masih terbuka tidak pernah di-commit diam-diam: rollback
+  for (const [key, tx] of txs) await closeTx(key, tx, 'rollback');
   for (const c of conns?.list() ?? []) await closePool(c);
 }
 
@@ -308,7 +314,9 @@ function updateFileStatus() {
   sqlFiles?.redraw(); // deskripsi koneksi / database per file di SQL Files
   const uri = sqlUri();
   const c = fileConn(uri);
-  status.text = `$(database) ${c ? `${c.name}${c.database ? ` / ${c.database}` : ''}` : 'No connection'}`;
+  const tx = uri && txs.get(uri.toString());
+  status.text = `$(database) ${c ? `${c.name}${c.database ? ` / ${c.database}` : ''}` : 'No connection'}${tx?.session.open ? ` · $(lock) TX open (${tx.statements})` : ''}`;
+  status.backgroundColor = tx?.session.open ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
   status.tooltip = c ? `${drivers[c.type].label} ${c.user}@${address(c)}/${c.database} (click to switch)` : 'Select a connection';
   status.command = uri ? 'moonageDaydream.setFileConnection' : 'moonageDaydream.selectConnection';
 }
@@ -351,6 +359,18 @@ function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
 function pushConn(lenses: vscode.CodeLens[], r: vscode.Range, doc: vscode.TextDocument, c: ConnectionInfo | undefined) {
   lenses.push(new vscode.CodeLens(r, { title: `$(server) ${c?.name ?? 'Select connection'}`, command: 'moonageDaydream.setFileConnection', arguments: [doc.uri] }));
   lenses.push(new vscode.CodeLens(r, { title: `$(database) ${c?.database || 'default database'}`, command: 'moonageDaydream.setFileDatabase', arguments: [doc.uri] }));
+  // transaksi: mode (klik = ganti), Commit / Rollback selama transaksi manual terbuka
+  const key = doc.uri.toString();
+  const tx = txs.get(key);
+  const manual = txMode(key) === 'manual';
+  lenses.push(new vscode.CodeLens(r, {
+    title: manual ? (tx?.session.open ? `$(lock) TX open (${tx.statements})` : '$(lock) Manual commit') : '$(unlock) Auto-commit',
+    command: 'moonageDaydream.toggleTransactionMode', arguments: [doc.uri], tooltip: 'Transaction mode for this file (click to switch Auto-commit / Manual)',
+  }));
+  if (manual && tx?.session.open) {
+    lenses.push(new vscode.CodeLens(r, { title: '$(check) Commit', command: 'moonageDaydream.commitTransaction', arguments: [doc.uri] }));
+    lenses.push(new vscode.CodeLens(r, { title: '$(discard) Rollback', command: 'moonageDaydream.rollbackTransaction', arguments: [doc.uri] }));
+  }
 }
 
 /**
@@ -574,6 +594,81 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
   );
 }
 
+/** sesi transaksi manual per file (key = uri) */
+export const txs = new Map<string, { session: Session; conn: string; db: string; statements: number }>();
+const txModes = new Map<string, 'auto' | 'manual'>();
+/** mode transaksi file: pilihan per file, default dari setting transaction.mode */
+export const txMode = (key: string) =>
+  txModes.get(key) ?? vscode.workspace.getConfiguration('moonageDaydream.transaction').get<'auto' | 'manual'>('mode', 'auto');
+
+async function txFor(key: string, c: ConnectionInfo, pw: string) {
+  const cur = txs.get(key);
+  if (cur && cur.conn === c.name && cur.db === c.database) return cur;
+  if (cur?.session.open) throw new Error(`Commit or rollback the open transaction on ${cur.conn} / ${cur.db} before switching connection / database`);
+  if (cur) await closeTx(key, cur, 'rollback');
+  const tx = { session: await drivers[c.type].session(c, pw), conn: c.name, db: c.database, statements: 0 };
+  txs.set(key, tx);
+  return tx;
+}
+
+async function closeTx(key: string, tx: { session: Session }, how: 'commit' | 'rollback') {
+  try {
+    await (how === 'commit' ? tx.session.commit() : tx.session.rollback());
+  } finally {
+    await tx.session.close().catch((e: unknown) => log.error(`closeTx - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
+    if (txs.get(key) === tx) txs.delete(key);
+  }
+}
+
+/** Commit / Rollback transaksi manual file ini; sesi tetap siap (transaksi baru dibuka di run berikutnya) */
+export async function endTransaction(how: 'commit' | 'rollback', uriArg?: vscode.Uri | string) {
+  const key = (uriArg ? (typeof uriArg === 'string' ? uriArg : uriArg.toString()) : sqlUri()?.toString()) ?? '';
+  const tx = txs.get(key);
+  if (!tx?.session.open) return void vscode.window.showInformationMessage('No open transaction for this file.');
+  if (running.has(key)) return void vscode.window.showWarningMessage('A query is still running in this transaction; wait or cancel it first.');
+  try {
+    await (how === 'commit' ? tx.session.commit() : tx.session.rollback());
+    log.info(`transaction ${how} (${tx.statements} statement(s)): ${tx.conn} / ${tx.db}`);
+    vscode.window.setStatusBarMessage(`$(check) Transaction ${how === 'commit' ? 'committed' : 'rolled back'} (${tx.statements} statement(s))`, 4000);
+    tx.statements = 0;
+  } catch (e) {
+    log.error(`endTransaction ${how} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`${how} failed: ${errMsg(e)}`);
+  }
+  updateFileStatus();
+}
+
+/** ganti mode Auto-commit / Manual untuk file ini; Manual -> Auto dengan transaksi terbuka harus commit / rollback dulu */
+export async function setTransactionMode(uriArg?: vscode.Uri | string, mode?: 'auto' | 'manual') {
+  const key = (uriArg ? (typeof uriArg === 'string' ? uriArg : uriArg.toString()) : sqlUri()?.toString()) ?? '';
+  if (!key) return;
+  const next = mode ?? (txMode(key) === 'auto' ? 'manual' : 'auto');
+  const tx = txs.get(key);
+  if (next === 'auto' && tx?.session.open) {
+    const pick = await vscode.window.showWarningMessage(`Transaction is open (${tx.statements} statement(s)). Commit or roll back before switching to auto-commit?`, { modal: true }, 'Commit', 'Rollback');
+    if (!pick) return;
+    await endTransaction(pick === 'Commit' ? 'commit' : 'rollback', key);
+  }
+  if (next === 'auto' && tx) await closeTx(key, tx, 'rollback');
+  txModes.set(key, next);
+  updateFileStatus();
+}
+
+/** file ditutup dengan transaksi terbuka: tanya Commit / Rollback (tidak dijawab = rollback) */
+async function onCloseTx(doc: vscode.TextDocument) {
+  const key = doc.uri.toString();
+  const tx = txs.get(key);
+  if (!tx) return;
+  let how: 'commit' | 'rollback' = 'rollback';
+  if (tx.session.open) {
+    const pick = await vscode.window.showWarningMessage(
+      `${doc.fileName.split(/[\\/]/).pop()} was closed with an open transaction (${tx.statements} statement(s)) on ${tx.conn} / ${tx.db}.`, 'Commit', 'Rollback');
+    how = pick === 'Commit' ? 'commit' : 'rollback';
+  }
+  await closeTx(key, tx, how).catch((e: unknown) => log.error(`onCloseTx - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
+  log.info(`transaction ${how} on close: ${tx.conn} / ${tx.db}`);
+}
+
 /** daftarkan query yang berjalan untuk file key (Running Queries, CodeLens Cancel); run lama di file itu dibatalkan. end() wajib dipanggil */
 function startRun(key: string, c: ConnectionInfo, text: string) {
   const prev = running.get(key);
@@ -669,7 +764,8 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   const stmts = splitBatches(text).flatMap(splitStatements);
   // satu SELECT: toolbar WHERE aktif (dasarnya statement asal, bukan versi yang sudah difilter)
   const src = source ?? (singleSelect(stmts) ? { uri: key, sql: stmts[0] } : undefined);
-  let outcome: Outcome = parallelSafe(stmts)
+  const manual = txMode(key) === 'manual'; // transaksi manual: satu sesi, selalu berurutan
+  let outcome: Outcome = !manual && parallelSafe(stmts)
     ? { parts: stmts.map((sql) => ({ sql, o: { loading: true } })), uri: key, start: q.start }
     : { loading: true, uri: key };
   await results.show(title, outcome); // spinner sampai hasil (atau error / cancel) menggantikannya
@@ -684,6 +780,13 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
         // satu SELECT tanpa TOP: ambil autoLimit baris pertama lalu hentikan di server
         const limitFor = (stmts: string[]) => (autoLimit > 0 && autoLimitable(stmts) ? autoLimit : undefined);
         if (!('parts' in o)) {
+          if (manual) {
+            const tx = await txFor(key, c, pw);
+            outcome = { result: await tx.session.run(text, ac.signal, limitFor(stmts)), source: src };
+            if (tx.session.open) tx.statements++;
+            else vscode.window.showWarningMessage('The transaction was rolled back by the server (error or cancel).');
+            return;
+          }
           outcome = { result: await drivers[c.type].run(c, pw, text, ac.signal, limitFor(stmts)), source: src };
           return;
         }
@@ -707,6 +810,7 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   } finally {
     log.info(`runQuery end after ${Date.now() - q.start} ms${ac.signal.aborted ? ' (cancelled)' : ''}: ${c.name} / ${c.database}`);
     end();
+    if (manual) updateFileStatus(); // status TX open (n) / lens Commit Rollback
   }
   const errors = 'parts' in outcome ? outcome.parts.flatMap((p) => ('error' in p.o ? [p.o.error] : [])) : 'error' in outcome ? [outcome.error] : [];
   await history.add({

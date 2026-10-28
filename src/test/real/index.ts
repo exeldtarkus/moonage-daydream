@@ -351,6 +351,39 @@ async function pinTest(m: typeof import('../../extension')) {
   }
 }
 
+/** transaksi manual: BEGIN TRAN otomatis, Commit / Rollback, kembali ke auto-commit (hanya SELECT @@TRANCOUNT) */
+async function txTest(m: typeof import('../../extension')) {
+  const doc = await fixture('tx', 'SELECT @@TRANCOUNT AS tc;\n');
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
+  await vscode.window.showTextDocument(doc);
+  const key = doc.uri.toString();
+  const tc = async () => {
+    await vscode.commands.executeCommand('moonageDaydream.runQuery');
+    return /<td class="num">(\d+)<\/td>/.exec(resultHtml(m))?.[1];
+  };
+  const titles = async () => (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri)).map((l) => l.command?.title ?? '');
+  try {
+    assert.ok((await titles()).includes('$(unlock) Auto-commit'), 'default auto-commit lens');
+    assert.equal(await tc(), '0', 'auto-commit: no transaction');
+    await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'manual');
+    assert.equal(await tc(), '1', 'manual: transaction open');
+    await tc();
+    const t = await titles();
+    assert.ok(t.includes('$(lock) TX open (2)') && t.includes('$(check) Commit') && t.includes('$(discard) Rollback'), `tx lenses ${t}`);
+    await vscode.commands.executeCommand('moonageDaydream.commitTransaction', doc.uri);
+    assert.equal(m.txs.get(key)?.session.open, false, 'committed');
+    assert.equal(await tc(), '1', 'next run opens a new transaction');
+    await vscode.commands.executeCommand('moonageDaydream.rollbackTransaction', doc.uri);
+    assert.equal(m.txs.get(key)?.session.open, false, 'rolled back');
+    await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'auto');
+    assert.equal(await tc(), '0', 'back to auto-commit');
+    assert.ok(!m.txs.has(key), 'session closed');
+    say('PASS transaction: auto tc=0 -> manual tc=1, TX open (2) lenses, commit, new tx, rollback, auto tc=0');
+  } finally {
+    await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'auto');
+  }
+}
+
 /** Format Document: keyword huruf besar + koma di depan (tanpa koneksi DB) */
 async function formatTest(m: typeof import('../../extension')) {
   const doc = await fixture('format', "select name, object_id from sys.objects where name like 'a,%'\n");
@@ -483,7 +516,7 @@ async function fileBindingTest(m: typeof import('../../extension')) {
     await vscode.window.showTextDocument(doc);
     const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
     const titles = lenses.filter((l) => l.command?.command.startsWith('moonageDaydream.')).map((l) => l.command!.title);
-    assert.deepEqual(titles, ['$(play) Execute', '$(list-tree) Explain', '$(pulse) Analyze', `$(server) ${CONN}`, `$(database) ${db}`], `codelens ${JSON.stringify(titles)}`);
+    assert.deepEqual(titles, ['$(play) Execute', '$(list-tree) Explain', '$(pulse) Analyze', `$(server) ${CONN}`, `$(database) ${db}`, '$(unlock) Auto-commit'], `codelens ${JSON.stringify(titles)}`);
     await vscode.commands.executeCommand('moonageDaydream.runQuery');
     await sleep(1000);
     assert.ok(resultHtml(m).includes(`<td>${db}</td>`), `DB_NAME() should be ${db}: ${resultHtml(m).match(/class="err">([^<]*)/)?.[1] ?? 'other db'}`);
@@ -699,6 +732,12 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL auto limit: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await txTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL transaction: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await pinTest(m);

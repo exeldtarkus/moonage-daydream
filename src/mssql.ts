@@ -1,6 +1,6 @@
 import * as sql from 'mssql';
 import { MAX_ROWS } from './db';
-import type { ConnectionInfo, Driver, ObjectKind, QueryResult, ResultSet } from './db';
+import type { ConnectionInfo, Driver, ObjectKind, QueryResult, ResultSet, Session } from './db';
 
 /** pool per koneksi + database (database bisa beda per file .sql) */
 const pools = new Map<string, Promise<sql.ConnectionPool>>();
@@ -22,18 +22,20 @@ export async function retryOnce<T>(f: () => Promise<T>, retryable: (e: unknown) 
   }
 }
 
+const poolConfig = (conn: ConnectionInfo, password: string): sql.config => ({
+  server: conn.host,
+  port: conn.instance ? undefined : conn.port, // tedious: port dan instanceName tidak boleh bersamaan
+  user: conn.user,
+  password,
+  database: conn.database || undefined,
+  options: { encrypt: true, trustServerCertificate: conn.trustServerCertificate, instanceName: conn.instance || undefined },
+});
+
 function pool(conn: ConnectionInfo, password: string): Promise<sql.ConnectionPool> {
   const key = poolKey(conn);
   let p = pools.get(key);
   if (!p) {
-    p = retryOnce(() => new sql.ConnectionPool({
-      server: conn.host,
-      port: conn.instance ? undefined : conn.port, // tedious: port dan instanceName tidak boleh bersamaan
-      user: conn.user,
-      password,
-      database: conn.database || undefined,
-      options: { encrypt: true, trustServerCertificate: conn.trustServerCertificate, instanceName: conn.instance || undefined },
-    }).connect(), retryableConnectError);
+    p = retryOnce(() => new sql.ConnectionPool(poolConfig(conn, password)).connect(), retryableConnectError);
     pools.set(key, p);
     p.catch(() => pools.delete(key)); // gagal connect: coba ulang di run berikutnya (error dilaporkan oleh pemanggil)
   }
@@ -121,6 +123,45 @@ export const mssqlDriver: Driver = {
     return out;
   },
 
+  async session(conn, password) {
+    // pool sendiri berisi 1 koneksi: transaksi manual tidak bercampur dengan query auto-commit
+    const p = await retryOnce(() => new sql.ConnectionPool({ ...poolConfig(conn, password), pool: { max: 1, min: 0 } }).connect(), retryableConnectError);
+    let tx: sql.Transaction | undefined;
+    const end = async (how: 'commit' | 'rollback') => {
+      const t = tx;
+      tx = undefined;
+      if (t) await t[how]();
+    };
+    const s: Session = {
+      get open() { return !!tx; },
+      async run(text, signal, limit) {
+        if (!tx) {
+          const t = new sql.Transaction(p);
+          await t.begin();
+          t.on('rollback', () => { if (tx === t) tx = undefined; }); // dibatalkan server (error berat / cancel): tidak terbuka lagi
+          tx = t;
+        }
+        const out: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
+        const start = Date.now();
+        for (const batch of splitBatches(text)) {
+          signal?.throwIfAborted();
+          await collect(new sql.Request(tx), batch, out, signal, limit);
+        }
+        out.durationMs = Date.now() - start;
+        return out;
+      },
+      commit: () => end('commit'),
+      rollback: () => end('rollback'),
+      async close() {
+        try {
+          await end('rollback');
+        } finally {
+          await p.close();
+        }
+      },
+    };
+    return s;
+  },
   async plan(conn, password, text, mode, signal) {
     const p = await pool(conn, password);
     // satu koneksi lewat transaksi (SET ... berlaku per sesi), selalu di-rollback: Analyze tidak pernah menyimpan perubahan

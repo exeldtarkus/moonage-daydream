@@ -34,7 +34,7 @@
 - [x] Klik kanan database di Connections: New SQL File (tab terikat ke koneksi + database)
 - [x] Auto limit 100 (setting `moonageDaydream.query.autoLimit`): satu SELECT tanpa TOP / OFFSET FETCH / INTO diambil 100 baris lalu dihentikan di server
 - [x] Linter: statement tanpa `;` ditandai merah (setting `moonageDaydream.lint.semicolon`), Quick Fix "Add ;"
-- [ ] Transaction strategy: mode Auto-commit / Manual per koneksi atau file (Manual = BEGIN TRAN otomatis, tombol Commit / Rollback, status transaksi di status bar, peringatan bila transaksi masih terbuka saat file / koneksi ditutup)
+- [x] Transaction strategy: mode Auto-commit / Manual per file (Manual = BEGIN TRAN otomatis, tombol Commit / Rollback, status transaksi di status bar, peringatan bila transaksi masih terbuka saat file / koneksi ditutup)
 - [ ] Edit data langsung di grid
 - [ ] Paging / virtual scroll di grid (sekarang 1000 baris pertama per result set; sisanya hanya dihitung)
 

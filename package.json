@@ -185,6 +185,24 @@
         "title": "Pin Results (keep in its own tab, side by side)",
         "category": "Moonage Daydream",
         "icon": "$(pinned)"
+      },
+      {
+        "command": "moonageDaydream.toggleTransactionMode",
+        "title": "Toggle Transaction Mode (Auto-commit / Manual)",
+        "category": "Moonage Daydream",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "moonageDaydream.commitTransaction",
+        "title": "Commit Transaction",
+        "category": "Moonage Daydream",
+        "icon": "$(check)"
+      },
+      {
+        "command": "moonageDaydream.rollbackTransaction",
+        "title": "Rollback Transaction",
+        "category": "Moonage Daydream",
+        "icon": "$(discard)"
       }
     ],
     "keybindings": [
@@ -529,6 +547,15 @@
           ],
           "default": "error",
           "description": "Mark SQL statements that are not terminated with ; (before GO / end of file)."
+        },
+        "moonageDaydream.transaction.mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "default": "auto",
+          "description": "Default transaction mode for SQL files. manual: queries run in an open transaction until you Commit / Rollback (CodeLens or status bar)."
         }
       }
     },

@@ -51,12 +51,27 @@ export interface Column {
   nullable: boolean;
 }
 
+/** sesi transaksi manual (satu koneksi) */
+export interface Session {
+  /** jalankan di dalam transaksi (BEGIN TRAN otomatis bila belum terbuka) */
+  run(sql: string, signal?: AbortSignal, limit?: number): Promise<QueryResult>;
+  /** transaksi sedang terbuka */
+  readonly open: boolean;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  close(): Promise<void>;
+}
+
 export interface Driver {
   label: string;
   defaultPort: number;
   /** `signal` abort = cancel query di server */
   /** limit: ambil sekian baris pertama lalu hentikan query di server (hanya untuk satu SELECT, lihat autoLimitable) */
   run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal, limit?: number): Promise<QueryResult>;
+  /**
+   * transaksi manual: satu koneksi khusus; transaksi dibuka otomatis saat run pertama dan tetap terbuka sampai commit / rollback.
+   */
+  session(conn: ConnectionInfo, password: string): Promise<Session>;
   /**
    * execution plan: estimated = query tidak dijalankan; actual = query dijalankan (pemanggil membatasi ke SELECT).
    * Dijalankan dalam transaksi yang selalu di-rollback. xml = satu plan XML per batch / statement.
