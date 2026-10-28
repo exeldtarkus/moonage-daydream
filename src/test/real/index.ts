@@ -216,6 +216,7 @@ async function whereTest(m: typeof import('../../extension')) {
   const rows = () => (resultHtml(m).match(/<tr><td class="n">/g) ?? []).length;
   const all = rows();
   assert.ok(resultHtml(m).includes('<form class="where">') && all > 1, `WHERE bar + ${all} rows`);
+  assert.ok(resultHtml(m).includes('data-pane="cols"') && resultHtml(m).includes('data-pane="insp"') && resultHtml(m).includes('data-name="database_id"'), 'Columns / Inspector side panel');
   await m.applyWhere("name = 'master'");
   assert.equal(rows(), 1, 'filtered on the server');
   assert.ok(resultHtml(m).includes(`value="name = 'master'"`) && resultHtml(m).includes('<td>master</td>'), 'filter kept in the input');

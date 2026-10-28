@@ -63,6 +63,7 @@ function typeTag(type: string): string {
   return type ? 'abc' : '';
 }
 
+const PIN_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2h4l-.5 4 2.5 2.5v1H4v-1L6.5 6zM8 9.5V14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 const EXPORT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 12.5h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const FORMAT_OPTIONS = Object.entries(FORMATS).map(([k, f]) => `<option value="${k}">${f.label}</option>`).join('');
 const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
@@ -84,7 +85,7 @@ function resultHtml(r: QueryResult): string {
     const more = s.limited ? ` · auto limit ${s.limited}, add TOP n for more` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
     const head = s.columns.map((c, k) => {
       const t = s.types?.[k] ?? '';
-      return `<th data-c="${k}"${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
+      return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
     return `<h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
@@ -161,6 +162,7 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .top { opacity: .85; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
   .pinbtn { margin-left: auto; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font-family: var(--vscode-font-family); font-size: 12px;
     color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  .pinbtn { display: inline-flex; align-items: center; gap: 4px; } .pinbtn svg { width: 12px; height: 12px; }
   .pinbtn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
   h3 { font-size: 12px; margin: 12px 0 4px; } h3 span { font-weight: normal; opacity: .7; }
   /* grid gaya DBCode: header tebal + ikon tipe, baris lega selang-seling, angka rata kanan, footer Rows / waktu */
@@ -214,6 +216,24 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .menu button.primary { margin-top: 12px; text-align: center; padding: 6px; border-radius: 2px;
     color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   .menu button.primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+  /* panel samping: Columns / Inspector (tab vertikal di tepi kanan) */
+  .sidetabs { position: fixed; right: 0; top: 40px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+  .sidetabs button { writing-mode: vertical-rl; padding: 10px 3px; border: 0; border-radius: 3px 0 0 3px; cursor: pointer; font-family: var(--vscode-font-family); font-size: 11px;
+    color: var(--vscode-foreground, inherit); background: var(--vscode-editorGroupHeader-tabsBackground, #252526); opacity: .75; }
+  .sidetabs button:hover, .sidetabs button.on { opacity: 1; background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  body.side-open { padding-right: 300px; } body.side-open .sidetabs { right: 284px; }
+  #side { position: fixed; top: 0; right: 0; bottom: 0; width: 284px; z-index: 6; overflow: auto; box-sizing: border-box; padding: 8px 10px;
+    font-family: var(--vscode-font-family); font-size: 12px; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); border-left: 1px solid var(--vscode-panel-border); }
+  .sidehead { display: flex; align-items: center; margin-bottom: 8px; } .sidehead .sideclose { margin-left: auto; border: 0; background: none; color: inherit; cursor: pointer; font-size: 16px; }
+  #side input[type=search] { width: 100%; box-sizing: border-box; padding: 4px 6px; margin-bottom: 6px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); }
+  #side .col { display: flex; align-items: center; gap: 6px; padding: 3px 2px; border-radius: 2px; }
+  #side .col:hover { background: var(--vscode-list-hoverBackground); } #side .col a { color: inherit; text-decoration: none; cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  #side .col .t, #side .kv .t { opacity: .5; font-size: 10px; }
+  #side .acts2 { display: flex; gap: 6px; margin-bottom: 6px; } #side .acts2 button { flex: 1; padding: 3px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
+    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  #side .kv { padding: 5px 0; border-bottom: 1px solid var(--vscode-panel-border); } #side .kv .k { font-weight: 600; }
+  #side .kv .v { margin-top: 2px; font-family: var(--vscode-editor-font-family); white-space: pre-wrap; word-break: break-word; }
+  #side .hint { opacity: .6; }
   /* execution plan */
   .planbar { display: flex; align-items: center; gap: 12px; margin: 4px 0 8px; font-family: var(--vscode-font-family); font-size: 12px; }
   .planbar .xmlbtn { margin-left: auto; padding: 2px 10px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
@@ -262,9 +282,11 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
 </style>
 </head>
 <body>
-${running(o) ? '<div class="bar"></div>' : ''}${'loading' in o ? '' : `<div class="top">${pinned ? '📌 ' : ''}${esc(title)} · ${status}${pinned || running(o) ? '' : '<button class="pinbtn" title="Pin: keep this result in its own tab (next to the others) so new runs do not replace it">📌 Pin</button>'}</div>`}
+${running(o) ? '<div class="bar"></div>' : ''}${'loading' in o ? '' : `<div class="top">${pinned ? '📌 ' : ''}${esc(title)} · ${status}${pinned || running(o) ? '' : `<button class="pinbtn" title="Pin: keep this result in its own tab (next to the others) so new runs do not replace it">${PIN_ICON}Pin</button>`}</div>`}
 ${body}
 <div id="menu" class="menu" hidden></div>
+${'result' in o || 'parts' in o ? `<nav class="sidetabs"><button data-pane="cols">Columns</button><button data-pane="insp">Inspector</button></nav>
+<aside id="side" hidden><div class="sidehead"><b id="sidetitle"></b><button class="sideclose" title="Close">×</button></div><div id="sidebody"></div></aside>` : ''}
 <script nonce="${nonce}">const FORMAT_OPTIONS = ${JSON.stringify(FORMAT_OPTIONS)};${GRID_SCRIPT}</script>
 </body>
 </html>`;
@@ -324,6 +346,7 @@ const GRID_SCRIPT = `(() => {
     const count = t.closest('.grid').nextElementSibling.querySelector('.count');
     const filtered = rows.length !== s.rows.length;
     count.textContent = filtered ? rows.length + ' / ' + count.dataset.total + ' (filtered)' : count.dataset.total;
+    if (pane === 'cols' && !document.activeElement?.matches?.('#colq')) renderSide();
   }
   /** popup di bawah tombol; tidak muat -> di atas tombol; tetap dalam layar (diukur setelah isi + class terpasang) */
   function open(btn, html, init, cls) {
@@ -339,6 +362,10 @@ const GRID_SCRIPT = `(() => {
     menu.style.top = Math.max(4, Math.min(top, innerHeight - h - 4)) + 'px';
   }
   document.addEventListener('click', (e) => {
+    const tb = e.target.closest('table.rs');
+    if (tb) active = tb;
+    const go = e.target.closest('[data-goto]');
+    if (go) { tableOf().tHead.rows[0].cells[+go.dataset.goto + 1].scrollIntoView({ block: 'nearest', inline: 'center' }); return; }
     const td = e.target.closest('tbody td');
     if (td && td.closest('table.rs')) {
       // pilih baris: klik = satu baris, Ctrl/Cmd+klik = tambah / kurangi, Shift+klik = rentang dari baris terakhir
@@ -356,10 +383,20 @@ const GRID_SCRIPT = `(() => {
         s.anchor = i;
       }
       paintSel(t);
+      if (pane === 'insp') renderSide();
       return;
     }
     const b = e.target.closest('button');
     if (!b) { if (!menu.contains(e.target)) menu.hidden = true; return; }
+    if (b.dataset.pane) { openPane(b.dataset.pane); return; }
+    if (b.classList.contains('sideclose')) { openPane(pane); return; }
+    if (b.dataset.a === 'colsall' || b.dataset.a === 'colsnone') {
+      const t = tableOf(), s = st(t);
+      s.hidden = b.dataset.a === 'colsall' ? new Set() : new Set([...t.tHead.rows[0].cells].slice(2).map((_, i) => i + 1)); // sisakan kolom pertama
+      apply(t);
+      renderSide();
+      return;
+    }
     const th = b.closest('th');
     if (b.classList.contains('xmlbtn')) { vscode.postMessage({ type: 'planXml' }); return; }
     if (b.classList.contains('pinbtn')) { vscode.postMessage({ type: 'pin' }); return; }
@@ -417,8 +454,56 @@ const GRID_SCRIPT = `(() => {
       form.requestSubmit();
     }
   });
-  document.addEventListener('change', (e) => { if (e.target.id === 'xf') syncCopy(); });
+  // panel samping: Columns (tampil / sembunyi, cari, lompat ke kolom) dan Inspector (detail baris terpilih)
+  const side = document.getElementById('side');
+  let pane = null, active = null;
+  const tableOf = () => (active && document.contains(active) ? active : document.querySelector('table.rs'));
+  const esc = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  function renderSide() {
+    if (!side || side.hidden) return;
+    const t = tableOf();
+    const body = document.getElementById('sidebody');
+    document.getElementById('sidetitle').textContent = pane === 'cols' ? 'Columns' : 'Inspector';
+    if (!t) { body.innerHTML = '<div class="hint">No result</div>'; return; }
+    const s = st(t);
+    const heads = [...t.tHead.rows[0].cells].slice(1);
+    if (pane === 'cols') {
+      const q = document.getElementById('colq')?.value ?? '';
+      body.innerHTML = '<input type="search" id="colq" placeholder="Search columns…" value="' + esc(q) + '">'
+        + '<div class="acts2"><button data-a="colsall">Show all</button><button data-a="colsnone">Hide all</button></div>'
+        + heads.map((h, i) => (h.dataset.name.toLowerCase().includes(q.toLowerCase())
+          ? '<div class="col"><input type="checkbox" data-col="' + i + '"' + (s.hidden.has(i) ? '' : ' checked') + '><a data-goto="' + i + '">' + esc(h.dataset.name) + '</a><span class="t">' + esc(h.dataset.type) + '</span></div>' : '')).join('');
+      const qi = document.getElementById('colq');
+      if (q) { qi.focus(); qi.setSelectionRange(q.length, q.length); }
+    } else {
+      const i = s.anchor;
+      const r = i === null ? null : s.rows[i];
+      body.innerHTML = !r ? '<div class="hint">Select a row to inspect it.</div>'
+        : '<div class="hint">Row ' + r.cells[0].textContent + '</div>' + heads.map((h, c) => {
+          const td = r.cells[c + 1];
+          const v = text(td);
+          return '<div class="kv"><div class="k">' + esc(h.dataset.name) + ' <span class="t">' + esc(h.dataset.type) + '</span></div><div class="v' + (v === null ? ' null' : '') + '">' + (v === null ? '(null)' : esc(v)) + '</div></div>';
+        }).join('');
+    }
+  }
+  function openPane(p) {
+    const same = pane === p && !side.hidden;
+    pane = p;
+    side.hidden = same;
+    document.body.classList.toggle('side-open', !same);
+    document.querySelectorAll('.sidetabs button').forEach((b) => b.classList.toggle('on', !same && b.dataset.pane === p));
+    renderSide();
+  }
+  document.addEventListener('change', (e) => {
+    if (e.target.id === 'xf') syncCopy();
+    if (e.target.dataset?.col !== undefined) {
+      const t = tableOf(), s = st(t), c = +e.target.dataset.col;
+      e.target.checked ? s.hidden.delete(c) : s.hidden.add(c);
+      apply(t);
+    }
+  });
   document.addEventListener('input', (e) => {
+    if (e.target.id === 'colq') { renderSide(); return; }
     if (e.target.id !== 'f') return;
     const s = st(menu.table);
     if (e.target.value) s.filters[menu.col] = e.target.value; else delete s.filters[menu.col];

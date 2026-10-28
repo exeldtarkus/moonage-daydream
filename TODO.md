@@ -15,7 +15,8 @@
 - [x] Copy ke clipboard: Ctrl+C baris terpilih (TSV), tombol Copy di popup Export (semua format teks)
 - [x] Toolbar hasil: filter WHERE (input di atas grid, query dijalankan ulang dengan WHERE tambahan)
 - [x] Filter per kolom (ikon filter + menu ⋮ di header kolom: filter nilai, sort, hide) — di baris yang sudah dimuat
-- [ ] Panel samping hasil: Columns (pilih / urutkan kolom), Inspector (detail baris terpilih), Share (Export sudah lewat tombol di footer)
+- [x] Panel samping hasil: Columns (tampil / sembunyi, cari, lompat ke kolom), Inspector (detail baris terpilih)
+- [ ] Columns: urutkan ulang kolom (drag)
 - [x] Form Add / Edit Connection (tab editor, tombol Test / Save)
 - [x] Sidebar Running Queries (cancel per query / cancel all) dan Query History (open, run again, copy, clear)
 - [x] Tabel besar: baris di-stream, hanya 1000 pertama disimpan (memori tetap kecil, cancel tetap responsif)

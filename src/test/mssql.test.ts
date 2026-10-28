@@ -29,7 +29,7 @@ test('render shows result sets, messages and errors', () => {
   assert.ok(html.includes('<span class="ty"></span>a&lt;b<span class="hb">') && html.includes('hello') && html.includes('Done in 7 ms'));
   assert.ok(html.includes('<td class="num">1</td>') && html.includes('Rows: <b class="count" data-total="2">5000</b>') && html.includes('</svg><b>7ms</b>'), 'numbers right-aligned, footer');
   const typed = render('csp', 't', { result: { resultSets: [{ columns: ['n', 's'], types: ['int', 'nvarchar'], rows: [], total: 0 }], rowsAffected: [], messages: [], durationMs: 1 } });
-  assert.ok(typed.includes('<th data-c="0" class="num" title="int"><span class="ty">#</span>n<span class="hb">') && typed.includes('<span class="ty">abc</span>s'), 'type icons');
+  assert.ok(typed.includes('<th data-c="0" data-name="n" data-type="int" class="num" title="int"><span class="ty">#</span>n<span class="hb">') && typed.includes('<span class="ty">abc</span>s'), 'type icons');
   const upd = render('csp', 'local', { result: { resultSets: [], rowsAffected: [2, 3], messages: [], durationMs: 1 } });
   assert.ok(upd.includes('5 row(s) affected'));
   assert.ok(render('csp', 'local', { error: 'Login failed <x>' }).includes('Login failed &lt;x&gt;'));
