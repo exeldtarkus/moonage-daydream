@@ -205,3 +205,8 @@ test('poolConfig: SQL login vs Windows (NTLM)', () => {
   assert.deepEqual(win.authentication, { type: 'ntlm', options: { domain: 'CORP', userName: 'u', password: 'pw' } });
   assert.equal(win.user, undefined);
 });
+
+test('poolConfig: no request timeout (mssql default 15 s), long queries stop via Cancel', () => {
+  const c = poolConfig({ name: 'n', type: 'mssql', host: 'h', port: 1433, user: 'u', database: '', trustServerCertificate: true }, 'pw');
+  assert.equal(c.requestTimeout, 0);
+});

@@ -1,5 +1,5 @@
 import { MAX_ROWS } from './db';
-import type { ConnectionInfo, Driver, QueryResult, Session } from './db';
+import type { ConnectionInfo, Driver, QueryResult, Session, Sink } from './db';
 import { addLimit } from './sqlContext';
 
 /** hasil mentah dari server: satu entri per statement yang mengembalikan baris */
@@ -37,6 +37,18 @@ export function toResult(raw: Raw, start: number, limit?: number, skip = 0, serv
   };
 }
 
+// shortcut: semua baris result set pertama dimuat ke memori dulu lalu diteruskan ke sink; ganti ke cursor / stream driver bila export jutaan baris
+async function streamOn(link: Link, sql: string, signal: AbortSignal | undefined, sink: Sink): Promise<number> {
+  const set = (await link.exec(sql, signal)).sets[0];
+  if (!set) return 0;
+  await sink.columns(set.columns);
+  for (const row of set.rows) {
+    signal?.throwIfAborted();
+    await sink.row(row);
+  }
+  return set.rows.length;
+}
+
 async function exec(link: Link, sql: string, signal?: AbortSignal, limit?: number, skip = 0): Promise<QueryResult> {
   signal?.throwIfAborted();
   const start = Date.now();
@@ -69,13 +81,14 @@ export function sqlDriver(base: Base): Driver {
       };
       const s: Session = {
         get open() { return open; },
-        async run(sql, signal, limit) {
+        async run(sql, signal, limit, skip) {
           if (!open) {
             await l.exec('BEGIN');
             open = true;
           }
-          return exec(l, sql, signal, limit);
+          return exec(l, sql, signal, limit, skip);
         },
+        stream: (sql, signal, sink) => streamOn(l, sql, signal, sink),
         commit: () => end('COMMIT'),
         rollback: () => end('ROLLBACK'),
         async close() {
@@ -89,16 +102,6 @@ export function sqlDriver(base: Base): Driver {
       return s;
     },
 
-    // shortcut: semua baris result set pertama dimuat ke memori dulu lalu diteruskan ke sink; ganti ke cursor / stream driver bila export jutaan baris
-    stream: (conn, password, sql, signal, sink) => pooled(conn, password, async (l) => {
-      const set = (await l.exec(sql, signal)).sets[0];
-      if (!set) return 0;
-      await sink.columns(set.columns);
-      for (const row of set.rows) {
-        signal?.throwIfAborted();
-        await sink.row(row);
-      }
-      return set.rows.length;
-    }),
+    stream: (conn, password, sql, signal, sink) => pooled(conn, password, (l) => streamOn(l, sql, signal, sink)),
   };
 }

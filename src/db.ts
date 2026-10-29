@@ -71,10 +71,15 @@ export interface Column {
   nullable: boolean;
 }
 
+/** penerima baris export All Data; row() boleh mengembalikan Promise (backpressure) */
+export interface Sink { columns(cols: string[]): Promise<void> | void; row(values: unknown[]): Promise<void> | void }
+
 /** sesi transaksi manual (satu koneksi) */
 export interface Session {
-  /** jalankan di dalam transaksi (BEGIN TRAN otomatis bila belum terbuka) */
-  run(sql: string, signal?: AbortSignal, limit?: number): Promise<QueryResult>;
+  /** jalankan di dalam transaksi (BEGIN TRAN otomatis bila belum terbuka); limit / skip seperti Driver.run */
+  run(sql: string, signal?: AbortSignal, limit?: number, skip?: number): Promise<QueryResult>;
+  /** export All Data di koneksi sesi: ikut melihat perubahan yang belum di-commit, tidak tertahan lock transaksi sendiri */
+  stream(sql: string, signal: AbortSignal | undefined, sink: Sink): Promise<number>;
   /** transaksi sedang terbuka */
   readonly open: boolean;
   commit(): Promise<void>;
@@ -118,8 +123,7 @@ export interface Driver {
    * export All Data: semua baris result set pertama diteruskan ke sink tanpa limit / MAX_ROWS.
    * row() boleh mengembalikan Promise: query di-pause sampai selesai (backpressure file). Mengembalikan jumlah baris.
    */
-  stream(conn: ConnectionInfo, password: string, sql: string, signal: AbortSignal | undefined,
-    sink: { columns(cols: string[]): Promise<void> | void; row(values: unknown[]): Promise<void> | void }): Promise<number>;
+  stream(conn: ConnectionInfo, password: string, sql: string, signal: AbortSignal | undefined, sink: Sink): Promise<number>;
   /** explorer (read-only, query ke katalog) */
   databases(conn: ConnectionInfo, password: string): Promise<string[]>;
   objects(conn: ConnectionInfo, password: string, db: string, kind: ObjectKind): Promise<DbObject[]>;
@@ -141,6 +145,17 @@ export const drivers: Record<DbType, Driver> = {
   sqlite: sqliteDriver,
   mongodb: mongoDriver,
 };
+
+/**
+ * sesi transaksi file yang masih terbuka di koneksi / database c, untuk baca ulang (Load more / Export All Data):
+ * ikut melihat perubahan yang belum di-commit dan tidak tertahan lock transaksi sendiri. undefined = pakai pool biasa.
+ * busy = query file itu masih berjalan di sesi yang sama.
+ */
+export function openSession(tx: { session: Session; conn: string; db: string } | undefined, c: ConnectionInfo, busy: boolean): Session | undefined {
+  if (!tx?.session.open || tx.conn !== c.name || tx.db !== c.database) return undefined;
+  if (busy) throw new Error('A query is still running in this transaction; wait or cancel it first.');
+  return tx.session;
+}
 
 /** alamat untuk ditampilkan: host\instance atau host:port */
 export const address = (c: ConnectionInfo) => (c.type === 'sqlite' ? c.file ?? '' : c.instance ? `${c.host}\\${c.instance}` : `${c.host}:${c.port}`);

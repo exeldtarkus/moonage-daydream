@@ -1,6 +1,9 @@
 import * as sql from 'mssql';
 import { MAX_ROWS } from './db';
-import type { ConnectionInfo, Driver, ObjectKind, QueryResult, ResultSet, Session } from './db';
+import type { ConnectionInfo, Driver, ObjectKind, QueryResult, ResultSet, Session, Sink } from './db';
+import { driverLog } from './log';
+
+const errText = (e: unknown) => (e instanceof Error ? `${e.message} - stack-trace: ${e.stack}` : String(e));
 
 /** pool per koneksi + database (database bisa beda per file .sql) */
 const pools = new Map<string, Promise<sql.ConnectionPool>>();
@@ -33,6 +36,7 @@ export const poolConfig = (conn: ConnectionInfo, password: string): sql.config =
     ? { authentication: { type: 'ntlm', options: { domain: conn.domain ?? '', userName: conn.user, password } } }
     : { user: conn.user, password }),
   database: conn.database || undefined,
+  requestTimeout: 0, // tanpa batas (default mssql 15 detik): query lama dihentikan lewat Cancel, bukan timeout diam-diam
   options: { encrypt: true, trustServerCertificate: conn.trustServerCertificate, instanceName: conn.instance || undefined },
 });
 
@@ -109,6 +113,56 @@ async function collect(req: sql.Request, batch: string, out: QueryResult, signal
   out.rowsAffected.push(...r.rowsAffected);
 }
 
+/** export All Data: semua baris result set pertama ke sink (lihat Driver.stream); req = pool biasa atau koneksi sesi transaksi */
+async function streamOn(req: sql.Request, text: string, signal: AbortSignal | undefined, sink: Sink): Promise<number> {
+  req.arrayRowMode = true;
+  req.stream = true;
+  const cancel = () => req.cancel();
+  signal?.addEventListener('abort', cancel);
+  let n = 0;
+  let sets = 0;
+  let failed: unknown;
+  let chain = Promise.resolve();
+  let busy = 0;
+  // hanya result set pertama; baris diproses berurutan lewat chain, query di-pause selama sink menulis (backpressure)
+  const step = (f: () => Promise<void> | void) => {
+    busy++;
+    req.pause();
+    chain = chain.then(f).then(() => {
+      if (--busy === 0) req.resume();
+    }, (e: unknown) => {
+      busy--;
+      failed ??= e;
+      req.cancel();
+    });
+  };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let err: unknown;
+      req.on('recordset', (cols: { name: string }[]) => {
+        if (++sets === 1) step(() => sink.columns(cols.map((c) => c.name)));
+      });
+      req.on('row', (row: unknown[]) => {
+        if (sets !== 1 || failed) return;
+        n++;
+        if (busy) return step(() => sink.row(row)); // masih menunggu tulisan sebelumnya: jaga urutan
+        try {
+          const r = sink.row(row);
+          if (r) step(() => r);
+        } catch (e) {
+          failed ??= e; // mis. batas baris Excel: hentikan query, error dilaporkan ke pemanggil
+          req.cancel();
+        }
+      });
+      req.on('error', (e: unknown) => (err ??= e));
+      req.query(text, () => chain.then(() => (failed ?? err ? reject(failed ?? err) : resolve())));
+    });
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+  }
+  return n;
+}
+
 /** kolom result set plan XML dari SET SHOWPLAN_XML / STATISTICS XML */
 const PLAN_COLUMN = /showplan/i;
 
@@ -135,39 +189,76 @@ export const mssqlDriver: Driver = {
   },
 
   async session(conn, password) {
-    // pool sendiri berisi 1 koneksi: transaksi manual tidak bercampur dengan query auto-commit
-    const p = await retryOnce(() => new sql.ConnectionPool({ ...poolConfig(conn, password), pool: { max: 1, min: 0 } }).connect(), retryableConnectError);
-    let tx: sql.Transaction | undefined;
-    const end = async (how: 'commit' | 'rollback') => {
-      const t = tx;
-      tx = undefined;
-      if (t) await t[how]();
+    // pool sendiri berisi 1 koneksi yang tidak pernah ditutup karena idle: transaksi tetap hidup di antara run.
+    // Status transaksi selalu dibaca dari server (@@TRANCOUNT), bukan ditebak client: COMMIT / BEGIN TRAN / ROLLBACK
+    // yang ditulis di script, rollback karena error / XACT_ABORT, dan koneksi yang putus ikut terbaca.
+    const p = await retryOnce(() => new sql.ConnectionPool({
+      ...poolConfig(conn, password), pool: { max: 1, min: 0, idleTimeoutMillis: 2 ** 31 - 1 },
+    }).connect(), retryableConnectError);
+    let open = false;
+    let spid = 0; // koneksi tempat transaksi dibuka; beda = koneksi putus lalu dibuat ulang (transaksi sudah di-rollback server)
+    const state = async () => (await p.request().query<{ n: number; spid: number }>('SELECT @@TRANCOUNT AS n, @@SPID AS spid')).recordset[0];
+    /** sebelum perintah: transaksi yang tercatat terbuka harus masih ada di koneksi yang sama */
+    const alive = async () => {
+      const b = await state();
+      if (open && (b.n === 0 || b.spid !== spid)) {
+        open = false;
+        throw new Error('The open transaction was lost (connection reset) and has been rolled back by the server. Nothing was run; run again to start a new transaction.');
+      }
+      return b;
+    };
+    /** sesudah perintah: status dari server; koneksi lain / gagal dibaca = dibiarkan, perintah berikutnya melaporkan lewat alive() */
+    const refresh = async () => {
+      const b = await state();
+      if (b.spid === spid) open = b.n > 0;
     };
     const s: Session = {
-      get open() { return !!tx; },
-      async run(text, signal, limit) {
-        if (!tx) {
-          const t = new sql.Transaction(p);
-          await t.begin();
-          t.on('rollback', () => { if (tx === t) tx = undefined; }); // dibatalkan server (error berat / cancel): tidak terbuka lagi
-          tx = t;
-        }
+      get open() { return open; },
+      async run(text, signal, limit, skip) {
+        const before = await alive();
+        if (before.n === 0) await p.request().batch('BEGIN TRAN');
+        spid = before.spid;
+        open = true;
         const out: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
         const start = Date.now();
-        for (const batch of splitBatches(text)) {
-          signal?.throwIfAborted();
-          await collect(new sql.Request(tx), batch, out, signal, limit);
+        try {
+          for (const batch of splitBatches(text)) {
+            signal?.throwIfAborted();
+            await collect(p.request(), batch, out, signal, limit, false, skip);
+          }
+        } finally {
+          await refresh().catch((e: unknown) => driverLog.error(`mssql session.run state - EXCEPTION CAUGHT | ${errText(e)}`));
         }
         out.durationMs = Date.now() - start;
         return out;
       },
-      commit: () => end('commit'),
-      rollback: () => end('rollback'),
+      stream: (text, signal, sink) => streamOn(p.request(), text, signal, sink),
+      async commit() {
+        if (!open) return;
+        await alive();
+        try {
+          // WHILE: BEGIN TRAN nested di script (@@TRANCOUNT > 1) ikut di-commit semua, bukan hanya satu level
+          await p.request().batch('WHILE @@TRANCOUNT > 0 COMMIT TRAN');
+        } finally {
+          // gagal di tengah (mis. koneksi putus): status asli dari server, transaksi tidak dianggap selesai diam-diam
+          await refresh().catch((e: unknown) => driverLog.error(`mssql session.commit state - EXCEPTION CAUGHT | ${errText(e)}`));
+        }
+        if (open) throw new Error('The transaction is still open after commit (@@TRANCOUNT > 0, or its status could not be read)');
+      },
+      async rollback() {
+        if (!open) return;
+        await alive();
+        try {
+          await p.request().batch('IF @@TRANCOUNT > 0 ROLLBACK TRAN');
+        } finally {
+          await refresh().catch((e: unknown) => driverLog.error(`mssql session.rollback state - EXCEPTION CAUGHT | ${errText(e)}`));
+        }
+      },
       async close() {
         try {
-          await end('rollback');
+          await s.rollback();
         } finally {
-          await p.close();
+          await p.close(); // koneksi ditutup: sisa transaksi apa pun di-rollback server
         }
       },
     };
@@ -211,54 +302,7 @@ export const mssqlDriver: Driver = {
     return { xml, result: out };
   },
   async stream(conn, password, text, signal, sink) {
-    const p = await pool(conn, password);
-    const req = p.request();
-    req.arrayRowMode = true;
-    req.stream = true;
-    const cancel = () => req.cancel();
-    signal?.addEventListener('abort', cancel);
-    let n = 0;
-    let sets = 0;
-    let failed: unknown;
-    let chain = Promise.resolve();
-    let busy = 0;
-    // hanya result set pertama; baris diproses berurutan lewat chain, query di-pause selama sink menulis (backpressure)
-    const step = (f: () => Promise<void> | void) => {
-      busy++;
-      req.pause();
-      chain = chain.then(f).then(() => {
-        if (--busy === 0) req.resume();
-      }, (e: unknown) => {
-        busy--;
-        failed ??= e;
-        req.cancel();
-      });
-    };
-    try {
-      await new Promise<void>((resolve, reject) => {
-        let err: unknown;
-        req.on('recordset', (cols: { name: string }[]) => {
-          if (++sets === 1) step(() => sink.columns(cols.map((c) => c.name)));
-        });
-        req.on('row', (row: unknown[]) => {
-          if (sets !== 1 || failed) return;
-          n++;
-          if (busy) return step(() => sink.row(row)); // masih menunggu tulisan sebelumnya: jaga urutan
-          try {
-            const r = sink.row(row);
-            if (r) step(() => r);
-          } catch (e) {
-            failed ??= e; // mis. batas baris Excel: hentikan query, error dilaporkan ke pemanggil
-            req.cancel();
-          }
-        });
-        req.on('error', (e: unknown) => (err ??= e));
-        req.query(text, () => chain.then(() => (failed ?? err ? reject(failed ?? err) : resolve())));
-      });
-    } finally {
-      signal?.removeEventListener('abort', cancel);
-    }
-    return n;
+    return streamOn((await pool(conn, password)).request(), text, signal, sink);
   },
   async databases(conn, password) {
     const rows = await select<{ name: string }>(conn, password, 'SELECT name FROM sys.databases WHERE HAS_DBACCESS(name) = 1 ORDER BY name');

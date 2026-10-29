@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, PAGE_ROWS, Session, address, drivers, schemaOf } from './db';
+import { ConnectionInfo, PAGE_ROWS, Session, address, drivers, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -708,14 +708,16 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
           const ac = new AbortController();
           token.onCancellationRequested(() => ac.abort());
           const sql = src!.where ? addWhere(src!.sql, src!.where) : src!.sql;
-          n = await drivers[c.type].stream(c, await conns.password(c.name), sql, ac.signal, {
+          const rows = {
             columns: () => undefined,
-            row: (v) => {
+            row: (v: unknown[]) => {
               if (++n % 10000 === 0) progress.report({ message: `${n.toLocaleString()} rows` });
               if (toClipboard && n > CLIPBOARD_MAX_ROWS) throw new Error(`More than ${CLIPBOARD_MAX_ROWS.toLocaleString()} rows: too many for the clipboard, use Save`);
               return sink.row(pick(v));
             },
-          });
+          };
+          const tx = openTx(src!.uri, c);
+          n = await (tx ? tx.stream(sql, ac.signal, rows) : drivers[c.type].stream(c, await conns.password(c.name), sql, ac.signal, rows));
         } else {
           for (const row of rs.rows) n++, await sink.row(pick(row));
         }
@@ -770,6 +772,9 @@ async function closeTx(key: string, tx: { session: Session }, how: 'commit' | 'r
     if (txs.get(key) === tx) txs.delete(key);
   }
 }
+
+/** sesi transaksi terbuka file key untuk Load more / Export All Data (lihat openSession) */
+const openTx = (key: string, c: ConnectionInfo) => openSession(txs.get(key), c, running.has(key));
 
 /** Commit / Rollback transaksi manual file ini; sesi tetap siap (transaksi baru dibuka di run berikutnya) */
 export async function endTransaction(how: 'commit' | 'rollback', uriArg?: vscode.Uri | string) {
@@ -871,6 +876,11 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
   const c = fileConn(t.doc.uri) ?? (await pickConnection('Select connection'));
   if (!c) return;
   const key = t.doc.uri.toString();
+  // Analyze menjalankan query di koneksi lain (transaksi yang selalu di-rollback): baris yang dikunci transaksi file ini membuatnya menunggu
+  if (mode === 'actual' && txs.get(key)?.session.open) {
+    vscode.window.showWarningMessage('Commit or roll back the open transaction before Analyze (it runs on another connection and would wait for this transaction\'s locks). Explain is still available.');
+    return;
+  }
   const title = `${c.database ? `${c.name} / ${c.database}` : c.name} · ${mode === 'estimated' ? 'Explain' : 'Analyze'}`;
   const run = startRun(key, c, t.text);
   await results.show(title, { loading: true, uri: key });
@@ -956,7 +966,9 @@ export async function loadMore(m: ResultMessage): Promise<number | undefined> {
   const offset = rs.rows.length;
   try {
     const sql = src.where ? addWhere(src.sql, src.where) : src.sql;
-    const next = (await drivers[c.type].run(c, await conns.password(c.name), sql, undefined, offset + PAGE_ROWS, offset)).resultSets[0];
+    const tx = openTx(src.uri, c);
+    const next = (await (tx ? tx.run(sql, undefined, offset + PAGE_ROWS, offset)
+      : drivers[c.type].run(c, await conns.password(c.name), sql, undefined, offset + PAGE_ROWS, offset))).resultSets[0];
     rs.rows.push(...(next?.rows ?? []));
     if (rs.limited) {
       rs.total = next?.total ?? rs.total; // auto limit: total = baris yang terbaca sejauh ini
@@ -1019,7 +1031,7 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
             const tx = await txFor(key, c, pw);
             outcome = { result: await tx.session.run(text, ac.signal, limitFor(stmts)), source: src };
             if (tx.session.open) tx.statements++;
-            else vscode.window.showWarningMessage('The transaction was rolled back by the server (error or cancel).');
+            else vscode.window.showWarningMessage('The transaction is no longer open: ended by COMMIT / ROLLBACK in the script, or rolled back by the server (error or cancel).');
             return;
           }
           outcome = { result: await drivers[c.type].run(c, pw, text, ac.signal, limitFor(stmts)), source: src };

@@ -9,7 +9,8 @@ import { toRaw as myRaw, typeName } from '../mysql';
 import { toRaw as pgRaw } from '../postgres';
 import { sqliteDriver, writes } from '../sqlite';
 import { toConnection, validate } from '../connectionFormHtml';
-import { drivers } from '../db';
+import { drivers, openSession } from '../db';
+import type { Session } from '../db';
 import { formatSql } from '../sqlFormat';
 
 test('addLimit: LIMIT / OFFSET at the end, own LIMIT or FOR UPDATE untouched', () => {
@@ -180,4 +181,16 @@ test('mongodb completion context', async () => {
   assert.deepEqual(mongoContext('db.getCollection("customers").find({}).sort({ '), { kind: 'field', coll: 'customers', word: '' });
   assert.deepEqual(mongoContext('db.orders.find({}); '), { kind: 'top', word: '' });
   assert.deepEqual(mongoContext('d'), { kind: 'top', word: 'd' });
+});
+
+test('openSession: Load more / Export use the open transaction of the same connection / database only', () => {
+  const c = { name: 'a', type: 'mssql' as const, host: 'h', port: 1433, user: 'u', database: 'db1', trustServerCertificate: true };
+  const session = (open: boolean) => ({ open }) as Session;
+  const tx = { session: session(true), conn: 'a', db: 'db1' };
+  assert.equal(openSession(tx, c, false), tx.session, 'open transaction on the same connection / database');
+  assert.equal(openSession(undefined, c, false), undefined, 'no session: normal pool');
+  assert.equal(openSession({ ...tx, session: session(false) }, c, false), undefined, 'session without open transaction: normal pool');
+  assert.equal(openSession({ ...tx, db: 'db2' }, c, false), undefined, 'other database');
+  assert.equal(openSession({ ...tx, conn: 'b' }, c, false), undefined, 'other connection');
+  assert.throws(() => openSession(tx, c, true), /still running/, 'query running in the transaction');
 });

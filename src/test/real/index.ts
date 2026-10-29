@@ -487,10 +487,42 @@ async function txTest(m: typeof import('../../extension')) {
     assert.equal(await tc(), '1', 'next run opens a new transaction');
     await vscode.commands.executeCommand('moonageDaydream.rollbackTransaction', doc.uri);
     assert.equal(m.txs.get(key)?.session.open, false, 'rolled back');
+    // status dari @@TRANCOUNT server: BEGIN TRAN nested di script ikut di-commit semua, COMMIT di script menutup transaksi
+    const setText = async (text: string) => {
+      const e = new vscode.WorkspaceEdit();
+      e.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), text);
+      await vscode.workspace.applyEdit(e);
+    };
+    // BEGIN TRAN / COMMIT sendirian di script = error 266 dari sp_executesql, tapi @@TRANCOUNT di server tetap berubah
+    const runText = async (text: string) => {
+      await setText(text);
+      await vscode.commands.executeCommand('moonageDaydream.runQuery');
+      await setText('SELECT @@TRANCOUNT AS tc;\n');
+    };
+    await runText('BEGIN TRAN;\n');
+    assert.equal(await tc(), '2', 'nested BEGIN TRAN in the script');
+    await vscode.commands.executeCommand('moonageDaydream.commitTransaction', doc.uri);
+    assert.equal(m.txs.get(key)?.session.open, false, 'commit closes every level');
+    assert.equal(await tc(), '1', 'after commit: new transaction, not nested');
+    await runText('COMMIT;\n');
+    assert.equal(m.txs.get(key)?.session.open, false, 'COMMIT in the script closes the transaction');
+
+    // transaksi terbuka: Load more lewat koneksi sesi (@@SPID sama), Analyze ditolak (koneksi lain akan tertahan lock)
+    await setText('SELECT @@SPID AS spid, name FROM sys.all_objects ORDER BY object_id;\n');
+    await vscode.commands.executeCommand('moonageDaydream.runQuery');
+    const rows = () => { const o = m.results.current!.outcome; return 'result' in o ? o.result.resultSets[0].rows : []; };
+    const spid = rows()[0]?.[0];
+    assert.ok(m.txs.get(key)?.session.open && rows().length === 100, 'manual: 100 rows in an open transaction');
+    await m.loadMore({ type: 'more', set: 0 });
+    assert.ok(rows().length > 100 && rows().every((r) => r[0] === spid), `load more on the session connection (spid ${spid})`);
+    await m.explainQuery('actual', doc.uri);
+    assert.ok('result' in m.results.current!.outcome, 'Analyze refused while the transaction is open');
+    await vscode.commands.executeCommand('moonageDaydream.rollbackTransaction', doc.uri);
+    await setText('SELECT @@TRANCOUNT AS tc;\n');
     await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'auto');
     assert.equal(await tc(), '0', 'back to auto-commit');
     assert.ok(!m.txs.has(key), 'session closed');
-    say('PASS transaction: auto tc=0 -> manual tc=1, TX open (2) lenses, commit, new tx, rollback, auto tc=0');
+    say('PASS transaction: auto tc=0 -> manual tc=1, TX open (2) lenses, commit, new tx, rollback, nested BEGIN + commit all, script COMMIT, load more on the session, Analyze refused, auto tc=0');
   } finally {
     await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'auto');
   }
