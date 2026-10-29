@@ -240,6 +240,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       await vscode.window.showTextDocument(doc);
       await runQuery();
     }),
+    vscode.commands.registerCommand('moonageDaydream.showDefinition', (n?: Node) => objectScript(n, 'show')),
+    vscode.commands.registerCommand('moonageDaydream.editObject', (n?: Node) => objectScript(n, 'edit')),
+    vscode.commands.registerCommand('moonageDaydream.runProcedure', (n?: Node) => objectScript(n, 'run')),
     vscode.commands.registerCommand('moonageDaydream.moveResults', async () => {
       const picked = await vscode.window.showQuickPick(
         LOCATIONS.map((l) => ({ ...l, description: l.id === results.location ? '(current)' : '' })),
@@ -270,7 +273,7 @@ function lintDoc(doc: vscode.TextDocument) {
   const level = vscode.workspace.getConfiguration('moonageDaydream.lint', doc).get<string>('semicolon', 'error');
   if (level === 'off') return lint.delete(doc.uri);
   const severity = level === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error;
-  lint.set(doc.uri, missingSemicolons(doc.getText()).map((r) => Object.assign(
+  lint.set(doc.uri, missingSemicolons(doc.getText(), dialectOf(doc.uri)).map((r) => Object.assign(
     new vscode.Diagnostic(new vscode.Range(doc.positionAt(r.start), doc.positionAt(r.end)), 'Statement is not terminated with ;', severity),
     { source: LINT_SOURCE, code: 'missing-semicolon' },
   )));
@@ -393,7 +396,7 @@ function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
   const c = fileConn(doc.uri);
   const q = running.get(doc.uri.toString());
   // shortcut: file sangat besar (> 20000 baris) hanya dapat CodeLens di baris pertama
-  const segs = doc.lineCount <= 20000 ? statementSegments(doc.getText()) : [];
+  const segs = doc.lineCount <= 20000 ? statementSegments(doc.getText(), c && drivers[c.type].dialect) : [];
   const at = (offset: number) => {
     const line = doc.positionAt(offset).line;
     return new vscode.Range(line, 0, line, 0);
@@ -438,7 +441,7 @@ function pushConn(lenses: vscode.CodeLens[], r: vscode.Range, doc: vscode.TextDo
   const manual = txMode(key) === 'manual';
   if (c && drivers[c.type].transactions === false) return;
   lenses.push(new vscode.CodeLens(r, {
-    title: manual ? (tx?.session.open ? `$(lock) TX open (${tx.statements})` : '$(lock) Manual commit') : '$(unlock) Auto-commit',
+    title: manual ? (tx?.session.failed ? '$(error) TX aborted (rollback needed)' : tx?.session.open ? `$(lock) TX open (${tx.statements})` : '$(lock) Manual commit') : '$(unlock) Auto-commit',
     command: 'moonageDaydream.toggleTransactionMode', arguments: [doc.uri], tooltip: 'Transaction mode for this file (click to switch Auto-commit / Manual)',
   }));
   if (manual && tx?.session.open) {
@@ -607,6 +610,38 @@ async function pickConnection(title: string): Promise<ConnectionInfo | undefined
   return picked?.c;
 }
 
+/**
+ * view / procedure dari explorer -> tab SQL baru terikat ke koneksi + database objek itu:
+ * show = definisi (CREATE ...), edit = script CREATE OR ALTER, run = script EXEC dengan parameter (tanpa parameter langsung dijalankan).
+ * Script edit / run dengan parameter tidak pernah dijalankan otomatis.
+ */
+async function objectScript(n: Node | undefined, mode: 'show' | 'edit' | 'run') {
+  if (n?.kind !== 'obj') return;
+  const d = drivers[n.c.type];
+  try {
+    const pw = await conns.password(n.c.name);
+    let content: string;
+    let params = 0;
+    if (mode === 'run') {
+      if (!d.runScript) throw new Error(`Run procedure is not available for ${d.label}`);
+      ({ sql: content, params } = await d.runScript(n.c, pw, n.db, n.obj));
+    } else {
+      const f = mode === 'edit' ? d.editScript : d.definition;
+      if (!f) throw new Error(`Object definitions are not available for ${d.label}`);
+      content = await f(n.c, pw, n.db, n.obj, n.objKind);
+    }
+    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content });
+    await conns.bind(doc.uri.toString(), { conn: n.c.name, db: n.db });
+    await vscode.window.showTextDocument(doc, { preview: false });
+    updateFileStatus();
+    log.info(`objectScript ${mode}: ${n.c.name} / ${n.db} / ${n.obj.schema}.${n.obj.name}`);
+    if (mode === 'run' && !params) await runQuery(); // tanpa argumen: tidak ada yang perlu diisi, langsung jalan seperti Select Top
+  } catch (e) {
+    log.error(`objectScript ${mode} - EXCEPTION CAUGHT | ${n.c.name} / ${n.db} / ${n.obj.schema}.${n.obj.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`${mode === 'run' ? 'Run procedure' : mode === 'edit' ? 'Edit' : 'Show definition'} failed: ${errMsg(e)}`);
+  }
+}
+
 /** koneksi DBCode (setting dbcode.connections) -> Connections; password ditanya saat pertama dipakai */
 async function importFromDbcode() {
   const list = vscode.workspace.getConfiguration('dbcode').get<unknown[]>('connections', []);
@@ -655,7 +690,7 @@ async function runQuery(opts?: unknown) {
   const doc = editor.document;
   const text = !editor.selection.isEmpty ? doc.getText(editor.selection)
     : (opts as { all?: unknown } | undefined)?.all === true ? doc.getText()
-    : statementAt(doc.getText(), doc.offsetAt(editor.selection.active));
+    : statementAt(doc.getText(), doc.offsetAt(editor.selection.active), dialectOf(doc.uri));
   if (!text.trim()) return;
   await execute(doc, text);
 }
@@ -770,6 +805,12 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
 /** "rows affected" diberi statement asalnya (judul Statement n di panel hasil) */
 const withAffected = (r: QueryResult, stmts: string[]) => ({ ...r, affected: affectedStatements(stmts, r.rowsAffected.length) });
 
+/** dialek koneksi file (pemecah statement: body procedure / function utuh); tanpa koneksi = aturan umum */
+const dialectOf = (uri: vscode.Uri) => {
+  const c = fileConn(uri);
+  return c && drivers[c.type].dialect;
+};
+
 /** sesi transaksi manual per file (key = uri) */
 export const txs = new Map<string, { session: Session; conn: string; db: string; statements: number }>();
 const txModes = new Map<string, 'auto' | 'manual'>();
@@ -798,6 +839,13 @@ async function closeTx(key: string, tx: { session: Session }, how: 'commit' | 'r
 
 /** sesi transaksi terbuka file key untuk Load more / Export All Data (lihat openSession) */
 const openTx = (key: string, c: ConnectionInfo) => openSession(txs.get(key), c, running.has(key));
+
+/** PostgreSQL: error di dalam transaksi -> transaksi aborted, semua statement ditolak sampai ROLLBACK */
+async function warnAborted(key: string) {
+  const pick = await vscode.window.showWarningMessage(
+    'The transaction is aborted after an error: every statement is refused until it is rolled back (nothing can be committed).', 'Rollback');
+  if (pick) await endTransaction('rollback', key);
+}
 
 /** Commit / Rollback transaksi manual file ini; sesi tetap siap (transaksi baru dibuka di run berikutnya) */
 export async function endTransaction(how: 'commit' | 'rollback', uriArg?: vscode.Uri | string) {
@@ -875,7 +923,7 @@ async function targetText(uriArg?: vscode.Uri | string, start?: number, end?: nu
   if (start !== undefined && end !== undefined) return { doc, text: doc.getText(new vscode.Range(doc.positionAt(start), doc.positionAt(end))) };
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document !== doc) return { doc, text: '' };
-  return { doc, text: editor.selection.isEmpty ? statementAt(doc.getText(), doc.offsetAt(editor.selection.active)) : doc.getText(editor.selection) };
+  return { doc, text: editor.selection.isEmpty ? statementAt(doc.getText(), doc.offsetAt(editor.selection.active), dialectOf(doc.uri)) : doc.getText(editor.selection) };
 }
 
 /** CodeLens Execute di atas statement: jalankan statement itu saja */
@@ -891,7 +939,7 @@ async function runStatement(uriArg?: vscode.Uri | string, start?: number, end?: 
 export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode.Uri | string, start?: number, end?: number) {
   const t = await targetText(uriArg, start, end);
   if (!t?.text.trim()) return;
-  const stmts = splitBatches(t.text).flatMap(splitStatements);
+  const stmts = splitBatches(t.text).flatMap((b) => splitStatements(b, dialectOf(t.doc.uri)));
   if (mode === 'actual' && !stmts.every((st) => singleSelect([st]))) {
     vscode.window.showWarningMessage('Analyze runs the query, so it is only available for SELECT. Use Explain for other statements.');
     return;
@@ -1028,7 +1076,7 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
 
   const key = uri.toString();
   // Permissions: koneksi read-only tidak pernah mengirim statement yang bisa mengubah data ke server
-  const blocked = c.readOnly ? readOnlyBlocked(drivers[c.type].dialect, splitBatches(text).flatMap(splitStatements)) : undefined;
+  const blocked = c.readOnly ? readOnlyBlocked(drivers[c.type].dialect, splitBatches(text).flatMap((b) => splitStatements(b, drivers[c.type].dialect))) : undefined;
   if (blocked) {
     log.info(`runQuery blocked (read-only connection ${c.name}): ${preview(text)}`);
     await results.show(c.database ? `${c.name} / ${c.database}` : c.name, { error: blocked, uri: key });
@@ -1038,7 +1086,7 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   log.info(`runQuery start: ${c.name} / ${c.database}`);
   const title = c.database ? `${c.name} / ${c.database}` : c.name;
   // beberapa SELECT tanpa variabel / #temp: tiap statement di koneksi sendiri, hasil tampil begitu statement itu selesai
-  const stmts = splitBatches(text).flatMap(splitStatements);
+  const stmts = splitBatches(text).flatMap((b) => splitStatements(b, drivers[c.type].dialect));
   // satu SELECT: toolbar WHERE aktif (dasarnya statement asal, bukan versi yang sudah difilter)
   const src = source ?? (singleSelect(stmts) ? { uri: key, sql: stmts[0] } : undefined);
   const manual = txMode(key) === 'manual'; // transaksi manual: satu sesi, selalu berurutan
@@ -1065,10 +1113,11 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
             if (tx.session.open) tx.statements++;
             // SELECT biasa tanpa transaksi terbuka memang tidak membuka transaksi: bukan transaksi yang berakhir
             else if (wasOpen || !readOnly(stmts)) {
-              const how = txEndStatement(stmts);
+              const how = txEndStatement(stmts, drivers[c.type].dialect);
               if (how) {
-                // COMMIT / ROLLBACK ditulis di script dan berhasil: hasil yang jelas, bukan peringatan
-                const msg = how === 'commit' ? 'Transaction committed.' : 'Transaction rolled back.';
+                // COMMIT / ROLLBACK ditulis di script (atau DDL MySQL = implicit commit) dan berhasil: hasil yang jelas, bukan peringatan
+                const msg = how === 'commit' ? 'Transaction committed.' : how === 'rollback' ? 'Transaction rolled back.'
+                  : 'Transaction committed implicitly by a DDL statement (MySQL / MariaDB): changes made before it are saved.';
                 result.messages.push(msg);
                 log.info(`transaction ${how} by the script (${tx.statements + 1} run(s)): ${tx.conn} / ${tx.db}`);
                 vscode.window.setStatusBarMessage(`$(check) ${msg}`, 4000);
@@ -1102,7 +1151,10 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   } finally {
     log.info(`runQuery end after ${Date.now() - q.start} ms${ac.signal.aborted ? ' (cancelled)' : ''}: ${c.name} / ${c.database}`);
     end();
-    if (manual) updateFileStatus(); // status TX open (n) / lens Commit Rollback
+    if (manual) {
+      updateFileStatus(); // status TX open (n) / lens Commit Rollback
+      if (txs.get(key)?.session.failed) void warnAborted(key);
+    }
   }
   const errors = 'parts' in outcome ? outcome.parts.flatMap((p) => ('error' in p.o ? [p.o.error] : [])) : 'error' in outcome ? [outcome.error] : [];
   await history.add({

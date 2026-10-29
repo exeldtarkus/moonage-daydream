@@ -109,7 +109,7 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
     const q = drivers[c.type].quote;
     const current = c.database || drivers[c.type].defaultDb; // shortcut: koneksi tanpa database dianggap master / mysql / postgres
     try {
-      const stmt = statementAt(doc.getText(), doc.offsetAt(pos));
+      const stmt = statementAt(doc.getText(), doc.offsetAt(pos), drivers[c.type].dialect);
       if (parts.length === 0) {
         const [cols, dbs, objs] = await Promise.all([this.columns(c, current, stmt), this.databases(c), this.objects(c, current)]);
         return rank([...cols.map((x) => this.colItem(x, range, q)), ...dbs.map((db) => this.dbItem(db, range, q)), ...objs.map((o) => this.objItem(o, range, true, q)),

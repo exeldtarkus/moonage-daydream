@@ -63,6 +63,32 @@
   - [x] Permissions: koneksi read-only (hanya statement read-only yang boleh dijalankan)
   - [x] Driver settings: tabel key/value opsi driver yang diteruskan ke driver
   - [x] UI form: sidebar section + panel, layout test (Chromium headless)
+- [ ] SQL Server: stored procedure & view dari explorer, per tahap dengan TDD — kode + unit test selesai, menunggu test real (user):
+  - [x] Show Definition (OBJECT_DEFINITION) di tab baru terikat koneksi + database
+  - [x] Edit: script CREATE OR ALTER di tab baru (dijalankan sendiri dengan Execute, tidak otomatis)
+  - [x] Run procedure: script EXEC dengan parameter (tipe, OUTPUT, default), tanpa parameter langsung jalan; view = Select Top 100
+  - [x] Node procedure bisa di-expand: daftar parameter
+- [ ] MySQL / MariaDB / PostgreSQL: transaksi manual setara SQL Server — kode + unit test + `npm run test:servers` (19/19) selesai, menunggu test real di VS Code (user):
+  - [x] status transaksi dibaca dari server (MySQL / MariaDB `@@in_transaction`, PostgreSQL status transaksi sesi) -> COMMIT / ROLLBACK di script terdeteksi, pesan "Transaction committed / rolled back"
+  - [x] MySQL / MariaDB: DDL (CREATE / ALTER / DROP ...) = implicit commit -> peringatan + status ikut tertutup
+  - [x] PostgreSQL: error di dalam transaksi = transaksi "aborted" (semua statement berikutnya ditolak sampai ROLLBACK) -> beri tahu user, tawarkan Rollback
+  - [x] SELECT biasa tidak membuka transaksi bila belum ada yang terbuka
+- [ ] MySQL / MariaDB / PostgreSQL: Show Definition, Edit, Run untuk stored procedure / function / view + parameter di explorer — kode + unit test + `npm run test:servers` selesai, menunggu test real di VS Code (user)
+  - [x] Body routine utuh saat dipecah per statement (lens Execute / statement di kursor / lint): SQL Server sampai GO, MySQL BEGIN ... END, PostgreSQL $$ ... $$
+  - [x] MySQL / MariaDB: SHOW CREATE PROCEDURE / FUNCTION / VIEW, parameter dari information_schema.parameters, Run = CALL p(...) / SELECT f(...)
+  - [x] PostgreSQL: pg_get_functiondef / pg_get_viewdef, procedure vs function (CALL vs SELECT), overload (nama sama, argumen beda), parameter dari pg_proc
+- [ ] SQL Server: struktur Object Explorer seperti extension mssql (referensi: marketplace ms-mssql.mssql), per tahap dengan TDD:
+  - [ ] Databases -> subfolder "System Databases" (master, model, msdb, tempdb, distribution; database_id <= 4 / is_distributor) terpisah dari database user
+  - [ ] Server Objects: Endpoints (sys.endpoints), Linked Servers (sys.servers is_linked; + test koneksi linked server), Triggers server (sys.server_triggers)
+  - [ ] Security (server): Logins, Server Roles (+ anggota), Credentials, Cryptographic Providers, Audits, Server Audit Specifications
+  - [ ] Per database: Tables (+ System Tables), Views (+ System Views), Synonyms, Programmability (Stored Procedures, Functions: table-valued / scalar / aggregate, Database Triggers, Types, Sequences), Security (Users, Roles, Schemas)
+  - [ ] Per tabel: Columns (PK / FK / tipe / null), Keys, Constraints, Triggers, Indexes, Statistics
+  - [ ] Script as: CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE untuk tabel, view, procedure, function, trigger (tab baru, tidak dijalankan otomatis)
+  - [ ] Fungsi / trigger: Show Definition / Edit (CREATE OR ALTER) / Run (SELECT dbo.f(...) / SELECT * FROM dbo.tvf(...)), sama seperti procedure
+  - [ ] SQL Server Agent: Jobs (status, last run, start / stop job), Job Activity
+  - [ ] Activity / sesi: sp_who2 / sys.dm_exec_requests (session, blocking, wait, query), kill session (dengan konfirmasi)
+  - [ ] Info server / database: versi, edition, collation, recovery model, ukuran file data / log
+  - [ ] Backup / Restore database (dialog, script BACKUP / RESTORE, dengan konfirmasi)
 
 ## Rilis
 - [x] README (EN + ID) + icon + screenshot (`node scripts/screenshots.js`, data contoh)

@@ -91,6 +91,24 @@
         "icon": "$(play)"
       },
       {
+        "command": "moonageDaydream.showDefinition",
+        "title": "Show Definition",
+        "category": "Moonage Daydream",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "moonageDaydream.editObject",
+        "title": "Edit (CREATE OR ALTER script)",
+        "category": "Moonage Daydream",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "moonageDaydream.runProcedure",
+        "title": "Run Procedure…",
+        "category": "Moonage Daydream",
+        "icon": "$(play)"
+      },
+      {
         "command": "moonageDaydream.setFileConnection",
         "title": "Change Connection for This File",
         "category": "Moonage Daydream"
@@ -395,13 +413,33 @@
       "view/item/context": [
         {
           "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?$/",
           "group": "1_query"
+        },
+        {
+          "command": "moonageDaydream.runProcedure",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^procedure\\.def$/",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.runProcedure",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^procedure\\.def$/",
+          "group": "1_run@1"
+        },
+        {
+          "command": "moonageDaydream.showDefinition",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure)\\.def$/",
+          "group": "2_script@1"
+        },
+        {
+          "command": "moonageDaydream.editObject",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure)\\.def$/",
+          "group": "2_script@2"
         },
         {
           "command": "moonageDaydream.selectConnection",

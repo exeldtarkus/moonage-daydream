@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { fmtType, poolConfig, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
+import { alterScript, execScript, fmtType, paramDefaults, poolConfig, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
-import { affectedStatements, readOnlyBlocked, txEndStatement, ident, identifierChain, maskSql, parallelSafe, preview, readOnly, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
+import { affectedStatements, readOnlyBlocked, txEndStatement, ident, identifierChain, maskSql, parallelSafe, preview, readOnly, splitStatements, statementAt, statementSegments, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
 
 test('splitBatches splits on GO lines only', () => {
   assert.deepEqual(splitBatches('select 1\nGO\nselect 2\n  go 5  \r\nselect 3\ngo -- end\n'), ['select 1', 'select 2', 'select 3']);
@@ -319,4 +319,66 @@ test('txEndStatement: COMMIT / ROLLBACK in the script that ended the transaction
   assert.equal(txEndStatement(['COMMIT', 'BEGIN TRAN', 'ROLLBACK WORK']), 'rollback', 'last one wins');
   assert.equal(txEndStatement(["SELECT 'commit' AS c -- rollback"]), undefined, 'strings / comments');
   assert.equal(txEndStatement(['UPDATE t SET a = 1', 'SELECT 1/0']), undefined, 'ended by the server (error)');
+});
+
+test('alterScript: object definition -> CREATE OR ALTER (comments before CREATE kept)', () => {
+  assert.equal(alterScript('CREATE PROCEDURE dbo.p AS SELECT 1'), 'CREATE OR ALTER PROCEDURE dbo.p AS SELECT 1');
+  assert.equal(alterScript('-- note: create view x\n/* CREATE */\ncreate   view [dbo].[v] AS SELECT 1 AS a'), '-- note: create view x\n/* CREATE */\nCREATE OR ALTER VIEW [dbo].[v] AS SELECT 1 AS a');
+  assert.equal(alterScript('CREATE PROC p AS RETURN'), 'CREATE OR ALTER PROC p AS RETURN');
+  assert.equal(alterScript('CREATE OR ALTER VIEW v AS SELECT 1'), 'CREATE OR ALTER VIEW v AS SELECT 1', 'already CREATE OR ALTER');
+  assert.equal(alterScript('ALTER PROCEDURE p AS SELECT 1'), 'CREATE OR ALTER PROCEDURE p AS SELECT 1');
+  assert.throws(() => alterScript('SELECT 1'), /not a CREATE VIEW \/ PROCEDURE/);
+});
+
+test('execScript: EXEC with every parameter, OUTPUT declared and selected, defaults noted', () => {
+  assert.equal(execScript('Shop', { schema: 'sales', name: 'top customers' }, []), 'EXEC [Shop].[sales].[top customers];');
+  assert.equal(execScript('Shop', { schema: 'dbo', name: 'get_orders' }, [
+    { name: '@customer_id', type: 'int', output: false, hasDefault: false },
+    { name: '@from', type: 'datetime2', output: false, hasDefault: true },
+    { name: '@total', type: 'decimal(12,2)', output: true, hasDefault: false },
+  ]), [
+    'DECLARE @total decimal(12,2);',
+    'EXEC [Shop].[dbo].[get_orders]',
+    '    @customer_id = NULL -- int',
+    '  , @from = DEFAULT -- datetime2 (has default)',
+    '  , @total = @total OUTPUT -- decimal(12,2)',
+    ';',
+    'SELECT @total AS [@total];',
+  ].join('\n'));
+});
+
+test('paramDefaults: parameters with a default value, read from the procedure header (sys.parameters does not tell)', () => {
+  assert.deepEqual([...paramDefaults("CREATE PROCEDURE dbo.p @a int, @b varchar(10) = 'x,y', @c decimal(12,2) = NULL OUTPUT AS SELECT @a = 1")], ['@b', '@c'], 'body after AS ignored');
+  assert.deepEqual([...paramDefaults('CREATE PROC p (@A INT = 5, @b INT) AS RETURN')], ['@a'], 'parenthesized list, case-insensitive');
+  assert.deepEqual([...paramDefaults('create proc p @a AS int = 1 AS select 1')], ['@a'], 'param AS type');
+  assert.deepEqual([...paramDefaults("CREATE PROCEDURE p\n  -- @x int = 1 (comment)\n  @y int\nWITH RECOMPILE\nAS SELECT 1")], [], 'comments ignored');
+  assert.deepEqual([...paramDefaults('CREATE PROCEDURE p AS SELECT 1')], []);
+});
+
+test('txEndStatement: MySQL / MariaDB DDL commits implicitly, PostgreSQL / SQL Server DDL does not', () => {
+  assert.equal(txEndStatement(['UPDATE t SET a = 1', 'CREATE TABLE x (a INT)'], 'mysql'), 'implicit');
+  assert.equal(txEndStatement(['ALTER TABLE t ADD c INT', 'COMMIT'], 'mysql'), 'commit', 'explicit COMMIT after the DDL');
+  assert.equal(txEndStatement(['COMMIT', 'drop table x'], 'mysql'), 'implicit');
+  assert.equal(txEndStatement(['TRUNCATE TABLE t'], 'mysql'), 'implicit');
+  assert.equal(txEndStatement(['CREATE TABLE x (a INT)'], 'postgres'), undefined);
+  assert.equal(txEndStatement(['CREATE TABLE x (a INT)']), undefined, 'SQL Server default');
+  assert.equal(txEndStatement(['CREATE TEMPORARY TABLE x (a INT)'], 'mysql'), undefined, 'temporary tables do not commit');
+});
+
+test('statements: routine bodies stay whole (SQL Server to GO, MySQL BEGIN ... END, PostgreSQL $$ ... $$)', () => {
+  const ms = 'CREATE OR ALTER PROCEDURE dbo.p @a INT AS\nSET NOCOUNT ON;\nSELECT @a AS a;\nGO\nSELECT 2;';
+  assert.deepEqual(splitStatements(splitBatches(ms)[0], 'mssql'), ['CREATE OR ALTER PROCEDURE dbo.p @a INT AS\nSET NOCOUNT ON;\nSELECT @a AS a;'], 'T-SQL: whole batch');
+  assert.deepEqual(statementSegments(ms, 'mssql').map((s: { start: number; end: number }) => ms.slice(s.start, s.end).split('\n')[0]), ['CREATE OR ALTER PROCEDURE dbo.p @a INT AS', 'SELECT 2;'], 'lens: one per routine');
+  assert.equal(statementAt(ms, ms.indexOf('SELECT @a'), 'mssql').split('\n').length, 3, 'cursor inside the body runs the whole routine');
+  assert.deepEqual(splitStatements('CREATE VIEW v AS SELECT 1 AS a;\nSELECT 2;', 'mssql'), ['CREATE VIEW v AS SELECT 1 AS a;\nSELECT 2;'], 'T-SQL view also ends at GO');
+  assert.deepEqual(splitStatements('SELECT 1; SELECT 2;', 'mssql'), ['SELECT 1;', 'SELECT 2;'], 'other statements unchanged');
+
+  const my = 'CREATE DEFINER=`root`@`%` PROCEDURE p(IN a INT)\nBEGIN\n  DECLARE x INT;\n  IF a > 0 THEN SET x = 1; END IF;\n  SELECT CASE WHEN a > 1 THEN 2 ELSE 3 END;\n  WHILE x < 3 DO SET x = x + 1; END WHILE;\nEND;\nSELECT 2;';
+  assert.deepEqual(splitStatements(my, 'mysql').map((s) => s.slice(0, 16)), ['CREATE DEFINER=`', 'SELECT 2;'], 'MySQL: BEGIN ... END with IF / CASE / WHILE inside');
+  assert.deepEqual(splitStatements('CREATE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1; SELECT f();', 'mysql'), ['CREATE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1;', 'SELECT f();'], 'no BEGIN: first ;');
+  assert.equal(statementSegments(my, 'mysql').length, 2);
+
+  const pg = 'CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql; SELECT $body$ a;b $body$;';
+  assert.deepEqual(splitStatements(pg), ['CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;', 'SELECT $body$ a;b $body$;'], 'dollar-quoted strings');
+  assert.ok(!maskSql('SELECT $x$ FROM t; $x$').includes('FROM'), 'masked like a string');
 });

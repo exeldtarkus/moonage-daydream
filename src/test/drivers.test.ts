@@ -223,3 +223,46 @@ test('driver config: SSL/TLS, trust certificate, connect timeout and driver sett
     [true, true, 9_000, 9_000, 'rs0', false]);
   assert.equal(mongoOptions({ ...base, type: 'mongodb' }, 'pw').tls, undefined);
 });
+
+test('MySQL / MariaDB: edit script (OR REPLACE view, DROP + CREATE routine) and run script (CALL with OUT variables, SELECT function)', async () => {
+  const { myEditScript, myRunScript } = await import('../mysql');
+  assert.equal(myEditScript('VIEW', 'shop', 'v', 'CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v` AS select 1 AS `a`'),
+    'CREATE OR REPLACE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v` AS select 1 AS `a`;');
+  assert.equal(myEditScript('PROCEDURE', 'shop', 'p', 'CREATE DEFINER=`root`@`%` PROCEDURE `p`(IN a INT)\nBEGIN\n  SELECT a;\nEND'),
+    '-- run the whole script (DROP + CREATE)\nDROP PROCEDURE IF EXISTS `shop`.`p`;\nCREATE DEFINER=`root`@`%` PROCEDURE `p`(IN a INT)\nBEGIN\n  SELECT a;\nEND;');
+  assert.match(myEditScript('FUNCTION', 'shop', 'f', 'CREATE FUNCTION `f`() RETURNS int DETERMINISTIC RETURN 1'), /^-- run the whole script.*\nDROP FUNCTION IF EXISTS `shop`\.`f`;\nCREATE FUNCTION/s);
+
+  assert.equal(myRunScript('shop', 'get_total', 'PROCEDURE', [
+    { name: 'min_id', type: 'int', output: false, hasDefault: false, mode: 'in' },
+    { name: 'total', type: 'decimal(12,2)', output: true, hasDefault: false, mode: 'out' },
+  ]), 'SET @total = NULL;\nCALL `shop`.`get_total`(\n    NULL -- min_id int\n  , @total -- OUT total decimal(12,2)\n);\nSELECT @total AS `total`;');
+  assert.equal(myRunScript('shop', 'p', 'PROCEDURE', []), 'CALL `shop`.`p`();');
+  assert.equal(myRunScript('shop', 'f', 'FUNCTION', [{ name: 'a', type: 'int', output: false, hasDefault: false, mode: 'in' }]),
+    'SELECT `shop`.`f`(\n    NULL -- a int\n) AS `result`;');
+});
+
+test('PostgreSQL: arguments, run script (named notation, defaults commented, CALL with OUT) and view script', async () => {
+  const { pgArgs, pgRunScript, pgViewScript } = await import('../postgres');
+  const args = pgArgs("a integer, b text DEFAULT 'x,y'::text, OUT c integer, INOUT d numeric(10,2) DEFAULT NULL::numeric, VARIADIC e integer[]");
+  assert.deepEqual(args, [
+    { name: 'a', type: 'integer', mode: 'in', output: false, hasDefault: false },
+    { name: 'b', type: 'text', mode: 'in', output: false, hasDefault: true },
+    { name: 'c', type: 'integer', mode: 'out', output: true, hasDefault: false },
+    { name: 'd', type: 'numeric(10,2)', mode: 'inout', output: true, hasDefault: true },
+    { name: 'e', type: 'integer[]', mode: 'variadic', output: false, hasDefault: false },
+  ]);
+  assert.deepEqual(pgArgs('character varying, double precision'), [
+    { name: '', type: 'character varying', mode: 'in', output: false, hasDefault: false },
+    { name: '', type: 'double precision', mode: 'in', output: false, hasDefault: false },
+  ], 'unnamed multi-word types');
+  assert.deepEqual(pgArgs(''), []);
+
+  assert.equal(pgRunScript('public', 'get_total', 'f', pgArgs("a integer, b text DEFAULT 'x'::text, OUT c integer")),
+    'SELECT * FROM "public"."get_total"(\n    a => NULL -- integer\n  -- , b => NULL -- text (has default)\n);');
+  assert.equal(pgRunScript('public', 'p', 'p', pgArgs('a integer, OUT c integer')), 'CALL "public"."p"(\n    a => NULL -- integer\n  , c => NULL -- OUT integer\n);');
+  assert.equal(pgRunScript('public', 'f', 'f', pgArgs('integer, text')), 'SELECT * FROM "public"."f"(\n    NULL -- integer\n  , NULL -- text\n);', 'unnamed: positional');
+  assert.equal(pgRunScript('s', 'f', 'f', []), 'SELECT * FROM "s"."f"();');
+  assert.equal(pgRunScript('s', 'p', 'p', []), 'CALL "s"."p"();');
+  assert.equal(pgViewScript('"public"."v"', ' SELECT 1 AS a;'), 'CREATE OR REPLACE VIEW "public"."v" AS\n SELECT 1 AS a;');
+  assert.equal(pgViewScript('"public"."v"', 'SELECT 1'), 'CREATE OR REPLACE VIEW "public"."v" AS\nSELECT 1;');
+});

@@ -1,7 +1,8 @@
 import { Client, Pool, types } from 'pg';
 import type { ClientConfig, PoolClient, QueryArrayResult } from 'pg';
-import type { ConnectionInfo, ObjectKind } from './db';
+import type { ConnectionInfo, ObjectKind, ProcParam } from './db';
 import { connectMs, typedOptions } from './db';
+import { maskSql } from './sqlContext';
 import { driverLog } from './log';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
@@ -72,7 +73,72 @@ function link(c: PoolClient | Client, cancel: (pid: number) => Promise<unknown>,
       }
     },
     release: done,
+    // ReadyForQuery: I = idle, T = dalam transaksi, E = transaksi aborted karena error.
+    // Query yang error ditolak saat ErrorResponse, ReadyForQuery (status baru) datang sesudahnya: tunggu dulu (maks ~1 detik)
+    async txState() {
+      const cl = c as unknown as { readyForQuery: boolean; getTransactionStatus(): string | null };
+      for (let i = 0; i < 200 && !cl.readyForQuery; i++) await new Promise((r) => setTimeout(r, 5));
+      return ({ T: 'open', E: 'failed' } as const)[cl.getTransactionStatus() ?? ''] ?? 'idle';
+    },
   };
+}
+
+/** function / procedure bernama ini (overload urut oid): jenis + argumen pg_get_function_arguments */
+function routines(conn: ConnectionInfo, password: string, db: string, obj: { schema: string; name: string }) {
+  return select<{ kind: 'f' | 'p'; args: string }>(conn, password, db, `SELECT p.prokind AS kind, pg_get_function_arguments(p.oid) AS args FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1 AND p.proname = $2 AND p.prokind IN ('f', 'p') ORDER BY p.oid`, [obj.schema, obj.name]);
+}
+
+// tipe bawaan yang namanya lebih dari satu kata: argumen tanpa nama diawali kata ini
+const MULTI_WORD_TYPE = /^(character|double|timestamp|time|bit|interval)$/i;
+
+/** pg_get_function_arguments: "a integer, b text DEFAULT 'x'::text, OUT c integer" -> parameter (mode, nama, tipe, default) */
+export function pgArgs(text: string): ProcParam[] {
+  const masked = maskSql(text);
+  const parts: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (masked[i] === '(') depth++;
+    else if (masked[i] === ')') depth--;
+    else if (i === text.length || (masked[i] === ',' && !depth)) {
+      if (text.slice(from, i).trim()) parts.push(text.slice(from, i).trim());
+      from = i + 1;
+    }
+  }
+  return parts.map((part) => {
+    const d = /\s+DEFAULT\s+/i.exec(maskSql(part));
+    let decl = d ? part.slice(0, d.index) : part;
+    const m = /^(IN|OUT|INOUT|VARIADIC)\s+/i.exec(decl);
+    const mode = (m?.[1].toLowerCase() ?? 'in') as ProcParam['mode'];
+    if (m) decl = decl.slice(m[0].length);
+    const first = /^("(?:[^"]|"")+"|\S+)\s+(.+)$/.exec(decl.trim());
+    const named = first && !MULTI_WORD_TYPE.test(first[1]);
+    return { name: named ? first![1] : '', type: (named ? first![2] : decl).trim(), mode, output: mode === 'out' || mode === 'inout', hasDefault: !!d };
+  });
+}
+
+/**
+ * Run: function = SELECT * FROM f(...) (argumen OUT bukan argumen panggilan), procedure = CALL p(...) (OUT diisi NULL).
+ * Nama lengkap: notasi bernama `a => NULL`, argumen ber-default dikomentari; ada argumen tanpa nama: posisi saja.
+ */
+export function pgRunScript(schema: string, name: string, kind: 'f' | 'p', params: ProcParam[]): string {
+  const target = `${full(schema, name)}`;
+  const call = kind === 'p' ? 'CALL' : 'SELECT * FROM';
+  const ps = params.filter((p) => kind === 'p' || p.mode !== 'out');
+  if (!ps.length) return `${call} ${target}();`;
+  const named = ps.every((p) => p.name);
+  const arg = (p: ProcParam) => `${named ? `${p.name} => ` : ''}NULL -- ${p.mode === 'out' || p.mode === 'inout' ? `${p.mode.toUpperCase()} ` : ''}${p.type}${p.hasDefault ? ' (has default)' : ''}`;
+  const active = named ? ps.filter((p) => !p.hasDefault || p.output) : ps;
+  const lines = active.map((p, i) => `${i ? '  , ' : '    '}${arg(p)}`);
+  if (named) lines.push(...ps.filter((p) => p.hasDefault && !p.output).map((p) => `  -- , ${arg(p)}`));
+  return `${call} ${target}(\n${lines.join('\n')}\n);`;
+}
+
+/** Edit view: CREATE OR REPLACE VIEW nama AS + pg_get_viewdef */
+export function pgViewScript(qualified: string, def: string): string {
+  const body = def.trimEnd().replace(/;$/, '');
+  return `CREATE OR REPLACE VIEW ${qualified} AS\n${body};`;
 }
 
 async function select<T>(conn: ConnectionInfo, password: string, db: string | undefined, sql: string, params: unknown[] = []): Promise<T[]> {
@@ -123,6 +189,32 @@ export const postgresDriver = sqlDriver({
     return rows.map((r) => r.name);
   },
   selectTop: (_db, obj, n) => `SELECT * FROM ${full(obj.schema, obj.name)} LIMIT ${n};`,
+
+  async definition(conn, password, db, obj, kind) {
+    if (kind === 'view') {
+      const [r] = await select<{ def: string | null }>(conn, password, db, 'SELECT pg_get_viewdef(to_regclass($1), true) AS def', [full(obj.schema, obj.name)]);
+      if (!r?.def) throw new Error(`View ${obj.schema}.${obj.name} not found`);
+      return pgViewScript(full(obj.schema, obj.name), r.def);
+    }
+    // overload (nama sama, argumen beda): semua definisi, masing-masing satu statement
+    const rows = await select<{ def: string }>(conn, password, db, `SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1 AND p.proname = $2 AND p.prokind IN ('f', 'p') ORDER BY p.oid`, [obj.schema, obj.name]);
+    if (!rows.length) throw new Error(`Function / procedure ${obj.schema}.${obj.name} not found (aggregates and window functions are not supported)`);
+    return rows.map((r) => `${r.def.trimEnd().replace(/;$/, '')};`).join('\n\n');
+  },
+  async parameters(conn, password, db, obj) {
+    const [r] = await routines(conn, password, db, obj);
+    return r ? pgArgs(r.args) : [];
+  },
+  // pg_get_functiondef / pgViewScript sudah CREATE OR REPLACE
+  editScript: (conn, password, db, obj, kind) => postgresDriver.definition!(conn, password, db, obj, kind),
+  async runScript(conn, password, db, obj) {
+    const rs = await routines(conn, password, db, obj);
+    if (!rs.length) throw new Error(`Function / procedure ${obj.schema}.${obj.name} not found`);
+    const scripts = rs.map((r) => pgRunScript(obj.schema, obj.name, r.kind, pgArgs(r.args)));
+    return { sql: (rs.length > 1 ? `-- ${rs.length} overloads: run the one you need\n` : '') + scripts.join('\n\n'),
+      params: rs.length > 1 ? rs.length : pgArgs(rs[0].args).length };
+  },
   async close(name) {
     const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
     for (const [k] of mine) pools.delete(k);

@@ -1,8 +1,8 @@
 import * as sql from 'mssql';
 import { MAX_ROWS, connectMs, typedOptions } from './db';
-import type { ConnectionInfo, Driver, ObjectKind, QueryResult, ResultSet, Session, Sink } from './db';
+import type { ConnectionInfo, Driver, ObjectKind, ProcParam, QueryResult, ResultSet, Session, Sink } from './db';
 import { driverLog } from './log';
-import { readOnly, splitStatements } from './sqlContext';
+import { maskSql, readOnly, splitStatements } from './sqlContext';
 
 const errText = (e: unknown) => (e instanceof Error ? `${e.message} - stack-trace: ${e.stack}` : String(e));
 
@@ -63,6 +63,56 @@ export function splitBatches(text: string): string[] {
 
 /** quote identifier T-SQL: [nama]] aneh] */
 export const q = (s: string) => `[${s.replace(/]/g, ']]')}]`;
+
+
+/** definisi view / procedure -> script CREATE OR ALTER (komentar sebelum CREATE dipertahankan) */
+export function alterScript(definition: string): string {
+  const m = /\b(?:create(?:\s+or\s+alter)?|alter)\s+(procedure|proc|view)\b/i.exec(maskSql(definition));
+  if (!m) throw new Error('The definition is not a CREATE VIEW / PROCEDURE statement');
+  return `${definition.slice(0, m.index)}CREATE OR ALTER ${m[1].toUpperCase()}${definition.slice(m.index + m[0].length)}`;
+}
+
+/**
+ * parameter yang punya nilai default (huruf kecil), dibaca dari header CREATE PROCEDURE sampai AS di level atas:
+ * sys.parameters.has_default_value hanya terisi untuk procedure CLR.
+ */
+export function paramDefaults(definition: string): Set<string> {
+  const code = maskSql(definition);
+  const start = /\b(?:procedure|proc)\b/i.exec(code);
+  const out = new Set<string>();
+  if (!start) return out;
+  let depth = 0;
+  let end = code.length;
+  for (let i = start.index + start[0].length; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    // AS penutup header: di level atas dan bukan `@param AS tipe`
+    else if (!depth && /^as\b/i.test(code.slice(i, i + 3)) && !/\w/.test(code[i - 1]) && !/@[\w@#$]+\s*$/.test(code.slice(0, i))) {
+      end = i;
+      break;
+    }
+  }
+  const header = code.slice(start.index, end);
+  for (const m of header.matchAll(/(@[\w@#$]+)\s+(?:as\s+)?[\w.[\]]+(?:\s*\([^)]*\))?(?:\s+varying)?\s*(=)?/gi)) {
+    if (m[2]) out.add(m[1].toLowerCase());
+  }
+  return out;
+}
+
+/** script EXEC procedure dengan semua parameter: NULL / DEFAULT sebagai nilai awal, OUTPUT di-DECLARE lalu di-SELECT */
+export function execScript(db: string, obj: { schema: string; name: string }, params: ProcParam[]): string {
+  const target = `${q(db)}.${q(obj.schema)}.${q(obj.name)}`;
+  if (!params.length) return `EXEC ${target};`;
+  const outs = params.filter((p) => p.output);
+  return [
+    ...outs.map((p) => `DECLARE ${p.name} ${p.type};`),
+    `EXEC ${target}`,
+    ...params.map((p, i) => `${i ? '  , ' : '    '}${p.name} = ${p.output ? `${p.name} OUTPUT -- ${p.type}` : p.hasDefault ? `DEFAULT -- ${p.type} (has default)` : `NULL -- ${p.type}`}`),
+    ';',
+    ...(outs.length ? [`SELECT ${outs.map((p) => `${p.name} AS ${q(p.name)}`).join(', ')};`] : []),
+  ].join('\n');
+}
 
 const CATALOG: Record<ObjectKind, string> = { table: 'tables', view: 'views', procedure: 'procedures' };
 
@@ -226,7 +276,7 @@ export const mssqlDriver: Driver = {
         const before = await alive();
         const batches = splitBatches(text);
         // SELECT biasa tanpa transaksi terbuka: tidak ada yang perlu di-commit, transaksi tidak dibuka
-        const begin = before.n === 0 && !readOnly(batches.flatMap(splitStatements));
+        const begin = before.n === 0 && !readOnly(batches.flatMap((b) => splitStatements(b, 'mssql')));
         if (begin) await p.request().batch('BEGIN TRAN');
         spid = before.spid;
         open = before.n > 0 || begin;
@@ -349,6 +399,41 @@ export const mssqlDriver: Driver = {
 
   selectTop(db, obj, n) {
     return `SELECT TOP ${n} * FROM ${q(db)}.${q(obj.schema)}.${q(obj.name)};`;
+  },
+
+  async definition(conn, password, db, obj) {
+    const rows = await select<{ def: string | null }>(conn, password,
+      `SELECT m.definition AS def FROM ${q(db)}.sys.sql_modules m WHERE m.object_id = OBJECT_ID(@full)`, { full: `${q(db)}.${q(obj.schema)}.${q(obj.name)}` });
+    if (!rows[0]?.def) throw new Error(`The definition of ${obj.schema}.${obj.name} is not available (encrypted, or no VIEW DEFINITION permission)`);
+    return rows[0].def;
+  },
+
+  async parameters(conn, password, db, obj) {
+    const full = `${q(db)}.${q(obj.schema)}.${q(obj.name)}`;
+    const rows = await select<{ name: string; type: string; max_length: number; precision: number; scale: number; is_output: boolean; has_default_value: boolean }>(
+      conn, password,
+      `SELECT p.name, t.name AS type, p.max_length, p.precision, p.scale, p.is_output, p.has_default_value FROM ${q(db)}.sys.parameters p
+        JOIN ${q(db)}.sys.types t ON t.user_type_id = p.user_type_id WHERE p.object_id = OBJECT_ID(@full) AND p.parameter_id > 0 ORDER BY p.parameter_id`,
+      { full },
+    );
+    let defaults = new Set<string>();
+    if (rows.length) {
+      try {
+        defaults = paramDefaults(await mssqlDriver.definition!(conn, password, db, obj));
+      } catch (e) {
+        // definisi terenkripsi / tanpa izin: parameter tetap tampil, default tidak diketahui (diisi NULL)
+        driverLog.error(`mssql parameters definition - EXCEPTION CAUGHT | ${errText(e)}`);
+      }
+    }
+    return rows.map((r) => ({ name: r.name, type: fmtType(r.type, r.max_length, r.precision, r.scale), output: r.is_output,
+      hasDefault: r.has_default_value || defaults.has(r.name.toLowerCase()) }));
+  },
+
+  editScript: async (conn, password, db, obj) => alterScript(await mssqlDriver.definition!(conn, password, db, obj)),
+
+  async runScript(conn, password, db, obj) {
+    const ps = await mssqlDriver.parameters!(conn, password, db, obj);
+    return { sql: execScript(db, obj, ps), params: ps.length };
   },
 
   async close(name) {

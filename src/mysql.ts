@@ -1,6 +1,6 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
-import type { ConnectionInfo, Driver, ObjectKind } from './db';
+import type { ConnectionInfo, Driver, ObjectKind, ProcParam } from './db';
 import { connectMs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
@@ -91,7 +91,37 @@ function link(c: mysql.PoolConnection | mysql.Connection, killer: mysql.Pool | (
       }
     },
     release: done,
+    // paket OK membawa flag SERVER_STATUS_IN_TRANS; DO 0 = statement kosong yang membalas paket OK
+    async txState() {
+      const [r] = await c.query('DO 0');
+      return (r as mysql.ResultSetHeader).serverStatus & 1 ? 'open' : 'idle';
+    },
   };
+}
+
+/** Edit: view = CREATE OR REPLACE; procedure / function = DROP IF EXISTS + CREATE (MySQL tidak punya OR REPLACE untuk routine) */
+export function myEditScript(type: 'VIEW' | 'PROCEDURE' | 'FUNCTION', db: string, name: string, create: string): string {
+  const body = create.trimEnd().replace(/;$/, '');
+  if (type === 'VIEW') return `${body.replace(/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?/i, 'CREATE OR REPLACE ')};`;
+  return `-- run the whole script (DROP + CREATE)\nDROP ${type} IF EXISTS ${quoteMy(db)}.${quoteMy(name)};\n${body};`;
+}
+
+/** Run: CALL procedure (OUT / INOUT lewat variabel @nama lalu di-SELECT) atau SELECT function, semua argumen NULL */
+export function myRunScript(db: string, name: string, type: 'PROCEDURE' | 'FUNCTION', params: ProcParam[]): string {
+  const target = `${quoteMy(db)}.${quoteMy(name)}`;
+  const args = params.map((p, i) => `${i ? '  , ' : '    '}${p.output ? `@${p.name} -- ${p.mode === 'inout' ? 'INOUT' : 'OUT'} ${p.name} ${p.type}` : `NULL -- ${p.name} ${p.type}`}`);
+  if (type === 'FUNCTION') return params.length ? `SELECT ${target}(\n${args.join('\n')}\n) AS \`result\`;` : `SELECT ${target}() AS \`result\`;`;
+  if (!params.length) return `CALL ${target}();`;
+  const outs = params.filter((p) => p.output);
+  return [...outs.map((p) => `SET @${p.name} = NULL;`), `CALL ${target}(`, ...args, ');',
+    ...(outs.length ? [`SELECT ${outs.map((p) => `@${p.name} AS ${quoteMy(p.name)}`).join(', ')};`] : [])].join('\n');
+}
+
+/** PROCEDURE / FUNCTION dari information_schema.routines */
+async function routineType(conn: ConnectionInfo, password: string, db: string, name: string): Promise<'PROCEDURE' | 'FUNCTION'> {
+  const rows = await select<{ t: string }>(conn, password, 'SELECT routine_type AS t FROM information_schema.routines WHERE routine_schema = ? AND routine_name = ?', [db, name]);
+  if (!rows[0]) throw new Error(`Routine ${db}.${name} not found`);
+  return rows[0].t === 'FUNCTION' ? 'FUNCTION' : 'PROCEDURE';
 }
 
 /** query katalog (baris objek, parameter ?) */
@@ -107,7 +137,7 @@ const KIND: Record<ObjectKind, string> = {
 };
 
 function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string) => string): Driver {
-  return sqlDriver({
+  const mysqlLike: Driver = sqlDriver({
     label,
     defaultPort: 3306,
     dialect: 'mysql',
@@ -145,12 +175,38 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
       return rows.map((r) => r.name);
     },
     selectTop: (db, obj, n) => `SELECT * FROM ${quoteMy(db)}.${quoteMy(obj.name)} LIMIT ${n};`,
+
+    async definition(conn, password, db, obj, kind) {
+      const type = kind === 'view' ? 'VIEW' : await routineType(conn, password, db, obj.name);
+      const rows = await select<Record<string, string | null>>(conn, password, `SHOW CREATE ${type} ${quoteMy(db)}.${quoteMy(obj.name)}`);
+      const def = rows[0]?.[`Create ${type[0]}${type.slice(1).toLowerCase()}`];
+      if (!def) throw new Error(`The definition of ${obj.name} is not available (no privilege to see it, e.g. SHOW_ROUTINE / SHOW VIEW)`);
+      return def;
+    },
+    async parameters(conn, password, db, obj) {
+      const rows = await select<{ name: string; type: string; mode: string }>(conn, password,
+        `SELECT parameter_name AS name, dtd_identifier AS type, parameter_mode AS mode FROM information_schema.parameters
+          WHERE specific_schema = ? AND specific_name = ? AND ordinal_position > 0 ORDER BY ordinal_position`, [db, obj.name]);
+      return rows.map((r) => {
+        const mode = (r.mode ?? 'IN').toLowerCase() as ProcParam['mode'];
+        return { name: r.name, type: r.type, mode, output: mode === 'out' || mode === 'inout', hasDefault: false };
+      });
+    },
+    async editScript(conn, password, db, obj, kind) {
+      const type = kind === 'view' ? 'VIEW' : await routineType(conn, password, db, obj.name);
+      return myEditScript(type, db, obj.name, await mysqlLike.definition!(conn, password, db, obj, kind));
+    },
+    async runScript(conn, password, db, obj) {
+      const [type, ps] = await Promise.all([routineType(conn, password, db, obj.name), mysqlLike.parameters!(conn, password, db, obj)]);
+      return { sql: myRunScript(db, obj.name, type, ps), params: ps.length };
+    },
     async close(name) {
       const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
       for (const [k] of mine) pools.delete(k);
       await Promise.all(mine.map(([, p]) => p.end()));
     },
   });
+  return mysqlLike;
 }
 
 // MySQL 8.0.18+: EXPLAIN ANALYZE; MariaDB: ANALYZE <statement>

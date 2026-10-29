@@ -58,11 +58,13 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         const f = FOLDERS.find((x) => x.objKind === n.objKind)!;
         return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder') });
       }
-      case 'obj':
-        return Object.assign(
-          new vscode.TreeItem(`${n.obj.schema}.${n.obj.name}`, n.objKind === 'procedure' ? vscode.TreeItemCollapsibleState.None : C),
-          { iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: n.objKind },
-        );
+      case 'obj': {
+        const d = drivers[n.c.type];
+        // procedure: anaknya parameter (bila driver mendukung); `.def` = Show Definition / Edit tersedia di menu
+        const open = n.objKind !== 'procedure' || d.parameters ? C : vscode.TreeItemCollapsibleState.None;
+        return Object.assign(new vscode.TreeItem(`${n.obj.schema}.${n.obj.name}`, open),
+          { iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: `${n.objKind}${d.definition ? '.def' : ''}` });
+      }
       case 'col':
         return Object.assign(new vscode.TreeItem(n.label), { description: n.description, iconPath: new vscode.ThemeIcon('symbol-field') });
       case 'msg':
@@ -93,6 +95,12 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           out = (await d.objects(n.c, pw, n.db, n.objKind)).map((obj) => ({ kind: 'obj', c: n.c, db: n.db, objKind: n.objKind, obj }));
           break;
         case 'obj':
+          if (n.objKind === 'procedure') {
+            out = (await d.parameters!(n.c, pw, n.db, n.obj)).map((p) => ({
+              kind: 'col', label: p.name, description: `${p.type}${p.output ? ', OUTPUT' : ''}${p.hasDefault ? ', default' : ''}`,
+            }));
+            break;
+          }
           out = (await d.columns(n.c, pw, n.db, n.obj)).map((col) => ({
             kind: 'col', label: col.name, description: `${col.type}${col.nullable ? ', null' : ', not null'}`,
           }));

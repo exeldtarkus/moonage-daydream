@@ -70,6 +70,68 @@ for (const s of SERVERS) {
     }
   });
 
+  test(`${d.label}: manual transaction state from the server (SELECT, script COMMIT, DDL implicit commit, PostgreSQL aborted)`, async () => {
+    const tx = await d.session(c, PW);
+    try {
+      await tx.run('SELECT 1');
+      assert.ok(!tx.open, 'SELECT opens no transaction');
+      await tx.run("UPDATE item SET name = 'a' WHERE id = 2");
+      assert.ok(tx.open, 'UPDATE opens');
+      await tx.run('COMMIT');
+      assert.ok(!tx.open, 'COMMIT in the script closes the transaction');
+      await tx.run("UPDATE item SET name = 'b' WHERE id = 2");
+      if (s.type === 'postgres') {
+        await assert.rejects(tx.run('SELECT 1/0'));
+        assert.ok(tx.open && tx.failed, 'error aborts the transaction');
+        await assert.rejects(tx.commit(), /aborted/);
+        assert.ok(!tx.open && !tx.failed);
+        assert.equal(await one('SELECT name FROM item WHERE id = 2'), 'a', 'aborted transaction rolled back');
+      } else {
+        await tx.run('CREATE TABLE ddl_commit (a INT)');
+        assert.ok(!tx.open, 'DDL commits implicitly');
+        assert.equal(await one('SELECT name FROM item WHERE id = 2'), 'b', 'change before the DDL is committed');
+        await run('DROP TABLE ddl_commit');
+      }
+    } finally {
+      await tx.close();
+    }
+  });
+
+  test(`${d.label}: procedure / function / view definition, edit and run scripts`, async () => {
+    const proc = { schema: s.type === 'postgres' ? 'public' : 'shop', name: s.type === 'postgres' ? 'bump' : 'get_total' };
+    const fn = { schema: proc.schema, name: 'twice' };
+    const view = { schema: proc.schema, name: 'cheap' };
+    if (s.type === 'postgres') {
+      await run("CREATE OR REPLACE FUNCTION twice(a int, b int DEFAULT 1) RETURNS int LANGUAGE sql AS $$ SELECT a * 2 * b $$;\n"
+        + 'CREATE OR REPLACE PROCEDURE bump(IN i int, INOUT n int) LANGUAGE plpgsql AS $$ BEGIN n := n + i; END $$;');
+      assert.match(await d.definition!(c, PW, 'shop', fn, 'procedure'), /CREATE OR REPLACE FUNCTION public\.twice/);
+      const f = await d.runScript!(c, PW, 'shop', fn);
+      assert.match(f.sql, /-- , b => NULL -- integer \(has default\)/);
+      assert.equal(String((await run(f.sql.replace('a => NULL', 'a => 21'))).resultSets[0].rows[0][0]), '42', 'function with a default');
+      const p = await d.runScript!(c, PW, 'shop', proc);
+      assert.equal(String((await run(p.sql.replace('i => NULL', 'i => 2').replace('n => NULL', 'n => 40'))).resultSets[0].rows[0][0]), '42', 'CALL with INOUT');
+      assert.deepEqual((await d.parameters!(c, PW, 'shop', proc)).map((x) => [x.name, x.mode]), [['i', 'in'], ['n', 'inout']]);
+    } else {
+      await run('DROP PROCEDURE IF EXISTS get_total; DROP FUNCTION IF EXISTS twice;');
+      await run('CREATE PROCEDURE get_total(IN min_id INT, OUT total DECIMAL(12,2))\nBEGIN\n  SELECT SUM(price) INTO total FROM item WHERE id >= min_id;\nEND');
+      await run('CREATE FUNCTION twice(a INT) RETURNS INT DETERMINISTIC RETURN a * 2');
+      assert.match(await d.definition!(c, PW, 'shop', proc, 'procedure'), /CREATE .*PROCEDURE `get_total`/);
+      assert.deepEqual((await d.parameters!(c, PW, 'shop', proc)).map((x) => [x.name, x.mode]), [['min_id', 'in'], ['total', 'out']]);
+      const p = await d.runScript!(c, PW, 'shop', proc);
+      const out = await run(p.sql.replace('NULL -- min_id', '249 -- min_id'));
+      assert.equal(String(out.resultSets.at(-1)!.rows[0][0]), '249.50', 'CALL with OUT variable');
+      const f = await d.runScript!(c, PW, 'shop', fn);
+      assert.equal(String((await run(f.sql.replace('NULL -- a', '21 -- a'))).resultSets[0].rows[0][0]), '42', 'SELECT function');
+      await run(await d.editScript!(c, PW, 'shop', fn, 'procedure'));
+    }
+    await run(await d.editScript!(c, PW, 'shop', proc, 'procedure')); // edit script recreates the routine
+    assert.ok(await d.definition!(c, PW, 'shop', proc, 'procedure'), 'still there after the edit script');
+    const v = await d.editScript!(c, PW, 'shop', view, 'view');
+    assert.match(v, /CREATE OR REPLACE/);
+    await run(v);
+    assert.equal(String(await one('SELECT COUNT(*) FROM cheap')), '9', 'view replaced, same rows');
+  });
+
   test(`${d.label}: explorer, primary key, explain, export stream, UPDATE script`, async () => {
     assert.ok((await d.databases(c, PW)).includes('shop'));
     const schema = s.type === 'postgres' ? 'public' : 'shop';

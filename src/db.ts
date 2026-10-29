@@ -76,6 +76,9 @@ export interface DbObject {
   name: string;
 }
 
+/** parameter stored procedure */
+export interface ProcParam { name: string; type: string; output: boolean; hasDefault: boolean; mode?: 'in' | 'out' | 'inout' | 'variadic' }
+
 export interface Column {
   name: string;
   type: string;
@@ -93,6 +96,8 @@ export interface Session {
   stream(sql: string, signal: AbortSignal | undefined, sink: Sink): Promise<number>;
   /** transaksi sedang terbuka */
   readonly open: boolean;
+  /** PostgreSQL: transaksi aborted karena error (semua statement ditolak sampai ROLLBACK) */
+  readonly failed?: boolean;
   commit(): Promise<void>;
   rollback(): Promise<void>;
   close(): Promise<void>;
@@ -139,6 +144,14 @@ export interface Driver {
   databases(conn: ConnectionInfo, password: string): Promise<string[]>;
   objects(conn: ConnectionInfo, password: string, db: string, kind: ObjectKind): Promise<DbObject[]>;
   columns(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<Column[]>;
+  /** definisi view / procedure / function (teks CREATE ...); tidak ada = Show / Edit tidak tersedia */
+  definition?(conn: ConnectionInfo, password: string, db: string, obj: DbObject, kind?: ObjectKind): Promise<string>;
+  /** parameter procedure / function (urut; overload PostgreSQL: yang pertama); tidak ada = node tidak bisa di-expand */
+  parameters?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<ProcParam[]>;
+  /** Edit: script yang mengubah objek (CREATE OR ALTER / CREATE OR REPLACE / DROP + CREATE), tidak dijalankan otomatis */
+  editScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject, kind: ObjectKind): Promise<string>;
+  /** Run: script EXEC / CALL / SELECT dengan argumen; params = jumlah argumen (0 = langsung dijalankan) */
+  runScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<{ sql: string; params: number }>;
   /** query "SELECT TOP n" untuk tabel/view, sesuai dialek */
   selectTop(db: string, obj: DbObject, n: number): string;
   /** kolom primary key (urut key) tabel db.schema.name; kosong bila tidak ada PK */

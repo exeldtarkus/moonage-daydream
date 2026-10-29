@@ -1,6 +1,6 @@
 import { MAX_ROWS } from './db';
 import type { ConnectionInfo, Driver, QueryResult, Session, Sink } from './db';
-import { addLimit } from './sqlContext';
+import { addLimit, readOnly, splitStatements } from './sqlContext';
 
 /** hasil mentah dari server: satu entri per statement yang mengembalikan baris */
 export interface Raw {
@@ -12,6 +12,8 @@ export interface Raw {
 export interface Link {
   exec(sql: string, signal?: AbortSignal): Promise<Raw>;
   release(): Promise<void>;
+  /** status transaksi dari server (protokol); tidak ada = dilacak client (SQLite) */
+  txState?(): Promise<'idle' | 'open' | 'failed'>;
 }
 
 /** bagian driver yang beda per DB; run / session / stream dibuat sqlDriver() di atas Link */
@@ -73,20 +75,46 @@ export function sqlDriver(base: Base): Driver {
 
     async session(conn, password) {
       const l = await base.dedicated(conn, password);
+      // status dari server bila Link mendukung (MySQL / MariaDB / PostgreSQL): COMMIT / ROLLBACK di script, implicit commit DDL,
+      // transaksi aborted (PostgreSQL) dan koneksi putus ikut terbaca; tanpa itu (SQLite) dilacak client seperti sebelumnya
       let open = false;
+      let failed = false;
+      const read = async () => {
+        if (!l.txState) return;
+        const st = await l.txState();
+        open = st !== 'idle';
+        failed = st === 'failed';
+      };
       const end = async (how: 'COMMIT' | 'ROLLBACK') => {
         if (!open) return;
-        open = false;
-        await l.exec(how);
+        const aborted = failed;
+        try {
+          // PostgreSQL: COMMIT pada transaksi aborted sama dengan ROLLBACK; dikirim ROLLBACK dan dilaporkan dengan jelas
+          await l.exec(aborted ? 'ROLLBACK' : how);
+        } finally {
+          if (l.txState) await read();
+          else open = false;
+        }
+        if (aborted && how === 'COMMIT') throw new Error('The transaction was aborted by an earlier error and has been rolled back; nothing was committed');
       };
       const s: Session = {
         get open() { return open; },
+        get failed() { return failed; },
         async run(sql, signal, limit, skip) {
-          if (!open) {
+          if (l.txState && open && (await l.txState()) === 'idle') {
+            open = false;
+            throw new Error('The open transaction was lost (connection reset) and has been rolled back by the server. Nothing was run; run again to start a new transaction.');
+          }
+          // SELECT biasa tanpa transaksi terbuka: tidak ada yang perlu di-commit, transaksi tidak dibuka
+          if (!open && !readOnly(splitStatements(sql, base.dialect))) {
             await l.exec('BEGIN');
             open = true;
           }
-          return exec(l, sql, signal, limit, skip);
+          try {
+            return await exec(l, sql, signal, limit, skip);
+          } finally {
+            await read();
+          }
         },
         stream: (sql, signal, sink) => streamOn(l, sql, signal, sink),
         commit: () => end('COMMIT'),

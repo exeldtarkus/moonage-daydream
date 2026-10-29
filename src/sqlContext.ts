@@ -10,13 +10,18 @@ export function identifierChain(before: string): { parts: string[]; word: string
 /** nama yang butuh kurung siku di SQL Server (spasi, diawali angka, karakter khusus) */
 export const ident = (name: string, quote = (n: string) => `[${n.replace(/]/g, ']]')}]`) => (/^[A-Za-z_][\w$#@]*$/.test(name) ? name : quote(name));
 
-/** isi string '...', "...", [..], `..`, komentar -- dan /* *\/ diganti spasi (panjang sama): `;`, `@`, `#` di hasilnya pasti kode. keepQuoted: hanya komentar yang diganti */
+/** isi string '...', "...", [..], `..`, $$..$$, komentar -- dan /* *\/ diganti spasi (panjang sama): `;`, `@`, `#` di hasilnya pasti kode. keepQuoted: hanya komentar yang diganti */
 export function maskSql(sql: string, keepQuoted = false): string {
   let out = '';
   for (let i = 0; i < sql.length; ) {
     const two = sql.slice(i, i + 2);
     let end: number;
-    if (two === '--') end = (sql.indexOf('\n', i) + 1 || sql.length + 1) - 1;
+    const dollar = sql[i] === '$' ? /^\$(?:[A-Za-z_][\w]*)?\$/.exec(sql.slice(i, i + 64))?.[0] : undefined;
+    if (dollar && !/[\w$]/.test(sql[i - 1] ?? '')) {
+      // PostgreSQL $$ ... $$ / $tag$ ... $tag$ (body function / procedure): diperlakukan seperti string
+      const close = sql.indexOf(dollar, i + dollar.length);
+      end = close < 0 ? sql.length : close + dollar.length;
+    } else if (two === '--') end = (sql.indexOf('\n', i) + 1 || sql.length + 1) - 1;
     else if (two === '/*') end = (sql.indexOf('*/', i + 2) + 1 || sql.length - 1) + 1;
     else if (sql[i] === "'" || sql[i] === '"' || sql[i] === '[' || sql[i] === '`') {
       const close = sql[i] === '[' ? ']' : sql[i];
@@ -35,11 +40,45 @@ export function maskSql(sql: string, keepQuoted = false): string {
 }
 
 /** pecah per `;` di level atas; potongan yang hanya komentar / kosong dibuang */
-export function splitStatements(sql: string): string[] {
+/**
+ * CREATE PROCEDURE / FUNCTION / TRIGGER / VIEW / EVENT yang mulai di `from`: akhir statement-nya, undefined = bukan routine / dialek
+ * tanpa aturan khusus. SQL Server: sampai baris GO / akhir teks (satu objek per batch). MySQL / MariaDB: `;` sesudah END terluar
+ * (BEGIN / CASE ... END; END IF / LOOP / WHILE / REPEAT tidak dihitung). PostgreSQL tidak perlu: body $$ ... $$ sudah di-mask.
+ */
+function routineEnd(masked: string, from: number, dialect?: Dialect): number | undefined {
+  if (dialect !== 'mssql' && dialect !== 'mysql') return undefined;
+  const head = /^\s*create\s+(?:or\s+(?:alter|replace)\s+)?(?:definer\s*=\s*\S+\s+)?(?:procedure|proc|function|trigger|view|event)\b/i.exec(masked.slice(from));
+  if (!head) return undefined;
+  if (dialect === 'mssql') {
+    const go = /^[ \t]*GO[ \t]*\d*[ \t]*$/im.exec(masked.slice(from + head[0].length));
+    return go ? from + head[0].length + go.index : masked.length;
+  }
+  const re = /\b(begin|case|end(?:\s+(if|loop|while|repeat|case)\b)?)\b|;/gi;
+  re.lastIndex = from + head[0].length;
+  let depth = 0;
+  for (let m; (m = re.exec(masked)); ) {
+    if (m[0] === ';') {
+      if (!depth) return m.index + 1;
+    } else if (/^(begin|case)$/i.test(m[1])) depth++;
+    else if (!m[2] || /^case$/i.test(m[2])) depth = Math.max(0, depth - 1);
+  }
+  return masked.length;
+}
+
+export function splitStatements(sql: string, dialect?: Dialect): string[] {
   const masked = maskSql(sql);
   const out: string[] = [];
   let start = 0;
   for (let i = 0; i <= sql.length; i++) {
+    if (i === start) {
+      const r = routineEnd(masked, start, dialect);
+      if (r !== undefined) {
+        if (masked.slice(start, r).trim()) out.push(sql.slice(start, r).trim());
+        start = r;
+        i = r - 1;
+        continue;
+      }
+    }
     if (i < sql.length && masked[i] !== ';') continue;
     if (masked.slice(start, i).trim()) out.push(sql.slice(start, i + 1).trim());
     start = i + 1;
@@ -62,7 +101,7 @@ export const preview = (sql: string) => {
 };
 
 /** statement di level atas, dipisah `;` atau baris `GO`; start/end = teks tanpa spasi di awal, terminated = diakhiri `;` */
-export function statementSegments(sql: string): { start: number; end: number; terminated: boolean }[] {
+export function statementSegments(sql: string, dialect?: Dialect): { start: number; end: number; terminated: boolean }[] {
   const masked = maskSql(sql);
   const segs: { start: number; end: number; terminated: boolean }[] = [];
   const add = (from: number, to: number, terminated: boolean) => {
@@ -72,7 +111,15 @@ export function statementSegments(sql: string): { start: number; end: number; te
   };
   let from = 0;
   const sep = /;|^[ \t]*GO[ \t]*\d*[ \t]*$/gim;
-  for (let m; (m = sep.exec(masked)); ) {
+  for (;;) {
+    const r = routineEnd(masked, from, dialect);
+    if (r !== undefined) {
+      add(from, r, /;\s*$/.test(masked.slice(from, r)));
+      from = r;
+      sep.lastIndex = r;
+    }
+    const m = sep.exec(masked);
+    if (!m) break;
     const isSemi = m[0] === ';';
     add(from, isSemi ? m.index + 1 : m.index, isSemi);
     from = m.index + m[0].length;
@@ -85,16 +132,16 @@ export function statementSegments(sql: string): { start: number; end: number; te
  * statement di posisi kursor (offset): dipisah `;` atau baris `GO` di level atas.
  * Kursor di antara statement (baris kosong / tepat setelah `;`) memilih statement sebelumnya.
  */
-export function statementAt(sql: string, offset: number): string {
-  const segs = statementSegments(sql);
+export function statementAt(sql: string, offset: number, dialect?: Dialect): string {
+  const segs = statementSegments(sql, dialect);
   const hit = segs.find((s) => s.start <= offset && offset <= s.end) ?? [...segs].reverse().find((s) => s.end < offset) ?? segs[0];
   return hit ? sql.slice(hit.start, hit.end).trimEnd() : '';
 }
 
 /** posisi token kode terakhir statement yang tidak diakhiri `;` (komentar di belakangnya diabaikan) */
-export function missingSemicolons(sql: string): { start: number; end: number }[] {
+export function missingSemicolons(sql: string, dialect?: Dialect): { start: number; end: number }[] {
   const masked = maskSql(sql, true); // hanya komentar yang dibuang: token terakhir boleh string / [nama]
-  return statementSegments(sql).filter((s) => !s.terminated).map((s) => {
+  return statementSegments(sql, dialect).filter((s) => !s.terminated).map((s) => {
     const code = masked.slice(0, s.end).trimEnd();
     let start = code.length;
     while (start > s.start && !/\s/.test(sql[start - 1])) start--;
@@ -227,10 +274,21 @@ export function readOnlyBlocked(dialect: Dialect, stmts: string[]): string | und
   return bad === undefined ? undefined : `The connection is read-only: only statements that do not change data can run (blocked: ${preview(bad)})`;
 }
 
-/** COMMIT / ROLLBACK terakhir di script (yang menutup transaksi); undefined = tidak ada (transaksi diakhiri server: error / cancel) */
-export function txEndStatement(stmts: string[]): 'commit' | 'rollback' | undefined {
-  const last = stmts.map((st) => /^\s*(commit|rollback)\b/i.exec(maskSql(st))?.[1].toLowerCase()).filter(Boolean).pop();
-  return last as 'commit' | 'rollback' | undefined;
+/**
+ * statement terakhir di script yang menutup transaksi: COMMIT / ROLLBACK, atau (MySQL / MariaDB) DDL yang melakukan implicit commit.
+ * undefined = tidak ada: transaksi diakhiri server (error / cancel).
+ */
+export function txEndStatement(stmts: string[], dialect: Dialect = 'mssql'): 'commit' | 'rollback' | 'implicit' | undefined {
+  const end = (st: string) => {
+    const code = maskSql(st);
+    const m = /^\s*(commit|rollback)\b/i.exec(code);
+    if (m) return m[1].toLowerCase() as 'commit' | 'rollback';
+    // MySQL / MariaDB: DDL, GRANT, LOCK TABLES ... = implicit commit (tabel TEMPORARY tidak)
+    if (dialect === 'mysql' && /^\s*(create|alter|drop|rename|truncate|grant|revoke|lock\s+tables|unlock\s+tables)\b/i.test(code)
+      && !/^\s*(create|drop)\s+temporary\b/i.test(code)) return 'implicit';
+    return undefined;
+  };
+  return stmts.map(end).filter(Boolean).pop();
 }
 
 /** satu SELECT / WITH tanpa INTO: boleh diberi filter WHERE dari toolbar hasil */
