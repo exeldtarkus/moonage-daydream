@@ -9,22 +9,24 @@ A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite an
 ## Features
 
 - **Five database types**:
-  - **SQL Server**: SQL login or Windows authentication (NTLM with domain), named instances via SQL Server Browser, optional *trust server certificate*, `GO` batch separators.
+  - **SQL Server**: SQL login or Windows authentication (NTLM with domain), named instances via SQL Server Browser, SSL / TLS (encrypt) with optional *trust server certificate*, `GO` batch separators.
   - **MySQL / MariaDB** (mysql2) and **PostgreSQL** (pg).
   - **SQLite** (sql.js, WebAssembly): the database file is read for each query and written back after statements that change data.
   - **MongoDB**: mongosh-style queries such as `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` and `db.runCommand(...)`. Documents are shown as grid columns. The host may be a `mongodb://` or `mongodb+srv://` connection string.
 - **Connections view**: connection → database → Tables / Views / Procedures → columns, with a logo per database type. **Select Top 100** on a table or view, **New SQL File** on a database. Passwords are stored in VS Code SecretStorage.
+- **Connection form** with a sidebar: **Connection**, **SSL / TLS**, **Timeouts**, **Permissions** (read only) and **Driver settings**, each with a short summary. **Import connection string** fills the form from a SQL Server `Server=...;Database=...` string or a `mysql://`, `mariadb://`, `postgres://` or `mongodb://` URL.
+- **Import Connections from DBCode…**: copies the connections from the DBCode setting `dbcode.connections` (without passwords).
 - **Connection groups and colors**: put connections in group folders (e.g. `prod`, `non-prod`) and give them a color; a colored connection is also marked in the `.sql` editor, which helps to recognize production connections.
-- **Connection and database per file**, shown and changed via CodeLens at the top of the file.
-- **Run**: the selection, or the statement under the cursor. CodeLens per statement: **Execute**, **Explain**, **Analyze** (SELECT only). Several SELECTs selected together run in parallel. Running queries can be cancelled on the server.
+- **Connection and database per file**, shown and changed via CodeLens.
+- **Run**: the selection, or the statement under the cursor. CodeLens above every statement: **Execute**, **Explain**, **Analyze** (SELECT only), connection, database and transaction mode. Several SELECTs selected together run in parallel. Running queries can be cancelled on the server.
 - **Auto limit** for a single SELECT, then **Load more (+1000)** up to 50,000 rows in the grid.
-- **Manual transaction mode** per file with **Commit** / **Rollback** lenses.
-- **Results grid**: column type tags, a WHERE toolbar that re-runs the query on the server, per-column filter / sort / hide on the loaded rows, column reorder, **Columns** / **Inspector** side panels, row selection with Ctrl+C (copied as TSV), virtual scrolling for large results.
+- **Manual transaction mode** per file with **Commit** / **Rollback** lenses; on SQL Server the state is read from the server (`@@TRANCOUNT`) and `COMMIT` / `ROLLBACK` / `BEGIN TRAN` may be part of the script.
+- **Results grid**: column type tags, a WHERE toolbar that re-runs the query on the server, per-column filter / sort / hide on the loaded rows, column reorder, **Columns** / **Inspector** side panels, row selection with Ctrl+C (copied as TSV), virtual scrolling for large results. UPDATE / INSERT / DELETE results show their `n row(s) affected` under a **Statement n** title, also next to SELECT results.
 - **Export** all data or the selected rows to CSV, TSV, JSON, JSON (pretty), Markdown, HTML or Excel (.xlsx), or copy to the clipboard.
 - **Pin results** to keep them in their own tab, side by side.
 - **Edit cells**: edits generate an UPDATE script by primary key in a new tab. The script is never executed automatically.
 - **Execution plans**: graphical plan with cost bars for SQL Server; the `EXPLAIN` output as a grid for the other databases.
-- **Editor support**: autocomplete (databases, schemas, tables, columns including aliases, keywords and functions; for MongoDB collections, methods, field names and `$` operators), a formatter (dialect follows the connection), a lint for statements without `;` with a Quick Fix.
+- **Editor support**: autocomplete (databases, schemas, tables, columns including aliases and the target table of UPDATE / INSERT / DELETE, keywords and functions; for MongoDB collections, methods, field names and `$` operators), a formatter (dialect follows the connection), a lint for statements without `;` with a Quick Fix.
 - **Side views**: **SQL Files** (folders or a flat list, with rename, duplicate, delete and drag & drop), **Running Queries**, **Query History**.
 
 ## Installation
@@ -54,18 +56,34 @@ Open the **Moonage Daydream** view in the Activity Bar and click **+** (**Add Co
 1. **Choose the database**: under a **New connection** header, a card in the brand color of each database, with a logo, for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite and MongoDB. The cards appear with a short animation and show **Connect →** on hover (the motion is reduced when the OS asks for reduced motion). The card sets the default port and an example username for that type.
 2. **Fill in the form** for that type. **Change database** (top right) goes back to step 1.
 
+**Search databases** (top right of step 1) filters the cards.
+
 ![Step 1 of a new connection: the New connection header and brand-colored cards for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite and MongoDB, each with a logo and a short description; the hovered PostgreSQL card shows Connect →](images/screenshots/new-connection.png)
 
-The form is split into sections:
+The form has a sidebar on the left; each item opens its own section and shows a short summary of its settings (for example *Off*, *Defaults*, *Read & write*, *3 setting(s)*):
 
-- **Connection**: name, **Group** and **Color** (see below);
-- **Server**: host and port; for SQL Server also the instance name (the port is then resolved by SQL Server Browser). For MongoDB the host may be a full `mongodb://` or `mongodb+srv://` connection string. For SQLite this section only has the path of the database file;
-- **Authentication**: username and password (the eye icon shows or hides it); for SQL Server the method *SQL login* or *Windows (NTLM)* with a domain; for MongoDB the auth database;
-- **Options**: the default database (optional); for SQL Server *trust server certificate*.
+- **Connection**:
+  - **Connection**: name, **Group** and **Color** (see below);
+  - **Server**: host and port; for SQL Server also the instance name (the port is then resolved by SQL Server Browser). For MongoDB the host may be a full `mongodb://` or `mongodb+srv://` connection string. For SQLite this card only has the path of the database file;
+  - **Authentication**: username and password (the eye icon shows or hides it); for SQL Server the method *SQL login* or *Windows (NTLM)* with a domain; for MongoDB the auth database;
+  - **Database**: the default database (optional).
+- **SSL / TLS**: **Enable SSL / TLS** (on by default for SQL Server, where it is *encrypt*; off for the other databases) and **Trust server certificate** (for local or self-signed certificates; off = the certificate is verified), for every driver.
+- **Timeouts**: **Connection timeout** in seconds (default 15). Running queries have no timeout (also on SQL Server); stop them with **Cancel**.
+- **Permissions**: **Read only**. Only statements that do not change data can run (SELECT / WITH, DECLARE, `SET @var`, SHOW, DESCRIBE; for MongoDB the read methods). UPDATE, INSERT, DELETE, MERGE, `SELECT ... INTO`, DDL and EXEC are blocked before anything is sent to the server, and the results panel shows which statement was blocked.
+- **Driver settings**: extra key / value options passed to the driver, for example `appName` (SQL Server), `charset` (MySQL), `application_name` (PostgreSQL), `replicaSet` (MongoDB). The values `true` / `false` and numbers are converted; **+ Add setting** adds a row, **×** removes it.
+
+**Import connection string** (in the **Server** card) opens a box to paste a connection string; **Fill the form** fills host, port, user, password, database, SSL and options, and switches the database type when needed. Nothing is saved until **Save connection**. Supported:
+
+- SQL Server (ADO.NET): `Server=host,1433;Database=shop;User ID=app;Password=...;Encrypt=true;TrustServerCertificate=true`; also `Data Source` / `Initial Catalog`, `host\instance`, and `Integrated Security=SSPI` (Windows authentication);
+- URLs: `mysql://`, `mariadb://`, `postgres://` / `postgresql://`, `mongodb://` and `mongodb+srv://`, for example `postgres://app@db.example.com:5432/shop?sslmode=require&application_name=reports`. `ssl`, `tls` and `sslmode` set SSL / TLS, `authSource` sets the MongoDB auth database, and the other query options go to **Driver settings**.
+
+![Editing the PostgreSQL connection shop-pg: the sidebar Connection / SSL / TLS / Timeouts / Permissions / Driver settings with summaries, the Connection section (Group prod, Color red) and the open Import connection string box with a postgres:// URL above Host and Port](images/screenshots/connection.png)
+
+![The Driver settings section with three key / value rows (application_name, statement_timeout, keepAlive) and + Add setting; the sidebar summary shows 3 setting(s)](images/screenshots/connection-driver.png)
 
 **Test connection** checks the connection before **Save connection**; the result is shown in the footer next to the buttons. **Edit Connection** opens the form (step 2) directly.
 
-![Editing the PostgreSQL connection shop-pg: sections Connection (Group prod, Color red selected among 15 color swatches), Server, Authentication (password field with an eye icon) and Options, with Test connection, Cancel and Save connection at the bottom](images/screenshots/connection.png)
+**Import Connections from DBCode…** (the **⋯** menu of the **Connections** view) reads the connections of the DBCode extension from the setting `dbcode.connections` and shows them in a multi-select quick pick: name, type, host, port, instance, user, database, group, SSL, connection timeout and read only are copied. Connections whose name is already used, or whose type is not supported, are skipped (the message lists them). Passwords are not imported: the password is asked once when the connection is first used, then saved in VS Code Secret Storage.
 
 **Group** puts the connection in a folder in **Connections**: choose *No group*, an existing group, or *New group…* to type a new name. Each group folder shows the number of connections in it; **+** (**Add Connection**) on a group folder preselects that group. Right-click a group folder for **Rename Group…**. In the connection quick pick the group is shown as `[group]`.
 
@@ -89,10 +107,10 @@ Expand a connection to browse databases, tables, views, procedures and columns. 
 
 ### 2. Run queries
 
-Open or create a `.sql` file. The CodeLens at the top shows the connection and database of the file; click them to change. Then:
+Open or create a `.sql` file. The CodeLens above every statement shows **Execute**, **Explain**, **Analyze** (for SELECT), then the connection, the database and the transaction mode of the file; click the connection or database to change it. Then:
 
 - **Ctrl+Alt+Enter** runs the selection, or the statement under the cursor. **Ctrl+Enter** does the same when the DBCode extension is not installed.
-- Each statement has **Execute**, **Explain** and (for SELECT) **Analyze** lenses.
+- **Execute** on a lens runs that statement.
 - While a query runs, a **Cancel** lens appears; the query is cancelled on the server.
 
 ```sql
@@ -106,6 +124,10 @@ A single SELECT without its own limit fetches only the first `moonageDaydream.qu
 Select several SELECT statements and run them together: they run in parallel and each result appears as soon as it is done.
 
 ![Two queries running in parallel, one finished and one still running](images/screenshots/parallel.png)
+
+Statements that do not return rows (UPDATE, INSERT, DELETE, MERGE, `SELECT ... INTO`) show `n row(s) affected` under a **Statement n** title with the SQL of that statement, also when they run together with a SELECT; each result block is separated by a line. When the statement cannot be matched for sure (for example with EXEC), the counts are listed as messages. DDL without any result shows `Commands completed successfully.`
+
+![A SELECT and an UPDATE run together: Result 1 with 5 rows, then a block Statement 2 UPDATE sales.orders SET status = 'shipped' WHERE order_id = 10004; with 1 row(s) affected](images/screenshots/affected.png)
 
 ### 3. Filter and sort
 
@@ -139,7 +161,19 @@ Double-click a cell in the first result to edit it. Edited cells are counted in 
 
 By default every statement auto-commits. Switch a file to manual mode with **Toggle Transaction Mode** (or the CodeLens / status bar): statements then run in an open transaction until you click **Commit** or **Rollback**. The default for new files is set by `moonageDaydream.transaction.mode`.
 
+On SQL Server the manual transaction runs on its own connection for the file:
+
+- the transaction state comes from the server (`@@TRANCOUNT`), not from a guess in the client;
+- the script is sent as a SQL batch (like SSMS), so `COMMIT`, `ROLLBACK` and `BEGIN TRAN` inside the script work without error 266, and `SET` options and `#temp` tables stay for the next run;
+- a plain SELECT does not open a transaction when none is open; UPDATE, INSERT, DELETE, EXEC, `SELECT ... INTO` and lock hints such as `UPDLOCK` / `HOLDLOCK` do;
+- **Commit** commits every nested level (`BEGIN TRAN` twice is committed completely);
+- a lost connection is reported (the server has rolled back the transaction) and nothing is run;
+- **Load more** and **Export → All Data** use the connection of the open transaction, so they see its uncommitted changes and do not wait for its locks;
+- **Analyze** is refused while a transaction is open (it runs on another connection and would wait for the locks); **Explain** still works.
+
 ### 8. Autocomplete, formatter and lint
+
+Columns are suggested for the tables of the statement under the cursor: after `FROM` / `JOIN` (in SELECT, WHERE, ON, `alias.`), and also for `UPDATE t SET` / `WHERE`, `INSERT INTO t (` (the column list) and `DELETE [FROM] t WHERE`.
 
 **Format SQL** (Ctrl+Alt+F, or Format Document) uses the SQL dialect of the file's connection. Keyword case, leading commas and the semicolon on its own line are configurable. Statements without a terminating `;` are marked, with a Quick Fix to add it.
 
@@ -190,6 +224,7 @@ The extension also sets itself as the default formatter for `[sql]`.
 | Command | Description |
 | --- | --- |
 | `Moonage Daydream: Add Connection` / `Edit Connection…` / `Delete Connection` | Manage connections |
+| `Moonage Daydream: Import Connections from DBCode…` | Copy the connections from `dbcode.connections` (without passwords; Connections view **⋯** menu) |
 | `Moonage Daydream: Rename…` / `Change Color…` | Rename a connection or change its color (Connections view) |
 | `Moonage Daydream: Select Connection` | Choose the active connection |
 | `Moonage Daydream: Move to Group…` / `Rename Group…` | Connection groups (Connections view) |
@@ -212,6 +247,7 @@ The extension also sets itself as the default formatter for `[sql]`.
 
 - SQLite: the whole database file is read for each query, and a running query cannot be cancelled.
 - MongoDB: no manual transactions and no formatter.
+- Import connection string: a `mongodb://` URL with several hosts (replica set) is not supported; use `mongodb+srv://` or one host.
 - The grid holds at most 50,000 rows (Load more stops there); use Export for all data.
 - SQLite has no Analyze (only `EXPLAIN QUERY PLAN`).
 

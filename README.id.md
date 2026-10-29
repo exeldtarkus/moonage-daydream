@@ -9,22 +9,24 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
 ## Fitur
 
 - **Lima jenis database**:
-  - **SQL Server**: SQL login atau Windows authentication (NTLM dengan domain), named instance lewat SQL Server Browser, opsi *trust server certificate*, pemisah batch `GO`.
+  - **SQL Server**: SQL login atau Windows authentication (NTLM dengan domain), named instance lewat SQL Server Browser, SSL / TLS (encrypt) dengan opsi *trust server certificate*, pemisah batch `GO`.
   - **MySQL / MariaDB** (mysql2) dan **PostgreSQL** (pg).
   - **SQLite** (sql.js, WebAssembly): file database dibaca setiap query dan ditulis balik setelah statement yang mengubah data.
   - **MongoDB**: query gaya mongosh seperti `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` dan `db.runCommand(...)`. Dokumen ditampilkan sebagai kolom grid. Host boleh berupa connection string `mongodb://` atau `mongodb+srv://`.
 - **View Connections**: koneksi → database → Tables / Views / Procedures → kolom, dengan logo per jenis database. **Select Top 100** pada table atau view, **New SQL File** pada database. Password disimpan di SecretStorage VS Code.
+- **Form koneksi** dengan sidebar: **Connection**, **SSL / TLS**, **Timeouts**, **Permissions** (read only) dan **Driver settings**, masing-masing dengan ringkasan singkat. **Import connection string** mengisi form dari string SQL Server `Server=...;Database=...` atau URL `mysql://`, `mariadb://`, `postgres://` atau `mongodb://`.
+- **Import Connections from DBCode…**: menyalin koneksi dari setting DBCode `dbcode.connections` (tanpa password).
 - **Group dan warna koneksi**: kelompokkan koneksi ke folder group (mis. `prod`, `non-prod`) dan beri warna; koneksi berwarna juga ditandai di editor `.sql`, membantu mengenali koneksi production.
-- **Koneksi dan database per file**, tampil dan bisa diganti lewat CodeLens di atas file.
-- **Run**: selection, atau statement di posisi kursor. CodeLens per statement: **Execute**, **Explain**, **Analyze** (hanya SELECT). Beberapa SELECT yang dipilih bersamaan berjalan paralel. Query yang sedang berjalan bisa di-cancel di server.
+- **Koneksi dan database per file**, tampil dan bisa diganti lewat CodeLens.
+- **Run**: selection, atau statement di posisi kursor. CodeLens di atas setiap statement: **Execute**, **Explain**, **Analyze** (hanya SELECT), koneksi, database dan mode transaksi. Beberapa SELECT yang dipilih bersamaan berjalan paralel. Query yang sedang berjalan bisa di-cancel di server.
 - **Auto limit** untuk satu SELECT, lalu **Load more (+1000)** sampai 50.000 baris di grid.
-- **Mode transaksi manual** per file dengan lens **Commit** / **Rollback**.
-- **Grid hasil**: tag tipe kolom, toolbar WHERE yang menjalankan ulang query di server, filter / sort / hide per kolom pada baris yang sudah dimuat, urutan kolom bisa diubah, panel samping **Columns** / **Inspector**, pilih baris lalu Ctrl+C (tersalin sebagai TSV), virtual scroll untuk hasil besar.
+- **Mode transaksi manual** per file dengan lens **Commit** / **Rollback**; di SQL Server statusnya dibaca dari server (`@@TRANCOUNT`) dan `COMMIT` / `ROLLBACK` / `BEGIN TRAN` boleh ada di dalam script.
+- **Grid hasil**: tag tipe kolom, toolbar WHERE yang menjalankan ulang query di server, filter / sort / hide per kolom pada baris yang sudah dimuat, urutan kolom bisa diubah, panel samping **Columns** / **Inspector**, pilih baris lalu Ctrl+C (tersalin sebagai TSV), virtual scroll untuk hasil besar. Hasil UPDATE / INSERT / DELETE menampilkan `n row(s) affected` di bawah judul **Statement n**, juga di samping hasil SELECT.
 - **Export** semua data atau baris terpilih ke CSV, TSV, JSON, JSON (pretty), Markdown, HTML atau Excel (.xlsx), atau salin ke clipboard.
 - **Pin results** supaya hasil tetap di tab sendiri, berdampingan.
 - **Edit cell**: perubahan menghasilkan script UPDATE berdasarkan primary key di tab baru. Script tidak pernah dijalankan otomatis.
 - **Execution plan**: plan grafis dengan bar cost untuk SQL Server; output `EXPLAIN` sebagai grid untuk database lain.
-- **Dukungan editor**: autocomplete (database, schema, table, kolom termasuk alias, keyword dan function; untuk MongoDB collection, method, nama field dan operator `$`), formatter (dialect mengikuti koneksi), lint untuk statement tanpa `;` dengan Quick Fix.
+- **Dukungan editor**: autocomplete (database, schema, table, kolom termasuk alias dan tabel target UPDATE / INSERT / DELETE, keyword dan function; untuk MongoDB collection, method, nama field dan operator `$`), formatter (dialect mengikuti koneksi), lint untuk statement tanpa `;` dengan Quick Fix.
 - **View samping**: **SQL Files** (folder atau daftar rata, dengan rename, duplicate, delete dan drag & drop), **Running Queries**, **Query History**.
 
 ## Instalasi
@@ -54,18 +56,34 @@ Buka view **Moonage Daydream** di Activity Bar lalu klik **+** (**Add Connection
 1. **Pilih database**: di bawah header **New connection**, kartu berwarna khas tiap database, dengan logo, untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB. Kartu muncul dengan animasi singkat dan menampilkan **Connect →** saat di-hover (gerakan dikurangi bila OS meminta reduced motion). Kartu itu mengisi port default dan contoh username untuk tipe tersebut.
 2. **Isi form** untuk tipe itu. **Change database** (kanan atas) kembali ke langkah 1.
 
+**Search databases** (kanan atas langkah 1) menyaring kartu.
+
 ![Langkah 1 koneksi baru: header New connection dan kartu berwarna khas untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB, masing-masing dengan logo dan deskripsi singkat; kartu PostgreSQL yang di-hover menampilkan Connect →](images/screenshots/new-connection.png)
 
-Form dibagi menjadi beberapa bagian:
+Form punya sidebar di kiri; tiap item membuka bagiannya sendiri dan menampilkan ringkasan singkat pengaturannya (mis. *Off*, *Defaults*, *Read & write*, *3 setting(s)*):
 
-- **Connection**: nama, **Group** dan **Color** (lihat di bawah);
-- **Server**: host dan port; untuk SQL Server juga instance name (port lalu ditentukan oleh SQL Server Browser). Untuk MongoDB host boleh berupa connection string lengkap `mongodb://` atau `mongodb+srv://`. Untuk SQLite bagian ini hanya berisi path file database;
-- **Authentication**: username dan password (ikon mata menampilkan atau menyembunyikannya); untuk SQL Server metode *SQL login* atau *Windows (NTLM)* dengan domain; untuk MongoDB auth database;
-- **Options**: database default (opsional); untuk SQL Server *trust server certificate*.
+- **Connection**:
+  - **Connection**: nama, **Group** dan **Color** (lihat di bawah);
+  - **Server**: host dan port; untuk SQL Server juga instance name (port lalu ditentukan oleh SQL Server Browser). Untuk MongoDB host boleh berupa connection string lengkap `mongodb://` atau `mongodb+srv://`. Untuk SQLite kartu ini hanya berisi path file database;
+  - **Authentication**: username dan password (ikon mata menampilkan atau menyembunyikannya); untuk SQL Server metode *SQL login* atau *Windows (NTLM)* dengan domain; untuk MongoDB auth database;
+  - **Database**: database default (opsional).
+- **SSL / TLS**: **Enable SSL / TLS** (default aktif untuk SQL Server, di sana disebut *encrypt*; mati untuk database lain) dan **Trust server certificate** (untuk sertifikat lokal atau self-signed; mati = sertifikat diverifikasi), untuk semua driver.
+- **Timeouts**: **Connection timeout** dalam detik (default 15). Query yang sedang berjalan tidak punya timeout (juga di SQL Server); hentikan dengan **Cancel**.
+- **Permissions**: **Read only**. Hanya statement yang tidak mengubah data yang boleh dijalankan (SELECT / WITH, DECLARE, `SET @var`, SHOW, DESCRIBE; untuk MongoDB method baca). UPDATE, INSERT, DELETE, MERGE, `SELECT ... INTO`, DDL dan EXEC diblokir sebelum ada yang dikirim ke server, dan panel hasil menampilkan statement yang diblokir.
+- **Driver settings**: opsi key / value tambahan yang diteruskan ke driver, mis. `appName` (SQL Server), `charset` (MySQL), `application_name` (PostgreSQL), `replicaSet` (MongoDB). Nilai `true` / `false` dan angka dikonversi; **+ Add setting** menambah baris, **×** menghapusnya.
+
+**Import connection string** (di kartu **Server**) membuka kotak untuk menempel connection string; **Fill the form** mengisi host, port, user, password, database, SSL dan opsi, dan mengganti tipe database bila perlu. Tidak ada yang disimpan sebelum **Save connection**. Yang didukung:
+
+- SQL Server (ADO.NET): `Server=host,1433;Database=shop;User ID=app;Password=...;Encrypt=true;TrustServerCertificate=true`; juga `Data Source` / `Initial Catalog`, `host\instance`, dan `Integrated Security=SSPI` (Windows authentication);
+- URL: `mysql://`, `mariadb://`, `postgres://` / `postgresql://`, `mongodb://` dan `mongodb+srv://`, mis. `postgres://app@db.example.com:5432/shop?sslmode=require&application_name=reports`. `ssl`, `tls` dan `sslmode` mengatur SSL / TLS, `authSource` mengatur auth database MongoDB, dan opsi query lainnya masuk ke **Driver settings**.
+
+![Edit koneksi PostgreSQL shop-pg: sidebar Connection / SSL / TLS / Timeouts / Permissions / Driver settings dengan ringkasan, bagian Connection (Group prod, Color merah) dan kotak Import connection string yang terbuka berisi URL postgres:// di atas Host dan Port](images/screenshots/connection.png)
+
+![Bagian Driver settings dengan tiga baris key / value (application_name, statement_timeout, keepAlive) dan + Add setting; ringkasan di sidebar menampilkan 3 setting(s)](images/screenshots/connection-driver.png)
 
 **Test connection** mengecek koneksi sebelum **Save connection**; hasilnya tampil di footer di samping tombol. **Edit Connection** langsung membuka form (langkah 2).
 
-![Edit koneksi PostgreSQL shop-pg: bagian Connection (Group prod, Color merah dipilih dari 15 swatch warna), Server, Authentication (kolom password dengan ikon mata) dan Options, dengan Test connection, Cancel dan Save connection di bawah](images/screenshots/connection.png)
+**Import Connections from DBCode…** (menu **⋯** view **Connections**) membaca koneksi extension DBCode dari setting `dbcode.connections` dan menampilkannya di quick pick multi-pilih: nama, tipe, host, port, instance, user, database, group, SSL, connection timeout dan read only ikut disalin. Koneksi yang namanya sudah dipakai, atau tipenya tidak didukung, dilewati (pesannya menyebutkan daftarnya). Password tidak ikut diimport: password ditanya sekali saat koneksi pertama kali dipakai, lalu disimpan di Secret Storage VS Code.
 
 **Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan folder group untuk **Rename Group…**. Di quick pick koneksi, group ditampilkan sebagai `[group]`.
 
@@ -89,10 +107,10 @@ Expand koneksi untuk melihat database, table, view, procedure dan kolom. Pakai i
 
 ### 2. Menjalankan query
 
-Buka atau buat file `.sql`. CodeLens di atas file menampilkan koneksi dan database file itu; klik untuk mengganti. Lalu:
+Buka atau buat file `.sql`. CodeLens di atas setiap statement menampilkan **Execute**, **Explain**, **Analyze** (untuk SELECT), lalu koneksi, database dan mode transaksi file itu; klik koneksi atau database untuk menggantinya. Lalu:
 
 - **Ctrl+Alt+Enter** menjalankan selection, atau statement di posisi kursor. **Ctrl+Enter** melakukan hal yang sama bila extension DBCode tidak terpasang.
-- Setiap statement punya lens **Execute**, **Explain** dan (untuk SELECT) **Analyze**.
+- **Execute** pada lens menjalankan statement itu.
 - Saat query berjalan, muncul lens **Cancel**; query di-cancel di server.
 
 ```sql
@@ -106,6 +124,10 @@ Satu SELECT tanpa limit sendiri hanya mengambil `moonageDaydream.query.autoLimit
 Pilih beberapa statement SELECT lalu jalankan bersamaan: semuanya berjalan paralel dan tiap hasil muncul begitu selesai.
 
 ![Dua query berjalan paralel, satu selesai dan satu masih berjalan](images/screenshots/parallel.png)
+
+Statement yang tidak mengembalikan baris (UPDATE, INSERT, DELETE, MERGE, `SELECT ... INTO`) menampilkan `n row(s) affected` di bawah judul **Statement n** beserta SQL statement itu, juga saat dijalankan bersama SELECT; tiap blok hasil dipisah garis. Bila statement asalnya tidak bisa dipastikan (mis. ada EXEC), jumlahnya ditampilkan sebagai pesan. DDL tanpa hasil menampilkan `Commands completed successfully.`
+
+![SELECT dan UPDATE dijalankan bersama: Result 1 dengan 5 baris, lalu blok Statement 2 UPDATE sales.orders SET status = 'shipped' WHERE order_id = 10004; dengan 1 row(s) affected](images/screenshots/affected.png)
 
 ### 3. Filter dan sort
 
@@ -139,7 +161,19 @@ Double-click cell di hasil pertama untuk mengeditnya. Jumlah cell yang diubah ta
 
 Default-nya setiap statement auto-commit. Ganti file ke mode manual dengan **Toggle Transaction Mode** (atau CodeLens / status bar): statement lalu berjalan di transaksi yang terbuka sampai Anda klik **Commit** atau **Rollback**. Default untuk file baru diatur lewat `moonageDaydream.transaction.mode`.
 
+Di SQL Server transaksi manual berjalan di koneksi tersendiri untuk file itu:
+
+- status transaksi diambil dari server (`@@TRANCOUNT`), bukan ditebak di client;
+- script dikirim sebagai SQL batch (seperti SSMS), jadi `COMMIT`, `ROLLBACK` dan `BEGIN TRAN` di dalam script berjalan tanpa error 266, dan opsi `SET` serta tabel `#temp` tetap ada di run berikutnya;
+- SELECT biasa tidak membuka transaksi bila belum ada yang terbuka; UPDATE, INSERT, DELETE, EXEC, `SELECT ... INTO` dan lock hint seperti `UPDLOCK` / `HOLDLOCK` membukanya;
+- **Commit** meng-commit semua level nested (`BEGIN TRAN` dua kali di-commit seluruhnya);
+- koneksi yang putus dilaporkan (server sudah me-rollback transaksinya) dan tidak ada yang dijalankan;
+- **Load more** dan **Export → All Data** memakai koneksi transaksi yang terbuka, jadi melihat perubahan yang belum di-commit dan tidak menunggu lock-nya;
+- **Analyze** ditolak selama transaksi terbuka (Analyze berjalan di koneksi lain dan akan menunggu lock); **Explain** tetap bisa.
+
 ### 8. Autocomplete, formatter dan lint
+
+Kolom disarankan untuk tabel di statement pada posisi kursor: setelah `FROM` / `JOIN` (di SELECT, WHERE, ON, `alias.`), dan juga untuk `UPDATE t SET` / `WHERE`, `INSERT INTO t (` (daftar kolom) dan `DELETE [FROM] t WHERE`.
 
 **Format SQL** (Ctrl+Alt+F, atau Format Document) memakai dialect SQL dari koneksi file tersebut. Huruf keyword, koma di depan dan titik koma di baris sendiri bisa diatur. Statement tanpa `;` penutup ditandai, dengan Quick Fix untuk menambahkannya.
 
@@ -190,6 +224,7 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | Command | Keterangan |
 | --- | --- |
 | `Moonage Daydream: Add Connection` / `Edit Connection…` / `Delete Connection` | Kelola koneksi |
+| `Moonage Daydream: Import Connections from DBCode…` | Salin koneksi dari `dbcode.connections` (tanpa password; menu **⋯** view Connections) |
 | `Moonage Daydream: Rename…` / `Change Color…` | Ganti nama atau warna koneksi (view Connections) |
 | `Moonage Daydream: Select Connection` | Pilih koneksi aktif |
 | `Moonage Daydream: Move to Group…` / `Rename Group…` | Group koneksi (view Connections) |
@@ -212,6 +247,7 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 
 - SQLite: seluruh file database dibaca setiap query, dan query yang sedang berjalan tidak bisa di-cancel.
 - MongoDB: tidak ada transaksi manual dan tidak ada formatter.
+- Import connection string: URL `mongodb://` dengan beberapa host (replica set) belum didukung; pakai `mongodb+srv://` atau satu host.
 - Grid menampung maksimal 50.000 baris (Load more berhenti di situ); pakai Export untuk semua data.
 - SQLite tidak punya Analyze (hanya `EXPLAIN QUERY PLAN`).
 

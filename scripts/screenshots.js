@@ -120,6 +120,15 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
     }), { h: 640 });
     await shot(p, 'parallel.png');
 
+    // 4b. SELECT + UPDATE sekaligus: result set lalu blok Statement 2 UPDATE ... + 1 row(s) affected
+    const upd = "UPDATE sales.orders SET status = 'shipped' WHERE order_id = 10004;";
+    const one = { ...ordersSet, rows: orders.slice(0, 5), total: 5, limited: undefined };
+    p = await page(render('csp', 'shop / sales', {
+      result: { resultSets: [one], rowsAffected: [1], affected: [{ n: 2, sql: upd }], messages: [], durationMs: 41 },
+      source: { uri: 'file:///orders.sql', sql: `SELECT * FROM sales.orders WHERE order_id <= 10005;\n${upd}` },
+    }), { h: 400 });
+    await shot(p, 'affected.png');
+
     // 5. Explain / Analyze (actual plan)
     const xml = [PLAN_XML];
     p = await page(render('csp', 'shop / sales · Analyze', { plan: xml.flatMap(parsePlan), mode: 'actual', xml, durationMs: 182, rows: [8] }), { h: 420 });
@@ -135,14 +144,22 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
     // 7. form koneksi (tipe database, group, warna)
     const logos = Object.fromEntries(fs.readdirSync(path.join(root, 'media', 'db')).filter((f) => f.endsWith('.svg'))
       .map((f) => [f.replace('.svg', ''), `data:image/svg+xml;base64,${fs.readFileSync(path.join(root, 'media', 'db', f)).toString('base64')}`]));
-    p = await page(formHtml('csp', undefined, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 470 });
+    p = await page(formHtml('csp', undefined, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 380 });
     await p.waitForTimeout(900); // animasi masuk kartu
     await p.hover('.db[data-type="postgres"]');
     await p.waitForTimeout(300);
     await shot(p, 'new-connection.png');
-    p = await page(formHtml('csp', { name: 'shop-pg', type: 'postgres', host: 'db.example.com', port: 5432, user: 'app', database: 'shop', trustServerCertificate: false, group: 'prod', color: 'red' },
-      ['non-prod', 'prod'], undefined, logos), { w: 960, h: 820 });
+    const shopPg = { name: 'shop-pg', type: 'postgres', host: 'db.example.com', port: 5432, user: 'app', database: 'shop', trustServerCertificate: false, group: 'prod', color: 'red',
+      options: { application_name: 'reports', statement_timeout: '30000', keepAlive: 'true' } };
+    // langkah 2, bagian Connection dengan kotak Import connection string terbuka
+    p = await page(formHtml('csp', shopPg, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 940 });
+    await p.click('#importBtn');
+    await p.fill('#connstr', 'postgres://app@db.example.com:5432/shop?sslmode=require&application_name=reports');
     await shot(p, 'connection.png');
+    // bagian Driver settings (key / value) + ringkasan per bagian di sidebar
+    p = await page(formHtml('csp', shopPg, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 420 });
+    await p.click('.nav button[data-sec="driver"]');
+    await shot(p, 'connection-driver.png');
 
     // icon 128x128 dari SVG
     const icon = await browser.newPage({ viewport: { width: 128, height: 128 } });
