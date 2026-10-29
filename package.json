@@ -507,6 +507,16 @@
           "command": "moonageDaydream.renameGroup",
           "when": "view == moonageDaydream.explorer && viewItem == group",
           "group": "1_group"
+        },
+        {
+          "command": "moonageDaydream.addConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == group",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.addConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == group",
+          "group": "0_add"
         }
       ],
       "commandPalette": [

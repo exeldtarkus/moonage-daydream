@@ -124,7 +124,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       const ok = await vscode.window.showWarningMessage('Clear all query history?', { modal: true }, 'Clear');
       if (ok) await history.clear();
     }),
-    vscode.commands.registerCommand('moonageDaydream.addConnection', () => editConnection()),
+    vscode.commands.registerCommand('moonageDaydream.addConnection', (n?: Node) => editConnection(undefined, n?.kind === 'group' ? n.group : undefined)),
     vscode.commands.registerCommand('moonageDaydream.editConnection', async (n?: Node) => {
       const c = connOf(n) ?? (await pickConnection('Edit connection'));
       if (c) await editConnection(c);
@@ -526,8 +526,8 @@ async function pickConnection(title: string): Promise<ConnectionInfo | undefined
   return picked?.c;
 }
 
-function editConnection(old?: ConnectionInfo) {
-  openConnectionForm(conns, log, saveConnection, old);
+function editConnection(old?: ConnectionInfo, group?: string) {
+  openConnectionForm(conns, log, saveConnection, old, group);
 }
 
 async function saveConnection(c: ConnectionInfo, password: string, old?: ConnectionInfo) {

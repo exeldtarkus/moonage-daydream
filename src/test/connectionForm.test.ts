@@ -41,5 +41,10 @@ test('connection group: trimmed, empty = no group, suggestions in the form', () 
   assert.equal(toConnection({ ...ok, group: ' prod ' }).group, 'prod');
   assert.ok(!('group' in toConnection({ ...ok, group: ' ' })));
   const html = formHtml('csp', { ...toConnection(ok), group: 'non-prod' }, ['non-prod', 'prod<x>']);
-  assert.ok(html.includes('id="group" list="groups" value="non-prod"') && html.includes('<option value="prod&lt;x&gt;">'), 'group field + escaped datalist');
+  assert.ok(html.includes('<option value="non-prod" selected>non-prod</option>') && html.includes('<option value="prod&lt;x&gt;">prod&lt;x&gt;</option>'), 'dropdown, escaped');
+  assert.ok(html.includes('<option value="__new__">New group…</option>') && html.includes('<option value="">No group</option>'), 'new / no group options');
+  const preset = formHtml('csp', undefined, ['dev'], 'prod');
+  assert.ok(preset.includes('<option value="prod" selected>prod</option>'), 'Add Connection on a group folder preselects it');
+  assert.ok(formHtml('csp', undefined, ['dev']).includes('<option value="" selected>No group</option>'), 'new connection: no group by default');
+  assert.equal(validate({ ...ok, group: ' ' }, { get: () => undefined }), 'Group name is required');
 });

@@ -29,6 +29,7 @@ export interface FormData {
 export function validate(d: FormData, conns: { get(name: string): unknown }, oldName?: string): string | undefined {
   if (!d.name.trim()) return 'Connection name is required';
   if (d.name.trim() !== oldName && conns.get(d.name.trim())) return `Connection name "${d.name.trim()}" is already used`;
+  if (d.group !== undefined && /^\s+$/.test(d.group)) return 'Group name is required';
   if (d.type && !(d.type in drivers)) return `Unknown database type ${d.type}`;
   if (d.type === 'sqlite') return d.file?.trim() ? undefined : 'Database file is required';
   if (!d.host.trim()) return 'Host is required';
@@ -60,7 +61,10 @@ function connectionOf(d: FormData): ConnectionInfo {
   };
 }
 
-export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string[] = []): string {
+/** group: dropdown (tanpa group / group yang ada / New group… -> kolom isian); preset = group folder tempat Add Connection diklik */
+export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string[] = [], preset?: string): string {
+  const group = old?.group ?? preset ?? '';
+  const all = group && !groups.includes(group) ? [...groups, group].sort() : groups;
   const nonce = randomBytes(16).toString('base64');
   const v = (s: string | number | undefined) => `value="${esc(String(s ?? ''))}"`;
   return `<!DOCTYPE html>
@@ -97,8 +101,10 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
 <form id="f">
   <div class="row"><label for="type">Database type</label><select id="type">${Object.entries(drivers).map(([k, d]) =>
     `<option value="${k}" data-port="${d.defaultPort}"${(old?.type ?? 'mssql') === k ? ' selected' : ''}>${esc(d.label)}</option>`).join('')}</select></div>
-  <div class="row"><label for="group">Group</label><input type="text" id="group" list="groups" ${v(old?.group)} placeholder="e.g. prod, non-prod (folder in Connections)"></div>
-  <datalist id="groups">${groups.map((g) => `<option value="${esc(g)}">`).join('')}</datalist>
+  <div class="row"><label for="groupSel">Group</label><select id="groupSel">
+    <option value=""${group ? '' : ' selected'}>No group</option>${all.map((g) => `<option value="${esc(g)}"${g === group ? ' selected' : ''}>${esc(g)}</option>`).join('')}
+    <option value="__new__">New group…</option></select></div>
+  <div class="row" id="newGroupRow" hidden><label for="group">New group <span class="req">*</span></label><input type="text" id="group" placeholder="e.g. prod, non-prod (folder in Connections)"></div>
   <div class="row file"><label for="file">Database file <span class="req">*</span></label><input type="text" id="file" ${v(old?.file)} placeholder="/path/to/database.sqlite"></div>
   <div class="row"><label for="name">Connection name <span class="req">*</span></label><input type="text" id="name" ${v(old?.name)} required></div>
   <div class="row net"><label for="host">Host <span class="req">*</span></label>
@@ -129,7 +135,9 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   const $ = (id) => document.getElementById(id);
   const data = () => ({ name: $('name').value, host: $('host').value, port: $('port').value, instance: $('instance').value,
     user: $('user').value, password: $('password').value, database: $('database').value, trust: $('trust').checked,
-    auth: $('auth').value, domain: $('domain').value, type: $('type').value, file: $('file').value, authSource: $('authSource').value, group: $('group').value });
+    auth: $('auth').value, domain: $('domain').value, type: $('type').value, file: $('file').value, authSource: $('authSource').value,
+    group: $('groupSel').value === '__new__' ? $('group').value || ' ' : $('groupSel').value }); // New group kosong -> ditolak validate
+  $('groupSel').onchange = () => { $('newGroupRow').hidden = $('groupSel').value !== '__new__'; if (!$('newGroupRow').hidden) $('group').focus(); };
   $('auth').onchange = () => { $('domainrow').hidden = $('auth').value !== 'windows'; };
   // baris sesuai tipe: SQLite cukup file; opsi instance / auth / sertifikat hanya SQL Server
   const showType = () => {
