@@ -129,8 +129,9 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
     if (tabs[1]) await tabs[1].click();
     await shot(p, 'inspector.png');
 
-    // 7. form koneksi (tipe database)
-    p = await page(formHtml('csp', { name: 'shop-pg', type: 'postgres', host: 'db.example.com', port: 5432, user: 'app', database: 'shop', trustServerCertificate: false }), { w: 900, h: 470 });
+    // 7. form koneksi (tipe database, group, warna)
+    p = await page(formHtml('csp', { name: 'shop-pg', type: 'postgres', host: 'db.example.com', port: 5432, user: 'app', database: 'shop', trustServerCertificate: false, group: 'prod', color: 'red' },
+      ['non-prod', 'prod']), { w: 900, h: 560 });
     await shot(p, 'connection.png');
 
     // icon 128x128 dari SVG

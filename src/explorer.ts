@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { Connections } from './connections';
 import { ConnectionInfo, DbObject, ObjectKind, address, drivers } from './db';
+import { CONN_COLORS } from './connColor';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -23,7 +24,8 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
   private changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
 
-  constructor(private conns: Connections, private log: vscode.LogOutputChannel) {}
+  /** extensionUri: logo database di media/db/<type>.svg */
+  constructor(private conns: Connections, private log: vscode.LogOutputChannel, private extensionUri?: vscode.Uri) {}
 
   refresh(node?: Node): void {
     this.changed.fire(node);
@@ -43,7 +45,10 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         return Object.assign(new vscode.TreeItem(n.c.name, C), {
           description: `${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}`,
           tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
-          iconPath: new vscode.ThemeIcon(active ? 'vm-active' : 'server'),
+          // logo jenis database; warna koneksi lewat ConnDecorations (nama berwarna + ●)
+          iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
+            : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
+          resourceUri: connUri(n.c.name),
           contextValue: 'conn',
         });
       }
@@ -98,5 +103,28 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       this.log.error(`Explorer.getChildren - EXCEPTION CAUGHT | ${n.c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return [{ kind: 'msg', label: e instanceof Error ? e.message : String(e), error: true }];
     }
+  }
+}
+
+const CONN_SCHEME = 'moonage-conn';
+/** uri semu koneksi: dipakai FileDecorationProvider untuk mewarnai nama koneksi */
+export const connUri = (name: string) => vscode.Uri.from({ scheme: CONN_SCHEME, path: `/${encodeURIComponent(name)}` });
+
+/** nama koneksi berwarna + badge ● sesuai warna koneksi di view Connections */
+export class ConnDecorations implements vscode.FileDecorationProvider {
+  private changed = new vscode.EventEmitter<undefined>();
+  readonly onDidChangeFileDecorations = this.changed.event;
+
+  constructor(private conns: Connections) {}
+
+  refresh(): void {
+    this.changed.fire(undefined);
+  }
+
+  provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+    if (uri.scheme !== CONN_SCHEME) return undefined;
+    const c = this.conns.get(decodeURIComponent(uri.path.slice(1)));
+    if (!c?.color) return undefined;
+    return { badge: '●', color: new vscode.ThemeColor(CONN_COLORS[c.color]), tooltip: `${c.color} connection` };
   }
 }

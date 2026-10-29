@@ -48,3 +48,14 @@ test('connection group: trimmed, empty = no group, suggestions in the form', () 
   assert.ok(formHtml('csp', undefined, ['dev']).includes('<option value="" selected>No group</option>'), 'new connection: no group by default');
   assert.equal(validate({ ...ok, group: ' ' }, { get: () => undefined }), 'Group name is required');
 });
+
+test('connection color: dropdown, validation, banner text', async () => {
+  const { bannerText } = await import('../connColor');
+  assert.equal(toConnection({ ...ok, color: 'red' }).color, 'red');
+  assert.ok(!('color' in toConnection({ ...ok, color: '' })));
+  assert.equal(validate({ ...ok, color: 'pink' }, { get: () => undefined }), 'Unknown color pink');
+  const html = formHtml('csp', { ...toConnection(ok), color: 'green' });
+  assert.ok(html.includes('<option value="green" selected>Green</option>') && html.includes('<option value="">None</option>'));
+  assert.equal(bannerText({ name: 'orders-db', group: 'prod' }), 'you are using connection prod - orders-db');
+  assert.equal(bannerText({ name: 'local' }), 'you are using connection local');
+});

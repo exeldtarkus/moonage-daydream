@@ -1,14 +1,17 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Connections } from './connections';
-import { Explorer, Node } from './explorer';
+import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, PAGE_ROWS, Session, address, drivers, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
-import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode } from './sqlFiles';
+import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
 import { SqlCompletion } from './completion';
 import { driverLog } from './log';
+import { ConnBanner } from './connBanner';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { splitBatches } from './mssql';
@@ -26,6 +29,8 @@ export const running = new Map<string, RunningQuery>();
 export let runningView: RunningView;
 export let history: History;
 export let sqlFiles: SqlFiles;
+export let banner: ConnBanner;
+let connDecorations: ConnDecorations;
 let sqlFilesView: vscode.TreeView<SqlNode>;
 export let completion: SqlCompletion;
 /** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
@@ -42,7 +47,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   conns = new Connections(ctx);
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'moonageDaydream.selectConnection';
-  explorer = new Explorer(conns, log);
+  explorer = new Explorer(conns, log, ctx.extensionUri);
+  connDecorations = new ConnDecorations(conns);
   updateFormatterContext(ctx);
   vscode.workspace.textDocuments.forEach(lintDoc);
   updateDbcodeAlias();
@@ -73,6 +79,19 @@ export function activate(ctx: vscode.ExtensionContext) {
         }
       },
     }));
+    // pemicu lewat file (tidak tergantung jendela VS Code yang aktif, URI bisa salah alamat): isi file = nama test (kosong = semua)
+    const trigger = path.join(ctx.extensionPath, 'docs', 'main', 'temp', 'real-test.trigger');
+    const poll = setInterval(() => {
+      if (!fs.existsSync(trigger)) return;
+      try {
+        const only = fs.readFileSync(trigger, 'utf8').trim();
+        fs.rmSync(trigger, { force: true });
+        void require('./test/real').run(only || undefined);
+      } catch (e) {
+        log.error(`real-test trigger - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      }
+    }, 1000);
+    ctx.subscriptions.push({ dispose: () => clearInterval(poll) });
   }
   ctx.subscriptions.push(
     log,
@@ -80,7 +99,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     runningView,
     vscode.window.registerTreeDataProvider('moonageDaydream.running', runningView),
     vscode.window.registerTreeDataProvider('moonageDaydream.history', history),
-    (sqlFilesView = vscode.window.createTreeView('moonageDaydream.sqlFiles', { treeDataProvider: sqlFiles })),
+    (sqlFilesView = vscode.window.createTreeView('moonageDaydream.sqlFiles', { treeDataProvider: sqlFiles, dragAndDropController: sqlFilesDnd(sqlFiles, conns, log), canSelectMany: true })),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesFlat', () => sqlFiles.setFlat(true)),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesTree', () => sqlFiles.setFlat(false)),
     vscode.commands.registerCommand('moonageDaydream.refreshSqlFiles', () => sqlFiles.refresh()),
@@ -185,6 +204,13 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.languages.registerCompletionItemProvider({ language: 'sql' }, completion, '.', '"', "'", '$'),
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, { onDidChangeCodeLenses: lensChanged.event, provideCodeLenses }),
     vscode.window.onDidChangeActiveTextEditor(updateFileStatus),
+    (banner = new ConnBanner()),
+    vscode.window.onDidChangeVisibleTextEditors(() => banner.update(fileConn)),
+    // label ikut baris teratas yang terlihat: tetap kelihatan saat scroll
+    vscode.window.onDidChangeTextEditorVisibleRanges((e) => e.textEditor.document.languageId === 'sql' && banner.update(fileConn, e.textEditor)),
+    vscode.window.registerFileDecorationProvider(connDecorations),
+    // garis warna mengikuti jumlah baris; label ikut akhir baris pertama
+    vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'sql' && banner.update(fileConn)),
     vscode.window.registerWebviewViewProvider(VIEW_ID, results),
     vscode.window.registerTreeDataProvider('moonageDaydream.explorer', explorer),
     vscode.commands.registerCommand('moonageDaydream.moveConnectionToGroup', (n?: Node, pick?: string) => moveToGroup(n, pick)),
@@ -326,6 +352,7 @@ const connOf = (n?: Node) => (n?.kind === 'conn' ? n.c : undefined);
 /** dipanggil setiap daftar / koneksi aktif berubah */
 function updateStatus() {
   explorer.refresh();
+  connDecorations?.refresh(); // warna koneksi bisa diubah
   updateFileStatus();
 }
 
@@ -344,6 +371,7 @@ function fileConn(uri: vscode.Uri | undefined): ConnectionInfo | undefined {
 /** status bar + CodeLens mengikuti file .sql yang sedang aktif */
 function updateFileStatus() {
   lensChanged.fire();
+  banner?.update(fileConn); // "you are using connection …" + warna koneksi di editor
   sqlFiles?.redraw(); // deskripsi koneksi / database per file di SQL Files
   const uri = sqlUri();
   const c = fileConn(uri);

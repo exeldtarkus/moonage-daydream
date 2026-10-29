@@ -28,6 +28,8 @@ export interface ConnectionInfo {
   authSource?: string;
   /** folder di view Connections (mis. prod, non-prod); kosong = di level atas */
   group?: string;
+  /** warna koneksi: ikon di Connections + label & garis di editor (lihat connColor.ts) */
+  color?: import('./connColor').ConnColor;
 }
 
 // shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil

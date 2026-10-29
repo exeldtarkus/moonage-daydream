@@ -227,3 +227,54 @@ export async function deleteSqlNode(sqlFiles: SqlFiles, conns: Connections, n: S
   sqlFiles.refresh();
   return true;
 }
+
+/**
+ * drag & drop di SQL Files: file / folder dipindah ke folder target (target file = foldernya; tanpa target = root workspace).
+ * Lewat WorkspaceEdit (editor ikut pindah, bisa Undo); binding koneksi ikut. Return uri tujuan yang dipindah.
+ */
+export async function moveSqlNodes(sqlFiles: SqlFiles, conns: Connections, nodes: SqlNode[], target: SqlNode | undefined): Promise<vscode.Uri[]> {
+  const root = target?.kind === 'folder' ? target.root : vscode.workspace.workspaceFolders?.[0];
+  if (!root) return [];
+  const dir = !target ? root.uri : target.kind === 'folder' ? nodeUri(target) : vscode.Uri.joinPath(target.uri, '..');
+  const moves: [vscode.Uri, vscode.Uri][] = [];
+  for (const n of nodes) {
+    if (n.kind === 'folder' && !n.rel) continue; // root workspace tidak dipindah
+    const from = nodeUri(n);
+    const to = vscode.Uri.joinPath(dir, path.posix.basename(from.path));
+    if (to.toString() === from.toString()) continue; // sudah di folder itu
+    if (n.kind === 'folder' && `${dir.toString()}/`.startsWith(`${from.toString()}/`)) throw new Error(`Cannot move ${path.posix.basename(from.path)} into itself`);
+    if (await exists(to)) throw new Error(`${vscode.workspace.asRelativePath(to)} already exists`);
+    moves.push([from, to]);
+  }
+  if (!moves.length) return [];
+  const edit = new vscode.WorkspaceEdit();
+  for (const [from, to] of moves) edit.renameFile(from, to);
+  if (!(await vscode.workspace.applyEdit(edit))) throw new Error('Move was not applied');
+  for (const [from, to] of moves) await conns.moveBindings(from.toString(), to.toString());
+  sqlFiles.refresh();
+  return moves.map(([, to]) => to);
+}
+
+const TREE_MIME = 'application/vnd.code.tree.moonagedaydream.sqlfiles';
+
+/** drag ke folder lain = pindah; drag ke editor = buka (tepi editor = split) lewat text/uri-list */
+export function sqlFilesDnd(sqlFiles: SqlFiles, conns: Connections, log: vscode.LogOutputChannel): vscode.TreeDragAndDropController<SqlNode> {
+  return {
+    dropMimeTypes: [TREE_MIME],
+    dragMimeTypes: ['text/uri-list'],
+    handleDrag(nodes, data) {
+      data.set(TREE_MIME, new vscode.DataTransferItem(nodes));
+      data.set('text/uri-list', new vscode.DataTransferItem(nodes.filter((n) => n.kind === 'file').map((n) => nodeUri(n).toString()).join('\r\n')));
+    },
+    async handleDrop(target, data) {
+      const nodes = data.get(TREE_MIME)?.value as SqlNode[] | undefined;
+      if (!nodes?.length) return;
+      try {
+        await moveSqlNodes(sqlFiles, conns, nodes, target);
+      } catch (e) {
+        log.error(`sqlFilesDnd.handleDrop - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+        vscode.window.showErrorMessage(`Move failed: ${e instanceof Error ? e.message : e}`);
+      }
+    },
+  };
+}

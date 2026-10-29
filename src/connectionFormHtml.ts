@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import { drivers } from './db';
 import type { ConnectionInfo, DbType } from './db';
+import { CONN_COLORS, isConnColor } from './connColor';
 import { esc } from './resultsHtml';
 
 export interface FormData {
@@ -12,6 +13,8 @@ export interface FormData {
   authSource?: string;
   /** folder di view Connections */
   group?: string;
+  /** red / orange / ... ; kosong = tanpa warna */
+  color?: string;
   name: string;
   host: string;
   port: string;
@@ -30,6 +33,7 @@ export function validate(d: FormData, conns: { get(name: string): unknown }, old
   if (!d.name.trim()) return 'Connection name is required';
   if (d.name.trim() !== oldName && conns.get(d.name.trim())) return `Connection name "${d.name.trim()}" is already used`;
   if (d.group !== undefined && /^\s+$/.test(d.group)) return 'Group name is required';
+  if (d.color && !isConnColor(d.color)) return `Unknown color ${d.color}`;
   if (d.type && !(d.type in drivers)) return `Unknown database type ${d.type}`;
   if (d.type === 'sqlite') return d.file?.trim() ? undefined : 'Database file is required';
   if (!d.host.trim()) return 'Host is required';
@@ -42,7 +46,7 @@ export function validate(d: FormData, conns: { get(name: string): unknown }, old
 export function toConnection(d: FormData): ConnectionInfo {
   const group = d.group?.trim();
   const c = connectionOf(d);
-  return group ? { ...c, group } : c;
+  return { ...c, ...(group ? { group } : {}), ...(isConnColor(d.color) ? { color: d.color } : {}) };
 }
 
 function connectionOf(d: FormData): ConnectionInfo {
@@ -78,6 +82,9 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   .row { display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 12px; margin-bottom: 12px; }
   label { font-weight: 600; } label .req { color: var(--vscode-textLink-foreground); }
   .row[hidden], .hint[hidden], .off { display: none !important; }
+  .colorrow { display: flex; align-items: center; gap: 10px; }
+  #swatch { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--vscode-panel-border); }
+  .hint2 { font-size: 12px; opacity: .7; }
   select { padding: 5px 6px; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); }
   input[type=text], input[type=password], input[type=number] { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit;
     color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }
@@ -104,6 +111,9 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   <div class="row"><label for="groupSel">Group</label><select id="groupSel">
     <option value=""${group ? '' : ' selected'}>No group</option>${all.map((g) => `<option value="${esc(g)}"${g === group ? ' selected' : ''}>${esc(g)}</option>`).join('')}
     <option value="__new__">New group…</option></select></div>
+  <div class="row"><label for="color">Color</label><div class="colorrow"><select id="color">
+    <option value=""${old?.color ? '' : ' selected'}>None</option>${Object.keys(CONN_COLORS).map((k) => `<option value="${k}"${old?.color === k ? ' selected' : ''}>${k[0].toUpperCase()}${k.slice(1)}</option>`).join('')}</select>
+    <span id="swatch"></span><span class="hint2">shown in Connections and as a colored bar + "you are using connection …" in the editor</span></div></div>
   <div class="row" id="newGroupRow" hidden><label for="group">New group <span class="req">*</span></label><input type="text" id="group" placeholder="e.g. prod, non-prod (folder in Connections)"></div>
   <div class="row file"><label for="file">Database file <span class="req">*</span></label><input type="text" id="file" ${v(old?.file)} placeholder="/path/to/database.sqlite"></div>
   <div class="row"><label for="name">Connection name <span class="req">*</span></label><input type="text" id="name" ${v(old?.name)} required></div>
@@ -136,7 +146,10 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   const data = () => ({ name: $('name').value, host: $('host').value, port: $('port').value, instance: $('instance').value,
     user: $('user').value, password: $('password').value, database: $('database').value, trust: $('trust').checked,
     auth: $('auth').value, domain: $('domain').value, type: $('type').value, file: $('file').value, authSource: $('authSource').value,
-    group: $('groupSel').value === '__new__' ? $('group').value || ' ' : $('groupSel').value }); // New group kosong -> ditolak validate
+    group: $('groupSel').value === '__new__' ? $('group').value || ' ' : $('groupSel').value, color: $('color').value }); // New group kosong -> ditolak validate
+  const swatch = () => { const c = $('color').value; $('swatch').style.background = c ? 'var(--vscode-charts-' + c + ')' : 'transparent'; };
+  $('color').onchange = swatch;
+  swatch();
   $('groupSel').onchange = () => { $('newGroupRow').hidden = $('groupSel').value !== '__new__'; if (!$('newGroupRow').hidden) $('group').focus(); };
   $('auth').onchange = () => { $('domainrow').hidden = $('auth').value !== 'windows'; };
   // baris sesuai tipe: SQLite cukup file; opsi instance / auth / sertifikat hanya SQL Server

@@ -69,6 +69,15 @@ function resultTabColumn(): number | undefined {
   return undefined;
 }
 
+/** node koneksi CONN di Connections: di level atas atau di dalam folder group */
+async function connNode(ex: import('../../explorer').Explorer): Promise<Node> {
+  const top = await ex.getChildren();
+  for (const n of [...top, ...(await Promise.all(top.filter((x) => x.kind === 'group').map((g) => ex.getChildren(g)))).flat()]) {
+    if (n.kind === 'conn' && n.c.name === CONN) return n;
+  }
+  throw new Error(`connection ${CONN} not in Connections`);
+}
+
 const errOf = (nodes: Node[]) => nodes.find((n) => n.kind === 'msg' && n.error);
 
 /** Explorer: database → folder → objek → kolom, lalu "Select Top 100" pada tabel pertama yang ketemu (SELECT saja). */
@@ -92,7 +101,18 @@ async function groupTest(m: typeof import('../../extension')) {
     assert.ok((await m.explorer.getChildren()).some((n) => n.kind === 'conn' && n.c.name === name), 'back at top level');
     await m.moveToGroup({ kind: 'conn', c: m.conns.get(name)! }, '__it prod');
     assert.deepEqual(m.conns.groups().filter((x) => x.startsWith('__it')), ['__it prod']);
-    say('PASS connection groups: folder with count, rename group, move to no group / back, quick pick');
+    // warna: ikon Connections + label "you are using connection …" di editor file yang terikat
+    await m.conns.save({ ...m.conns.get(name)!, color: 'red' }, '');
+    const item = m.explorer.getTreeItem((await m.explorer.getChildren((await m.explorer.getChildren()).find((n) => n.kind === 'group' && n.group === '__it prod')))[0]);
+    assert.ok(String(item.iconPath).endsWith('/media/db/sqlite.svg'), `database logo: ${item.iconPath}`);
+    const { ConnDecorations } = require('../../explorer') as typeof import('../../explorer');
+    const deco = new ConnDecorations(m.conns).provideFileDecoration(item.resourceUri!) as vscode.FileDecoration;
+    assert.equal((deco?.color as vscode.ThemeColor | undefined)?.id, 'charts.red', 'colored connection name');
+    const doc = await fixture('banner', 'SELECT 1;\n');
+    await m.conns.bind(doc.uri.toString(), { conn: name });
+    await vscode.window.showTextDocument(doc);
+    m.banner.update((u) => (u.toString() === doc.uri.toString() ? m.conns.get(name) : undefined));
+    say('PASS connection groups: folder with count, rename group, move to no group / back, quick pick, color icon + editor banner (no error)');
   } finally {
     await m.conns.remove(name);
     assert.deepEqual(m.conns.list(), before, 'connection list restored');
@@ -169,6 +189,23 @@ async function sqlFilesTest(m: typeof import('../../extension')) {
     assert.equal(m.conns.binding(moved.toString()), undefined, 'binding removed with the file');
     await assert.rejects(Promise.resolve(vscode.workspace.fs.stat(moved)));
     say(`PASS sql files: rename file / folder (binding follows), duplicate (binding copied), delete -> ${trash}`);
+
+    // drag & drop: file ke folder lain, folder ke folder (binding ikut), tidak boleh ke dalam dirinya sendiri, drag ke editor = text/uri-list
+    const copy = vscode.Uri.joinPath(dir, 'sub2', 'r1 copy.sql');
+    await vscode.commands.executeCommand('moonageDaydream.newSqlFile', { kind: 'folder', root, rel: '__moonage_test__' }, 'dest/keep');
+    const [q2moved] = await f.moveSqlNodes(m.sqlFiles, m.conns, [{ kind: 'file', uri: vscode.Uri.joinPath(dir, 'sub2', 'q2.sql') }], { kind: 'folder', root, rel: '__moonage_test__' });
+    assert.ok(q2moved?.path.endsWith('/__moonage_test__/q2.sql'), `file moved: ${q2moved?.path}`);
+    const [sub2moved] = await f.moveSqlNodes(m.sqlFiles, m.conns, [{ kind: 'folder', root, rel: '__moonage_test__/sub2' }], { kind: 'folder', root, rel: '__moonage_test__/dest' });
+    const copyMoved = vscode.Uri.joinPath(sub2moved, 'r1 copy.sql');
+    assert.ok(await vscode.workspace.fs.stat(copyMoved), 'folder moved with its files');
+    assert.deepEqual(m.conns.binding(copyMoved.toString()), { conn: CONN, db: 'master' }, 'binding follows drag & drop');
+    assert.equal(m.conns.binding(copy.toString()), undefined);
+    await assert.rejects(f.moveSqlNodes(m.sqlFiles, m.conns, [{ kind: 'folder', root, rel: '__moonage_test__/dest' }], { kind: 'folder', root, rel: '__moonage_test__/dest/sub2' }), /into itself/);
+    assert.deepEqual(await f.moveSqlNodes(m.sqlFiles, m.conns, [{ kind: 'file', uri: q2moved }], { kind: 'file', uri: q2moved }), [], 'same folder = no-op');
+    const dt = new vscode.DataTransfer();
+    await f.sqlFilesDnd(m.sqlFiles, m.conns, { error: () => undefined } as unknown as vscode.LogOutputChannel).handleDrag!([{ kind: 'file', uri: q2moved }], dt, new vscode.CancellationTokenSource().token);
+    assert.equal(await dt.get('text/uri-list')?.asString(), q2moved.toString(), 'drag to editor carries the file uri');
+    say('PASS sql files drag & drop: file -> folder, folder -> folder (binding follows), into itself refused, text/uri-list for the editor');
   } finally {
     // tutup hanya tab file test ini (closeAllEditors memunculkan dialog Save untuk tab Untitled user)
     await vscode.window.tabGroups.close(vscode.window.tabGroups.all.flatMap((g) => g.tabs)
@@ -594,7 +631,7 @@ async function completionTest(m: typeof import('../../extension')) {
 
 async function explorerTest(m: typeof import('../../extension')) {
   const ex = m.explorer;
-  const conn = (await ex.getChildren()).find((n) => n.kind === 'conn' && n.c.name === CONN)!;
+  const conn = await connNode(ex);
   const dbs = await ex.getChildren(conn);
   assert.ok(!errOf(dbs) && dbs.length && dbs.every((n) => n.kind === 'db'), `databases: ${JSON.stringify(errOf(dbs))}`);
   say(`explorer databases=${dbs.length}`);
@@ -629,7 +666,7 @@ const resultHtml = (m: typeof import('../../extension')) =>
 
 /** dua file .sql dengan database berbeda: CodeLens + DB_NAME() mengikuti binding masing-masing file */
 async function fileBindingTest(m: typeof import('../../extension')) {
-  const conn = (await m.explorer.getChildren()).find((n) => n.kind === 'conn' && n.c.name === CONN)!;
+  const conn = await connNode(m.explorer);
   const dbs = (await m.explorer.getChildren(conn)).flatMap((n) => (n.kind === 'db' ? [n.db] : []));
   const pair = ['master', dbs.find((d) => !['master', 'model', 'msdb', 'tempdb'].includes(d)) ?? 'tempdb'];
   for (const db of pair) {
