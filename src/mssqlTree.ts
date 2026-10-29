@@ -119,6 +119,7 @@ const HINTS: Record<string, string> = {
   auditSpecs: 'No permission (needs ALTER ANY SERVER AUDIT or VIEW SERVER STATE)',
   agent: 'No permission to read the Agent service status (needs VIEW SERVER STATE)',
   credentials: 'No permission (needs VIEW ANY DEFINITION)',
+  monitor: 'No permission to read server activity (needs VIEW SERVER STATE)',
 };
 
 /** pesan izin untuk folder (node abu-abu, bukan error merah); undefined = bukan masalah izin */

@@ -59,6 +59,7 @@ test('mssql tree: permission errors become a hint naming the permission, other e
   assert.match(permissionHint('audits', denied(300))!, /VIEW SERVER STATE|ALTER ANY SERVER AUDIT/);
   assert.match(permissionHint('agent', denied(297))!, /VIEW SERVER STATE/);
   assert.match(permissionHint('logins', denied(229))!, /No permission/, 'default hint');
+  assert.match(permissionHint('monitor', denied(300))!, /VIEW SERVER STATE/, 'Live Monitor');
   assert.equal(permissionHint('jobs', new Error('Connection lost')), undefined, 'not a permission error');
   assert.equal(permissionHint('jobs', denied(208)), undefined, 'invalid object is a real error');
 });

@@ -127,6 +127,12 @@
         "icon": "$(debug-stop)"
       },
       {
+        "command": "moonageDaydream.liveMonitor",
+        "title": "Live Monitor (charts)",
+        "category": "Moonage Daydream",
+        "icon": "$(graph-line)"
+      },
+      {
         "command": "moonageDaydream.activityMonitor",
         "title": "Activity Monitor (sessions / blocking)",
         "category": "Moonage Daydream",
@@ -694,6 +700,16 @@
           "command": "moonageDaydream.restoreDatabase",
           "when": "view == moonageDaydream.explorer && viewItem == db.mssql",
           "group": "3_db@3"
+        },
+        {
+          "command": "moonageDaydream.liveMonitor",
+          "when": "view == moonageDaydream.explorer && viewItem == conn.mssql",
+          "group": "3_server@0"
+        },
+        {
+          "command": "moonageDaydream.liveMonitor",
+          "when": "view == moonageDaydream.explorer && viewItem == db.mssql",
+          "group": "3_db@0"
         }
       ],
       "commandPalette": [

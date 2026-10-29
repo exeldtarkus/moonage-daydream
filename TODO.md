@@ -90,6 +90,17 @@
   - [x] Info server / database: versi, edition, collation, recovery model, ukuran file data / log
   - [x] Backup / Restore database (dialog, script BACKUP / RESTORE, dengan konfirmasi)
   - [x] Batasan diperbaiki: CREATE TABLE lengkap (identity / computed / default / collation / PK / unique / check / FK / index INCLUDE + filter, uji bolak-balik identik di Docker), INSERT / UPDATE tanpa kolom identity / computed / rowversion, pesan izin (Jobs / Agent / Audits) bukan error merah + status service Agent, System Views per schema, Agent Start / Stop Job teruji (Docker dengan MSSQL_AGENT_ENABLED)
+- [ ] SQL Server Live Monitor (grafik live + tabel, refresh 1 / 2 / 5 / 10 / 30 / 60 s, jendela 1 / 5 / 15 menit, Pause), per tahap dengan TDD — kode + unit test + verifikasi Docker selesai, menunggu test real di VS Code (user):
+  - [x] Test unit `src/test/monitor.test.ts` (monitorSample, MONITOR_SQL, panel) — hijau
+  - [x] `src/monitor.ts`: MONITOR_SQL (satu batch, 7 result set: counters, waiting tasks, io total, wait stats, sessions + blocking, expensive queries, file io), MONITOR_SETS (index), monitorSample(sets, t, prev?) -> { point, sessions, waits, expensive, files }
+  - [x] `src/monitorHtml.ts`: webview grafik SVG (CPU %, Batch req/s, Waiting tasks, I/O MB/s, Connections, Transactions/s; tema VS Code), pilihan refresh / window, Pause, tab Sessions / Top waits / Expensive queries / File I/O, Kill Session (konfirmasi), Open as query
+  - [x] Panel di extension: command Live Monitor (menu koneksi SQL Server), polling dengan driver.run (tanpa request menumpuk), berhenti saat tab tersembunyi / ditutup, pesan izin VIEW SERVER STATE
+  - [x] Verifikasi query + dua sampel nyata di SQL Server Docker (moonage-mssql), screenshot panel (page-check.sh), langkah test real untuk user
+  - [x] monitoring bisa di lakukan per db aksesnya click databases -> pilih database -> click kanan pada database yang mau di monitoring
+  - [x] makesure monitoring query execute grafiknya jangan include excute query dari laptop user, agar datanya memang bener transaksi yang sedang di lakukan di database / server
+  - [x] monitoring menampilkan juga query yang sedang di execute
+  - [x] makesure kill pada monitoring bener-bener bekerja
+- [ ] Live Monitor MySQL / MariaDB (SHOW GLOBAL STATUS, processlist) dan PostgreSQL (pg_stat_database, pg_stat_activity) — sesudah SQL Server
 
 ## Rilis
 - [x] README (EN + ID) + icon + screenshot (`node scripts/screenshots.js`, data contoh)

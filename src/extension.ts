@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, PAGE_ROWS, QueryResult, Session, address, drivers, openSession, schemaOf } from './db';
+import { ConnectionInfo, PAGE_ROWS, QueryResult, ResultSet, Session, address, drivers, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -19,6 +19,9 @@ import type { Outcome, Source } from './resultsHtml';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
 import { addWhere, affectedStatements, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
+import { MonitorPart, monitorQueries, monitorSample, monitorSql } from './monitor';
+import { monitorHtml } from './monitorHtml';
+import { permissionHint } from './mssqlTree';
 import { importDbcode } from './connString';
 
 let log: vscode.LogOutputChannel;
@@ -248,6 +251,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.stopJob', (n?: Node) => jobCommand(n, 'stop')),
     vscode.commands.registerCommand('moonageDaydream.activityMonitor', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', ACTIVITY_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.killSession', killCommand),
+    vscode.commands.registerCommand('moonageDaydream.liveMonitor', liveMonitor),
     vscode.commands.registerCommand('moonageDaydream.serverInfo', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', SERVER_INFO_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.databaseInfo', (n?: Node) => n?.kind === 'db' && openScript(n.c, n.db, DB_INFO_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.backupDatabase', (n?: Node) => backupCommand(n, 'backup')),
@@ -692,6 +696,81 @@ async function killCommand(n?: Node) {
     log.error(`killCommand - EXCEPTION CAUGHT | ${n.c.name} / ${id}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`Kill session failed: ${errMsg(e)}`);
   }
+}
+
+/** Live Monitor (SQL Server): grafik + tabel dari MONITOR_SQL tiap interval; tidak menumpuk request, berhenti saat tab tersembunyi / ditutup */
+function liveMonitor(n?: Node) {
+  if (n?.kind !== 'conn' && n?.kind !== 'db') return;
+  const node = n;
+  // klik kanan database = monitoring database itu saja; koneksi = seluruh server
+  const db = node.kind === 'db' ? node.db : undefined;
+  const sql = monitorSql(db);
+  const queries = monitorQueries(db);
+  const title = db ? `${node.c.name} / ${db}` : node.c.name;
+  const c = { ...node.c, database: 'master' };
+  const panel = vscode.window.createWebviewPanel('moonageDaydream.monitor', `Monitor: ${title}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+  panel.webview.html = monitorHtml(panel.webview.cspSource, title, db !== undefined);
+  let interval = 5000;
+  let paused = false;
+  let disposed = false;
+  let busy = false;
+  let timer: NodeJS.Timeout | undefined;
+  let prev: { sets: ResultSet[]; t: number } | undefined;
+  const schedule = () => {
+    if (!disposed && !timer) timer = setTimeout(tick, interval);
+  };
+  async function tick() {
+    timer = undefined;
+    if (disposed) return;
+    if (paused || !panel.visible || busy) return schedule(); // tersembunyi / pause: tidak ada query ke server
+    busy = true;
+    try {
+      const r = await drivers.mssql.run(c, await conns.password(node.c.name), sql);
+      const t = Date.now();
+      const s = monitorSample(r.resultSets, t, prev);
+      prev = { sets: r.resultSets, t };
+      void panel.webview.postMessage({ type: 'sample', ...s });
+    } catch (e) {
+      log.error(`liveMonitor - EXCEPTION CAUGHT | ${node.c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      void panel.webview.postMessage({ type: 'error', message: permissionHint('monitor', e) ?? errMsg(e) });
+    } finally {
+      busy = false;
+      schedule();
+    }
+  }
+  const restart = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    void tick();
+  };
+  panel.onDidChangeViewState(() => panel.visible && !paused && restart());
+  panel.onDidDispose(() => {
+    disposed = true;
+    if (timer) clearTimeout(timer);
+  });
+  panel.webview.onDidReceiveMessage(async (m: { type: string; ms?: number; paused?: boolean; id?: string; tab?: MonitorPart }) => {
+    if (m.type === 'interval' && m.ms) {
+      interval = Math.min(60000, Math.max(1000, m.ms));
+      restart();
+    } else if (m.type === 'pause') {
+      paused = !!m.paused;
+      if (!paused) restart();
+    } else if (m.type === 'open' && m.tab && m.tab in queries) {
+      await openScript(node.c, 'master', queries[m.tab], true);
+    } else if (m.type === 'kill' && m.id) {
+      const ok = await vscode.window.showWarningMessage(`Kill session ${m.id} on ${node.c.name}? Its open transaction is rolled back.`, { modal: true }, 'Kill');
+      if (!ok) return;
+      try {
+        await drivers.mssql.run(c, await conns.password(node.c.name), killScript(m.id));
+        log.info(`kill session ${m.id} (live monitor): ${node.c.name}`);
+        restart();
+      } catch (e) {
+        log.error(`liveMonitor kill - EXCEPTION CAUGHT | ${node.c.name} / ${m.id}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        vscode.window.showErrorMessage(`Kill session failed: ${errMsg(e)}`);
+      }
+    }
+  });
+  void tick();
 }
 
 /** Backup / Restore (SQL Server): script di tab baru ke folder backup default server, dijalankan sendiri */
