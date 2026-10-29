@@ -40,6 +40,11 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
 
   /** status "connected" koneksi (diisi extension: pool / transaksi / panel terbuka) */
   connected: (c: ConnectionInfo) => boolean = () => false;
+  /** id koneksi berganti setelah Disconnect -> VS Code menganggapnya item baru (collapsed), anak tidak dimuat ulang (pool tidak dibuka lagi) */
+  private generation = new Map<string, number>();
+  collapse(name: string) {
+    this.generation.set(name, (this.generation.get(name) ?? 0) + 1);
+  }
 
   refresh(node?: Node): void {
     this.changed.fire(node);
@@ -64,7 +69,9 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
-          contextValue: isMs(n.c) ? 'conn.mssql' : monitorKit(n.c.type) ? 'conn.live' : n.c.type === 'consul' ? 'conn.consul' : 'conn',
+          id: `conn:${n.c.name}#${this.generation.get(n.c.name) ?? 0}`,
+          // .on / .off: ikon inline Disconnect / Connect sesuai status
+          contextValue: `${isMs(n.c) ? 'conn.mssql' : monitorKit(n.c.type) ? 'conn.live' : n.c.type === 'consul' ? 'conn.consul' : 'conn'}.${this.connected(n.c) ? 'on' : 'off'}`,
         });
       }
       case 'db':

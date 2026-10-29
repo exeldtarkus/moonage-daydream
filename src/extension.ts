@@ -1112,9 +1112,10 @@ function isConnected(c: ConnectionInfo): boolean {
 }
 
 // explorer diperbarui hanya bila daftar koneksi yang connected berubah (pool terbuka sesudah password diambil)
-let connSnapshot = '';
+/** nama koneksi yang connected saat refresh terakhir; undefined = paksa refresh */
+let connSnapshot: string | undefined = '';
 let connTimer: NodeJS.Timeout | undefined;
-function refreshConnState() {
+function refreshConnState(delay = 1500) {
   if (connTimer) clearTimeout(connTimer);
   connTimer = setTimeout(() => {
     const now = conns.list().filter(isConnected).map((c) => c.name).join('\n');
@@ -1122,7 +1123,7 @@ function refreshConnState() {
       connSnapshot = now;
       explorer.refresh();
     }
-  }, 1500);
+  }, delay);
 }
 function touchConn(name: string) {
   lastUsed.set(name, Date.now());
@@ -1143,8 +1144,8 @@ async function connectCommand(c: ConnectionInfo) {
       info = (r.resultSets[0]?.rows[0] ?? []).map(String).join(' / ');
     }
     log.info(`connect ${c.name}: ${info}`);
-    vscode.window.setStatusBarMessage(`$(plug) Connected to ${c.name}${info ? ` (${info})` : ''} in ${Date.now() - t} ms`, 5000);
-    refreshConnState();
+    refreshConnState(0);
+    vscode.window.showInformationMessage(`Connected to ${c.name}${info ? ` (${info})` : ''} in ${Date.now() - t} ms`);
   } catch (e) {
     log.error(`connect - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`Connect to ${c.name} failed: ${errMsg(e)}`);
@@ -1176,10 +1177,13 @@ async function disconnect(c: ConnectionInfo, quiet = false): Promise<boolean> {
   consulUp.delete(c.name);
   lastUsed.delete(c.name);
   log.info(`disconnect ${c.name}${quiet ? ' (idle)' : ''}${open.length ? ` (${how} ${open.length} transaction(s))` : ''}`);
-  vscode.window.setStatusBarMessage(`$(debug-disconnect) Disconnected from ${c.name}${quiet ? ' (idle)' : ''}`, 5000);
   updateFileStatus();
-  connSnapshot = '';
-  refreshConnState();
+  explorer.collapse(c.name);
+  connSnapshot = undefined;
+  refreshConnState(0);
+  // idle: tanpa popup (tidak diklik user), cukup status bar
+  if (quiet) vscode.window.setStatusBarMessage(`$(debug-disconnect) Disconnected from ${c.name} (idle)`, 5000);
+  else vscode.window.showInformationMessage(`Disconnected from ${c.name}`);
   return true;
 }
 

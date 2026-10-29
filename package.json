@@ -545,27 +545,27 @@
         },
         {
           "command": "moonageDaydream.selectConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.selectConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "1_conn@1"
         },
         {
           "command": "moonageDaydream.editConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "2_edit@1"
         },
         {
           "command": "moonageDaydream.removeConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "9_delete@1"
         },
         {
           "command": "moonageDaydream.refreshExplorer",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn|db)(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn(\\.\\w+)?\\.(on|off)|db(\\.\\w+)?)$/",
           "group": "2_refresh"
         },
         {
@@ -665,7 +665,7 @@
         },
         {
           "command": "moonageDaydream.moveConnectionToGroup",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "2_edit@4"
         },
         {
@@ -685,17 +685,17 @@
         },
         {
           "command": "moonageDaydream.renameConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "2_edit@2"
         },
         {
           "command": "moonageDaydream.changeConnectionColor",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "2_edit@3"
         },
         {
           "command": "moonageDaydream.editConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "inline@2"
         },
         {
@@ -715,17 +715,17 @@
         },
         {
           "command": "moonageDaydream.activityMonitor",
-          "when": "view == moonageDaydream.explorer && viewItem == conn.mssql",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
           "group": "3_server@1"
         },
         {
           "command": "moonageDaydream.killSession",
-          "when": "view == moonageDaydream.explorer && viewItem == conn.mssql",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
           "group": "3_server@2"
         },
         {
           "command": "moonageDaydream.serverInfo",
-          "when": "view == moonageDaydream.explorer && viewItem == conn.mssql",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
           "group": "3_server@3"
         },
         {
@@ -745,7 +745,7 @@
         },
         {
           "command": "moonageDaydream.liveMonitor",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.(mssql|live)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.(mssql|live)\\.(on|off)$/",
           "group": "3_server@0"
         },
         {
@@ -760,17 +760,17 @@
         },
         {
           "command": "moonageDaydream.autoCommitConfirm",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "4_safety@1"
         },
         {
           "command": "moonageDaydream.consulNewKey",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.consul|kvFolder)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.consul\\.(on|off)|kvFolder)$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.consulNewKey",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.consul|kvFolder)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.consul\\.(on|off)|kvFolder)$/",
           "group": "1_kv@1"
         },
         {
@@ -785,18 +785,28 @@
         },
         {
           "command": "moonageDaydream.consulDashboard",
-          "when": "view == moonageDaydream.explorer && viewItem == conn.consul",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.consul\\.(on|off)$/",
           "group": "3_server@0"
         },
         {
           "command": "moonageDaydream.connect",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.off$/",
           "group": "0_conn@1"
         },
         {
           "command": "moonageDaydream.disconnect",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.on$/",
           "group": "0_conn@2"
+        },
+        {
+          "command": "moonageDaydream.connect",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.off$/",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.disconnect",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.on$/",
+          "group": "inline"
         }
       ],
       "commandPalette": [
