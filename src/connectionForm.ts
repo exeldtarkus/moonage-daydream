@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import type { Connections } from './connections';
 import { ConnectionInfo, drivers } from './db';
 import { FormData, formHtml, toConnection, validate } from './connectionFormHtml';
@@ -22,6 +24,15 @@ export async function testConnection(c: ConnectionInfo, password: string, log: v
 
 const panels = new Map<string, vscode.WebviewPanel>();
 
+/** logo database (media/db/<type>.svg) sebagai data URI untuk kartu pilih database */
+function logos(): Record<string, string> {
+  const dir = join(vscode.extensions.getExtension('exeltarkus.moonage-daydream')?.extensionPath ?? '', 'media', 'db');
+  return Object.fromEntries(Object.keys(drivers).flatMap((t) => {
+    const f = join(dir, `${t}.svg`);
+    return existsSync(f) ? [[t, `data:image/svg+xml;base64,${readFileSync(f).toString('base64')}`]] : [];
+  }));
+}
+
 /**
  * Form Add / Edit Connection sebagai tab editor (Test = `SELECT 1`, Save).
  * `save` dipanggil dengan password final (kosong saat edit = password lama).
@@ -43,7 +54,7 @@ export function openConnectionForm(
     vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
   panels.set(key, panel);
   panel.onDidDispose(() => panels.delete(key));
-  panel.webview.html = formHtml(panel.webview.cspSource, old, conns.groups(), group);
+  panel.webview.html = formHtml(panel.webview.cspSource, old, conns.groups(), group, logos());
 
   const finalPassword = async (d: FormData) => (old && !d.password ? conns.password(old.name) : d.password);
   const reply = (msg: object) => panel.webview.postMessage(msg);

@@ -35,7 +35,8 @@ const THEME = `:root{--vscode-editor-background:#1e1e1e;--vscode-editor-foregrou
 --vscode-menu-border:#454545;--vscode-menu-selectionBackground:#04395e;--vscode-menu-separatorBackground:#454545;--vscode-sideBar-background:#252526;
 --vscode-dropdown-background:#3c3c3c;--vscode-dropdown-foreground:#ccc;--vscode-dropdown-border:#3c3c3c;--vscode-focusBorder:#007fd4;
 --vscode-textLink-foreground:#3794ff;--vscode-errorForeground:#f48771;--vscode-editorWarning-foreground:#cca700;--vscode-progressBar-background:#0e70c0;
---vscode-charts-blue:#3794ff;--vscode-charts-green:#89d185;--vscode-charts-red:#f14c4c;--vscode-testing-iconPassed:#73c991;
+--vscode-charts-blue:#3794ff;--vscode-charts-green:#89d185;--vscode-charts-red:#f14c4c;--vscode-charts-orange:#d18616;
+--vscode-charts-yellow:#cca700;--vscode-charts-purple:#b180d7;--vscode-descriptionForeground:#9d9d9d;--vscode-badge-background:#4d4d4d;--vscode-badge-foreground:#fff;--vscode-testing-iconPassed:#73c991;
 font-family:var(--vscode-font-family);font-size:13px}`;
 
 const prepare = (html) => html
@@ -130,8 +131,12 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
     await shot(p, 'inspector.png');
 
     // 7. form koneksi (tipe database, group, warna)
+    const logos = Object.fromEntries(fs.readdirSync(path.join(root, 'media', 'db')).filter((f) => f.endsWith('.svg'))
+      .map((f) => [f.replace('.svg', ''), `data:image/svg+xml;base64,${fs.readFileSync(path.join(root, 'media', 'db', f)).toString('base64')}`]));
+    p = await page(formHtml('csp', undefined, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 360 });
+    await shot(p, 'new-connection.png');
     p = await page(formHtml('csp', { name: 'shop-pg', type: 'postgres', host: 'db.example.com', port: 5432, user: 'app', database: 'shop', trustServerCertificate: false, group: 'prod', color: 'red' },
-      ['non-prod', 'prod']), { w: 900, h: 560 });
+      ['non-prod', 'prod'], undefined, logos), { w: 960, h: 820 });
     await shot(p, 'connection.png');
 
     // icon 128x128 dari SVG

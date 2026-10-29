@@ -55,7 +55,17 @@ test('connection color: dropdown, validation, banner text', async () => {
   assert.ok(!('color' in toConnection({ ...ok, color: '' })));
   assert.equal(validate({ ...ok, color: 'pink' }, { get: () => undefined }), 'Unknown color pink');
   const html = formHtml('csp', { ...toConnection(ok), color: 'green' });
-  assert.ok(html.includes('<option value="green" selected>Green</option>') && html.includes('<option value="">None</option>'));
+  assert.ok(html.includes('class="sw on" data-color="green"') && html.includes('id="color" value="green"'), 'color swatch selected');
   assert.equal(bannerText({ name: 'orders-db', group: 'prod' }), 'you are using connection prod - orders-db');
   assert.equal(bannerText({ name: 'local' }), 'you are using connection local');
+});
+
+test('two-step form: database cards for a new connection, form directly when editing', () => {
+  const fresh = formHtml('csp', undefined, [], undefined, { mysql: 'data:image/svg+xml;base64,AA==' });
+  assert.ok(fresh.includes('<div id="step1">') && fresh.includes('<form id="f" hidden'), 'new: step 1 visible, form hidden');
+  for (const t of ['mssql', 'mysql', 'mariadb', 'postgres', 'sqlite', 'mongodb']) assert.ok(fresh.includes(`data-type="${t}"`), t);
+  assert.ok(fresh.includes('<img class="logo" src="data:image/svg+xml;base64,AA=="'), 'logo from data URI');
+  assert.ok(fresh.includes("img-src data:"), 'CSP allows data: images only');
+  const edit = formHtml('csp', toConnection(ok));
+  assert.ok(edit.includes('<div id="step1" hidden>') && edit.includes('<form id="f" autocomplete'), 'edit: form directly');
 });
