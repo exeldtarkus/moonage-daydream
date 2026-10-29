@@ -57,6 +57,9 @@ test('connection color: dropdown, validation, banner text', async () => {
   const { CONN_COLORS, cssColor } = await import('../connColor');
   assert.equal(Object.keys(CONN_COLORS).length, 15, 'palette size');
   assert.equal(cssColor('pink'), 'var(--vscode-terminal-ansiBrightMagenta)');
+  const { CONN_HEX, gutterSvg } = await import('../connColor');
+  assert.deepEqual(Object.keys(CONN_HEX), Object.keys(CONN_COLORS), 'hex for every color');
+  assert.ok(Buffer.from(gutterSvg('teal').split(',')[1], 'base64').toString().includes('fill="#11a8cd"'), 'gutter svg uses the hex');
   assert.ok(formHtml('csp').includes('data-color="teal" title="Teal"'), 'all swatches rendered');
   const html = formHtml('csp', { ...toConnection(ok), color: 'green' });
   assert.ok(html.includes('class="sw on" data-color="green"') && html.includes('id="color" value="green"'), 'color swatch selected');

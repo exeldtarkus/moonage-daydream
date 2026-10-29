@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ConnectionInfo } from './db';
-import { CONN_COLORS, bannerText } from './connColor';
+import { CONN_COLORS, bannerText, gutterSvg } from './connColor';
 import type { ConnColor } from './connColor';
 
 /** warna koneksi -> warna tema (charts.*): terbaca di tema gelap dan terang */
@@ -21,8 +21,9 @@ export class ConnBanner implements vscode.Disposable {
       const tc = themeColor(color);
       t = vscode.window.createTextEditorDecorationType({
         after: {
-          margin: '0 0 0 2em', fontStyle: 'italic', color: tc ?? new vscode.ThemeColor('editorCodeLens.foreground'),
-          border: '1px solid', borderColor: tc ?? new vscode.ThemeColor('editorCodeLens.foreground'), textDecoration: 'none; border-radius: 3px; padding: 0 6px',
+          // kalem: transparan + border tipis, tetap terbaca tanpa menarik perhatian dari query
+          margin: '0 0 0 3em', fontStyle: 'italic', color: tc ?? new vscode.ThemeColor('editorCodeLens.foreground'),
+          border: '1px solid', borderColor: tc ?? new vscode.ThemeColor('editorCodeLens.foreground'), textDecoration: 'none; border-radius: 10px; padding: 0 8px; opacity: .6; font-size: .9em',
         },
         rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
       });
@@ -35,7 +36,9 @@ export class ConnBanner implements vscode.Disposable {
     let t = this.borders.get(color);
     if (!t) {
       const tc = themeColor(color);
-      t = vscode.window.createTextEditorDecorationType({ isWholeLine: true, borderWidth: '0 0 0 3px', borderStyle: 'solid', borderColor: tc, overviewRulerColor: tc, overviewRulerLane: vscode.OverviewRulerLane.Left });
+      // garis di gutter (bukan border di samping teks) + penanda di scrollbar
+      t = vscode.window.createTextEditorDecorationType({ isWholeLine: true, gutterIconPath: vscode.Uri.parse(gutterSvg(color)), gutterIconSize: 'cover',
+        overviewRulerColor: tc, overviewRulerLane: vscode.OverviewRulerLane.Left });
       this.borders.set(color, t);
     }
     return t;
