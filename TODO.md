@@ -46,10 +46,10 @@
 - [x] Virtual scroll di grid (>300 baris: baris di <template>, hanya sekitar viewport yang dipasang; filter / sort / seleksi / edit tetap atas semua baris)
 
 ## Database lain (lewat `src/db.ts` → `drivers`)
-- [ ] MySQL / MariaDB
-- [ ] PostgreSQL
-- [ ] SQLite
-- [ ] MongoDB (bukan SQL: query lewat find / aggregate JSON, explorer database → collection; server test di Docker lalu dibersihkan)
+- [x] MySQL / MariaDB (mysql2; cancel = KILL QUERY; tanggal sebagai teks)
+- [x] PostgreSQL (pg; cancel = pg_cancel_backend)
+- [x] SQLite (sql.js wasm inline, file dibaca / ditulis per query; tanpa cancel)
+- [x] MongoDB (query gaya mongosh `db.c.find(...)`, explorer database → collection, cancel = killOp; tanpa transaksi manual)
 - [x] SQL Server Windows Authentication (NTLM: domain + user + password; SSO user Windows aktif tidak didukung tedious)
 
 ## Rilis

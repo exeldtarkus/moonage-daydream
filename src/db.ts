@@ -1,6 +1,12 @@
 import { mssqlDriver } from './mssql';
+import { mariadbDriver, mysqlDriver } from './mysql';
+import { mongoDriver } from './mongo';
+import { postgresDriver } from './postgres';
+import { sqliteDriver } from './sqlite';
 
-export type DbType = 'mssql';
+export type DbType = 'mssql' | 'mysql' | 'mariadb' | 'postgres' | 'sqlite' | 'mongodb';
+/** dialek untuk literal / script UPDATE */
+export type Dialect = 'mssql' | 'mysql' | 'postgres' | 'sqlite' | 'mongodb';
 
 export interface ConnectionInfo {
   name: string;
@@ -16,6 +22,10 @@ export interface ConnectionInfo {
   /** mssql: 'windows' = Windows authentication lewat NTLM (domain + user + password); default SQL Server login */
   auth?: 'sql' | 'windows';
   domain?: string;
+  /** sqlite: path file database (host / port / user tidak dipakai) */
+  file?: string;
+  /** mongodb: database tempat user dibuat (mis. admin) */
+  authSource?: string;
 }
 
 // shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil
@@ -71,6 +81,21 @@ export interface Session {
 export interface Driver {
   label: string;
   defaultPort: number;
+  dialect: Dialect;
+  /** bahasa sql-formatter; kosong = tidak bisa di-format (MongoDB) */
+  formatter?: 'transactsql' | 'mysql' | 'mariadb' | 'postgresql' | 'sqlite';
+  /** quote identifier: [x] / `x` / "x" */
+  quote(name: string): string;
+  /** schema bila tidak ditulis: dbo / public / main; '' = schema sama dengan database (MySQL) */
+  defaultSchema: string;
+  /** database bila koneksi tidak menyebut database */
+  defaultDb: string;
+  /** Test connection: satu baris (server, database) */
+  testSql: string;
+  /** false = tidak ada transaksi manual (lens Auto-commit / Manual disembunyikan) */
+  transactions?: false;
+  /** auto limit boleh untuk statement ini; default aturan SQL (autoLimitable) */
+  autoLimitable?(stmts: string[]): boolean;
   /** `signal` abort = cancel query di server */
   /** skip: baris pertama sebanyak ini dilewati (Load more); limit: ambil sekian baris pertama lalu hentikan query di server (hanya untuk satu SELECT, lihat autoLimitable) */
   run(conn: ConnectionInfo, password: string, sql: string, signal?: AbortSignal, limit?: number, skip?: number): Promise<QueryResult>;
@@ -82,7 +107,9 @@ export interface Driver {
    * execution plan: estimated = query tidak dijalankan; actual = query dijalankan (pemanggil membatasi ke SELECT).
    * Dijalankan dalam transaksi yang selalu di-rollback. xml = satu plan XML per batch / statement.
    */
-  plan(conn: ConnectionInfo, password: string, sql: string, mode: 'estimated' | 'actual', signal?: AbortSignal): Promise<{ xml: string[]; result: QueryResult }>;
+  plan?(conn: ConnectionInfo, password: string, sql: string, mode: 'estimated' | 'actual', signal?: AbortSignal): Promise<{ xml: string[]; result: QueryResult }>;
+  /** tanpa plan(): Explain / Analyze = statement EXPLAIN biasa (hasilnya grid); undefined = mode tidak didukung */
+  explain?(sql: string, mode: 'estimated' | 'actual'): string | undefined;
   /**
    * export All Data: semua baris result set pertama diteruskan ke sink tanpa limit / MAX_ROWS.
    * row() boleh mengembalikan Promise: query di-pause sampai selesai (backpressure file). Mengembalikan jumlah baris.
@@ -104,7 +131,15 @@ export interface Driver {
 // tambah DB lain: buat file driver baru lalu daftarkan di sini (+ tambah ke DbType)
 export const drivers: Record<DbType, Driver> = {
   mssql: mssqlDriver,
+  mysql: mysqlDriver,
+  mariadb: mariadbDriver,
+  postgres: postgresDriver,
+  sqlite: sqliteDriver,
+  mongodb: mongoDriver,
 };
 
 /** alamat untuk ditampilkan: host\instance atau host:port */
-export const address = (c: ConnectionInfo) => (c.instance ? `${c.host}\\${c.instance}` : `${c.host}:${c.port}`);
+export const address = (c: ConnectionInfo) => (c.type === 'sqlite' ? c.file ?? '' : c.instance ? `${c.host}\\${c.instance}` : `${c.host}:${c.port}`);
+
+/** schema objek yang tidak ditulis di SQL */
+export const schemaOf = (c: ConnectionInfo, db: string) => drivers[c.type].defaultSchema || db;

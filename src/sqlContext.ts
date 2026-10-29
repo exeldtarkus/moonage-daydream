@@ -1,3 +1,4 @@
+import type { Dialect } from './db';
 /** bagian identifier sebelum kursor, mis. `[My DB].dbo.AG` -> { parts: ['My DB', 'dbo'], word: 'AG' } */
 export function identifierChain(before: string): { parts: string[]; word: string } {
   const m = /((?:(?:\[[^\]]*\]|[\w$#@]+)?\.){0,2})(\[[^\]]*|[\w$#@]*)$/.exec(before);
@@ -7,9 +8,9 @@ export function identifierChain(before: string): { parts: string[]; word: string
 }
 
 /** nama yang butuh kurung siku di SQL Server (spasi, diawali angka, karakter khusus) */
-export const ident = (name: string) => (/^[A-Za-z_][\w$#@]*$/.test(name) ? name : `[${name.replace(/]/g, ']]')}]`);
+export const ident = (name: string, quote = (n: string) => `[${n.replace(/]/g, ']]')}]`) => (/^[A-Za-z_][\w$#@]*$/.test(name) ? name : quote(name));
 
-/** isi string '...', "...", [..], komentar -- dan /* *\/ diganti spasi (panjang sama): `;`, `@`, `#` di hasilnya pasti kode. keepQuoted: hanya komentar yang diganti */
+/** isi string '...', "...", [..], `..`, komentar -- dan /* *\/ diganti spasi (panjang sama): `;`, `@`, `#` di hasilnya pasti kode. keepQuoted: hanya komentar yang diganti */
 export function maskSql(sql: string, keepQuoted = false): string {
   let out = '';
   for (let i = 0; i < sql.length; ) {
@@ -17,7 +18,7 @@ export function maskSql(sql: string, keepQuoted = false): string {
     let end: number;
     if (two === '--') end = (sql.indexOf('\n', i) + 1 || sql.length + 1) - 1;
     else if (two === '/*') end = (sql.indexOf('*/', i + 2) + 1 || sql.length - 1) + 1;
-    else if (sql[i] === "'" || sql[i] === '"' || sql[i] === '[') {
+    else if (sql[i] === "'" || sql[i] === '"' || sql[i] === '[' || sql[i] === '`') {
       const close = sql[i] === '[' ? ']' : sql[i];
       end = i + 1;
       while (end < sql.length && !(sql[end] === close && sql[end + 1] !== close)) end += sql[end] === close ? 2 : 1;
@@ -102,7 +103,9 @@ export function missingSemicolons(sql: string): { start: number; end: number }[]
 }
 
 const NOT_ALIAS = /^(where|join|inner|left|right|full|outer|cross|on|group|order|having|union|except|intersect|with|as|go|select|set|values|option|for|apply|pivot|unpivot)$/i;
-const NAME = String.raw`(?:\[[^\]]*\]|[\w$#@]+)`;
+const NAME = String.raw`(?:\[[^\]]*\]|"[^"]*"|\`[^\`]*\`|[\w$#@]+)`;
+/** [x] / "x" / `x` -> x */
+const unquote = (p: string) => p.replace(/^[[`"]|[\]`"]$/g, '');
 
 /** tabel di FROM / JOIN statement: `Shop..T p`, `dbo.T AS x`, `[My DB].dbo.T`, `FROM a x, b y` -> parts (db, schema, nama) + alias */
 export function tableRefs(stmt: string): { parts: string[]; alias?: string }[] {
@@ -112,9 +115,9 @@ export function tableRefs(stmt: string): { parts: string[]; alias?: string }[] {
   const more = new RegExp(String.raw`\s*,\s*${ref}`, 'iy'); // FROM a, b, c (koma di level FROM)
   const out: { parts: string[]; alias?: string }[] = [];
   const push = (raw: string, alias?: string) => {
-    const parts = raw.split('.').map((p) => p.trim().replace(/^\[|\]$/g, ''));
+    const parts = raw.split('.').map((p) => unquote(p.trim()));
     if (!parts[parts.length - 1]) return false; // `FROM db.` belum selesai diketik
-    out.push({ parts, alias: alias && !NOT_ALIAS.test(alias) ? alias.replace(/^\[|\]$/g, '') : undefined });
+    out.push({ parts, alias: alias && !NOT_ALIAS.test(alias) ? unquote(alias) : undefined });
     return true;
   };
   for (let m; (m = re.exec(stmt)); ) {
@@ -179,36 +182,53 @@ export function singleSelect(stmts: string[]): boolean {
   return /^\s*(select|with)\b/i.test(code) && !/\binto\b/i.test(code);
 }
 
-const NUMERIC_TYPE = /^(tinyint|smallint|int|bigint|decimal|numeric|float|real|money|smallmoney)$/;
+const NUMERIC_TYPE = /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|money|smallmoney|int2|int4|int8|float4|float8)\b/;
+const BOOL_TYPE = /^(bit|bool|boolean)\b/;
 const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+/** teks -> literal string dialek: N'..' (mssql), '..' (MySQL juga escape backslash) */
+const text = (v: string, d: Dialect) => (d === 'mssql' ? `N'${v.replace(/'/g, "''")}'` : `'${(d === 'mysql' ? v.replace(/\\/g, '\\\\') : v).replace(/'/g, "''")}'`);
 
-/** literal T-SQL untuk nilai dari driver (kunci WHERE): angka apa adanya, tanggal 'yyyy-mm-ddThh:mm:ss.fff', biner 0x.., teks N'..' */
-export function sqlLiteral(v: unknown): string {
+/** literal untuk nilai dari driver (kunci WHERE): angka apa adanya, tanggal 'yyyy-mm-ddThh:mm:ss.fff', biner 0x.. / X'..', teks N'..' / '..' */
+export function sqlLiteral(v: unknown, d: Dialect = 'mssql'): string {
   if (v === null || v === undefined) return 'NULL';
   if (typeof v === 'number' || typeof v === 'bigint') return String(v);
-  if (typeof v === 'boolean') return v ? '1' : '0';
+  if (typeof v === 'boolean') return d === 'postgres' ? String(v).toUpperCase() : v ? '1' : '0';
   if (v instanceof Date) {
-    // mssql membaca datetime sebagai UTC: tulis balik komponen UTC tanpa zona
+    // mssql membaca datetime sebagai UTC: tulis balik komponen UTC tanpa zona (driver lain mengembalikan tanggal sebagai teks)
     return `'${v.getUTCFullYear()}-${pad(v.getUTCMonth() + 1)}-${pad(v.getUTCDate())}T${pad(v.getUTCHours())}:${pad(v.getUTCMinutes())}:${pad(v.getUTCSeconds())}.${pad(v.getUTCMilliseconds(), 3)}'`;
   }
-  if (v instanceof Uint8Array) return `0x${Buffer.from(v).toString('hex').toUpperCase()}`;
-  return `N'${String(v).replace(/'/g, "''")}'`;
+  if (v instanceof Uint8Array) {
+    const hex = Buffer.from(v).toString('hex').toUpperCase();
+    return d === 'mssql' ? `0x${hex}` : d === 'postgres' ? `'\\x${hex}'::bytea` : `X'${hex}'`;
+  }
+  return text(String(v), d);
 }
 
-/** nilai baru yang diketik user di grid -> literal sesuai tipe kolom; `NULL` = NULL; angka / bit divalidasi */
-export function editLiteral(text: string | null, type: string): string {
-  if (text === null || text === 'NULL') return 'NULL';
+/** nilai baru yang diketik user di grid -> literal sesuai tipe kolom; `NULL` = NULL; angka / bit / boolean divalidasi */
+export function editLiteral(value: string | null, type: string, d: Dialect = 'mssql'): string {
+  if (value === null || value === 'NULL') return 'NULL';
   const t = type.toLowerCase();
   if (NUMERIC_TYPE.test(t)) {
-    if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(text.trim())) throw new Error(`"${text}" is not a number (${type})`);
-    return text.trim();
+    if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(value.trim())) throw new Error(`"${value}" is not a number (${type})`);
+    return value.trim();
   }
-  if (t === 'bit') {
-    const b = text.trim().toLowerCase();
-    if (!['0', '1', 'true', 'false'].includes(b)) throw new Error(`"${text}" is not a bit (0 / 1 / true / false)`);
-    return b === '1' || b === 'true' ? '1' : '0';
+  if (BOOL_TYPE.test(t)) {
+    const b = value.trim().toLowerCase();
+    if (!['0', '1', 'true', 'false'].includes(b)) throw new Error(`"${value}" is not a ${t} (0 / 1 / true / false)`);
+    const on = b === '1' || b === 'true';
+    return d === 'postgres' ? (on ? 'TRUE' : 'FALSE') : on ? '1' : '0';
   }
-  return `N'${text.replace(/'/g, "''")}'`;
+  return text(value, d);
+}
+
+/**
+ * auto limit / Load more untuk MySQL, PostgreSQL, SQLite: `LIMIT n OFFSET skip` di akhir SELECT.
+ * undefined = statement sudah punya LIMIT / FOR UPDATE di level atas (dijalankan apa adanya).
+ */
+export function addLimit(stmt: string, limit: number, skip = 0): string | undefined {
+  const sql = splitStatements(stmt)[0]?.replace(/;$/, '') ?? stmt;
+  if (topLevel(maskSql(sql), /\b(limit|for\s+(update|share|no\s+key|key)|lock\s+in)\b/).length) return undefined;
+  return `${sql}\nLIMIT ${limit - skip}${skip ? ` OFFSET ${skip}` : ''}`; // baris baru: komentar -- di baris terakhir tidak menelan LIMIT
 }
 
 export interface CellEdit {
@@ -221,8 +241,8 @@ export interface CellEdit {
  * script UPDATE untuk edit di grid: satu UPDATE per baris (kolom yang diubah), WHERE semua kolom primary key (nilai asli),
  * di dalam BEGIN TRAN; COMMIT / ROLLBACK dibiarkan ke user (tidak pernah dijalankan otomatis).
  */
-export function updateScript(table: string, columns: string[], types: string[], rows: unknown[][], pk: string[], edits: CellEdit[]): string {
-  const q = (n: string) => `[${n.replace(/]/g, ']]')}]`;
+export function updateScript(table: string, columns: string[], types: string[], rows: unknown[][], pk: string[], edits: CellEdit[],
+  q: (n: string) => string = (n) => `[${n.replace(/]/g, ']]')}]`, d: Dialect = 'mssql'): string {
   const pkIdx = pk.map((k) => {
     const i = columns.findIndex((c) => c.toLowerCase() === k.toLowerCase());
     if (i < 0) throw new Error(`Primary key column ${k} must be part of the SELECT to edit rows`);
@@ -234,9 +254,9 @@ export function updateScript(table: string, columns: string[], types: string[], 
     const row = rows[r];
     if (!row) throw new Error(`Row ${r + 1} is not loaded`);
     if (es.some((e) => pkIdx.includes(e.col))) throw new Error('Primary key columns cannot be edited here');
-    const set = es.map((e) => `${q(columns[e.col])} = ${editLiteral(e.value, types[e.col] ?? '')}`).join(', ');
-    const where = pkIdx.map((i) => (row[i] === null ? `${q(columns[i])} IS NULL` : `${q(columns[i])} = ${sqlLiteral(row[i])}`)).join(' AND ');
+    const set = es.map((e) => `${q(columns[e.col])} = ${editLiteral(e.value, types[e.col] ?? '', d)}`).join(', ');
+    const where = pkIdx.map((i) => (row[i] === null ? `${q(columns[i])} IS NULL` : `${q(columns[i])} = ${sqlLiteral(row[i], d)}`)).join(' AND ');
     return `UPDATE ${table}\nSET ${set}\nWHERE ${where};`;
   });
-  return `-- Generated by Moonage Daydream from ${edits.length} edited cell(s) in ${stmts.length} row(s). Review before running.\nBEGIN TRAN;\n\n${stmts.join('\n\n')}\n\n-- Check the affected rows, then run ONE of:\n-- COMMIT;\n-- ROLLBACK;\n`;
+  return `-- Generated by Moonage Daydream from ${edits.length} edited cell(s) in ${stmts.length} row(s). Review before running.\n${d === 'mssql' ? 'BEGIN TRAN' : 'BEGIN'};\n\n${stmts.join('\n\n')}\n\n-- Check the affected rows, then run ONE of:\n-- COMMIT;\n-- ROLLBACK;\n`;
 }

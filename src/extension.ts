@@ -3,11 +3,12 @@ import { Connections } from './connections';
 import { Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, PAGE_ROWS, Session, address, drivers } from './db';
+import { ConnectionInfo, PAGE_ROWS, Session, address, drivers, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, newSqlFile } from './sqlFiles';
 import { SqlCompletion } from './completion';
+import { driverLog } from './log';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { splitBatches } from './mssql';
@@ -36,6 +37,7 @@ const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : St
 
 export function activate(ctx: vscode.ExtensionContext) {
   log = vscode.window.createOutputChannel('Moonage Daydream', { log: true });
+  driverLog.error = (m) => log.error(m);
   conns = new Connections(ctx);
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'moonageDaydream.selectConnection';
@@ -276,7 +278,14 @@ function formatEdits(doc: vscode.TextDocument, range: vscode.Range, o: vscode.Fo
   const text = doc.getText(r);
   if (!text.trim()) return [];
   try {
+    const c = fileConn(doc.uri);
+    const language = c ? drivers[c.type].formatter : 'transactsql';
+    if (!language) {
+      vscode.window.showInformationMessage(`Formatting is not available for ${drivers[c!.type].label}`);
+      return [];
+    }
     const out = formatSql(text, {
+      language,
       keywordCase: cfg.get('keywordCase', 'upper'), leadingComma: cfg.get('leadingComma', true), semicolonNewline: cfg.get('semicolonNewline', true), tabWidth: o.tabSize, useTabs: !o.insertSpaces,
     });
     // seluruh dokumen: akhiri dengan satu newline; selection: pertahankan newline akhir bila ada
@@ -347,8 +356,8 @@ function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
     const args = [doc.uri, seg.start, seg.end];
     if (!q) {
       lenses.push(new vscode.CodeLens(r, { title: '$(play) Execute', command: 'moonageDaydream.runStatement', arguments: args, tooltip: 'Run this statement' }));
-      lenses.push(new vscode.CodeLens(r, { title: '$(list-tree) Explain', command: 'moonageDaydream.explain', arguments: args, tooltip: 'Estimated execution plan (the statement is not executed)' }));
-      if (singleSelect([doc.getText(new vscode.Range(doc.positionAt(seg.start), doc.positionAt(seg.end)))])) {
+      if (canExplain(c, 'estimated')) lenses.push(new vscode.CodeLens(r, { title: '$(list-tree) Explain', command: 'moonageDaydream.explain', arguments: args, tooltip: 'Estimated execution plan (the statement is not executed)' }));
+      if (canExplain(c, 'actual') && singleSelect([doc.getText(new vscode.Range(doc.positionAt(seg.start), doc.positionAt(seg.end)))])) {
         lenses.push(new vscode.CodeLens(r, { title: '$(pulse) Analyze', command: 'moonageDaydream.analyze', arguments: args, tooltip: 'Actual execution plan (runs the SELECT inside a rolled back transaction)' }));
       }
     }
@@ -358,6 +367,12 @@ function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
   return lenses;
 }
 
+/** driver punya plan SQL Server, atau statement EXPLAIN untuk mode itu (SQLite: tanpa Analyze) */
+const canExplain = (c: ConnectionInfo | undefined, mode: 'estimated' | 'actual') => {
+  const d = c && drivers[c.type];
+  return !d || !!d.plan || !!d.explain?.('SELECT 1', mode);
+};
+
 function pushConn(lenses: vscode.CodeLens[], r: vscode.Range, doc: vscode.TextDocument, c: ConnectionInfo | undefined) {
   lenses.push(new vscode.CodeLens(r, { title: `$(server) ${c?.name ?? 'Select connection'}`, command: 'moonageDaydream.setFileConnection', arguments: [doc.uri] }));
   lenses.push(new vscode.CodeLens(r, { title: `$(database) ${c?.database || 'default database'}`, command: 'moonageDaydream.setFileDatabase', arguments: [doc.uri] }));
@@ -365,6 +380,7 @@ function pushConn(lenses: vscode.CodeLens[], r: vscode.Range, doc: vscode.TextDo
   const key = doc.uri.toString();
   const tx = txs.get(key);
   const manual = txMode(key) === 'manual';
+  if (c && drivers[c.type].transactions === false) return;
   lenses.push(new vscode.CodeLens(r, {
     title: manual ? (tx?.session.open ? `$(lock) TX open (${tx.statements})` : '$(lock) Manual commit') : '$(unlock) Auto-commit',
     command: 'moonageDaydream.toggleTransactionMode', arguments: [doc.uri], tooltip: 'Transaction mode for this file (click to switch Auto-commit / Manual)',
@@ -727,8 +743,17 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
   await results.show(title, { loading: true, uri: key });
   let outcome: Outcome;
   try {
-    const r = await drivers[c.type].plan(c, await conns.password(c.name), t.text, mode, run.ac.signal);
-    outcome = { plan: r.xml.flatMap(parsePlan), mode, xml: r.xml, durationMs: r.result.durationMs, rows: mode === 'actual' ? r.result.resultSets.map((rs) => rs.total) : undefined };
+    const d = drivers[c.type];
+    const pw = await conns.password(c.name);
+    if (d.plan) {
+      const r = await d.plan(c, pw, t.text, mode, run.ac.signal);
+      outcome = { plan: r.xml.flatMap(parsePlan), mode, xml: r.xml, durationMs: r.result.durationMs, rows: mode === 'actual' ? r.result.resultSets.map((rs) => rs.total) : undefined };
+    } else {
+      // MySQL / PostgreSQL / SQLite: EXPLAIN per statement, hasilnya tampil sebagai grid
+      if (!canExplain(c, mode)) throw new Error(`${mode === 'actual' ? 'Analyze' : 'Explain'} is not available for ${d.label}`);
+      const sql = stmts.map((st) => d.explain?.(st.replace(/;\s*$/, ''), mode)).join(';\n');
+      outcome = { result: await d.run(c, pw, sql, run.ac.signal) };
+    }
   } catch (e) {
     log.error(`explainQuery ${mode} - EXCEPTION CAUGHT | ${c.name}${run.ac.signal.aborted ? ' (cancelled by user)' : ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     outcome = { error: run.ac.signal.aborted ? 'Query cancelled.' : errMsg(e) };
@@ -758,14 +783,18 @@ export async function editScript(m: ResultMessage): Promise<vscode.TextDocument 
     if (refs.length !== 1) throw new Error('Editing needs a SELECT from exactly one table (no JOIN)');
     const parts = refs[0].parts;
     const name = parts[parts.length - 1];
-    const db = parts.length === 3 ? parts[0] : c.database || 'master';
+    const d = drivers[c.type];
+    // MySQL: `db.tabel` (schema = database); lainnya `db.schema.tabel` / `schema.tabel`
+    const db = parts.length === 3 || (d.dialect === 'mysql' && parts.length === 2) ? parts[0] : c.database || d.defaultDb;
     const pw = await conns.password(c.name);
-    const schema = (parts.length >= 2 && parts[parts.length - 2])
-      || (await drivers[c.type].objects(c, pw, db, 'table')).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || 'dbo';
-    const pk = await drivers[c.type].primaryKey(c, pw, db, { schema, name });
+    const schema = d.dialect === 'mysql' ? db : (parts.length >= 2 && parts[parts.length - 2])
+      || (await d.objects(c, pw, db, 'table')).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
+    const pk = await d.primaryKey(c, pw, db, { schema, name });
     if (!pk.length) throw new Error(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
-    const q = (n: string) => `[${n.replace(/]/g, ']]')}]`;
-    const script = updateScript(`${q(db)}.${q(schema)}.${q(name)}`, rs.columns, rs.types ?? [], rs.rows, pk, m.edits);
+    const q = d.quote;
+    const table = d.dialect === 'mssql' ? `${q(db)}.${q(schema)}.${q(name)}` : d.dialect === 'mysql' ? `${q(db)}.${q(name)}`
+      : d.dialect === 'postgres' ? `${q(schema)}.${q(name)}` : q(name);
+    const script = updateScript(table, rs.columns, rs.types ?? [], rs.rows, pk, m.edits, q, d.dialect);
     const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: script });
     await conns.bind(doc.uri.toString(), { conn: c.name, db: c.database || undefined });
     await vscode.window.showTextDocument(doc, { preview: false });
@@ -851,7 +880,7 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
         const o = outcome;
         const autoLimit = vscode.workspace.getConfiguration('moonageDaydream.query', doc).get('autoLimit', 100);
         // satu SELECT tanpa TOP: ambil autoLimit baris pertama lalu hentikan di server
-        const limitFor = (stmts: string[]) => (autoLimit > 0 && autoLimitable(stmts) ? autoLimit : undefined);
+        const limitFor = (stmts: string[]) => (autoLimit > 0 && (drivers[c.type].autoLimitable ?? autoLimitable)(stmts) ? autoLimit : undefined);
         if (!('parts' in o)) {
           if (manual) {
             const tx = await txFor(key, c, pw);

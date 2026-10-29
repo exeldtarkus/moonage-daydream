@@ -571,18 +571,25 @@
     "watch": "tsc -watch -p ./",
     "dev": "npm run compile && bash scripts/dev.sh",
     "test:real": "npm run compile && bash scripts/real-test.sh",
+    "test:servers": "npm run compile && bash scripts/test-servers.sh",
     "test": "npm run compile && node --test out/test/*.test.js",
     "package": "vsce package --skip-license",
     "install:local": "node scripts/install-local.js",
     "bundle": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --external:./test/real --format=cjs --platform=node --target=node18 --minify"
   },
   "dependencies": {
+    "mongodb": "^6.21.0",
     "mssql": "^12.7.13",
-    "sql-formatter": "^15.9.0"
+    "mysql2": "^3.24.6",
+    "pg": "^8.23.1",
+    "sql-formatter": "^15.9.0",
+    "sql.js": "^1.15.2"
   },
   "devDependencies": {
     "@types/mssql": "^12.3.0",
     "@types/node": "^20.19.43",
+    "@types/pg": "^8.23.1",
+    "@types/sql.js": "^1.4.11",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",

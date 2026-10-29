@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { Connections } from './connections';
-import { Column, ConnectionInfo, DbObject, ObjectKind, drivers } from './db';
+import { Column, ConnectionInfo, DbObject, ObjectKind, drivers, schemaOf } from './db';
 import { ident, identifierChain, statementAt, tableRefs } from './sqlContext';
 
 type Obj = DbObject & { kind: ObjectKind };
@@ -76,19 +76,21 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
     const lists = await Promise.all(refs.map(async (r) => {
       const name = r.parts[r.parts.length - 1];
       const db = r.parts.length === 3 ? r.parts[0] : current;
-      // tanpa schema: cari schema tabel itu di database-nya (default dbo)
-      const schema = (r.parts.length >= 2 && r.parts[r.parts.length - 2])
-        || (await this.objects(c, db)).find((o) => o.name.toLowerCase() === name.toLowerCase())?.schema || 'dbo';
-      const cols = await this.cached(`${c.name}\n${db}\n${schema}.${name}`, async () =>
-        drivers[c.type].columns(c, await this.conns.password(c.name), db, { schema, name }));
+      // tanpa schema: cari schema tabel itu di database-nya (default dbo / public / main; MySQL: schema = database)
+      const mysql = drivers[c.type].dialect === 'mysql';
+      const tdb = mysql && r.parts.length === 2 ? r.parts[0] : db;
+      const schema = mysql ? tdb : (r.parts.length >= 2 && r.parts[r.parts.length - 2])
+        || (await this.objects(c, db)).find((o) => o.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
+      const cols = await this.cached(`${c.name}\n${tdb}\n${schema}.${name}`, async () =>
+        drivers[c.type].columns(c, await this.conns.password(c.name), tdb, { schema, name }));
       return cols.map((col) => ({ table: r.alias ?? name, col }));
     }));
     return lists.flat();
   }
 
-  private colItem(x: { table: string; col: Column }, range: vscode.Range): vscode.CompletionItem {
+  private colItem(x: { table: string; col: Column }, range: vscode.Range, q: (n: string) => string): vscode.CompletionItem {
     return Object.assign(new vscode.CompletionItem({ label: x.col.name, description: `${x.col.type} · ${x.table}` }, vscode.CompletionItemKind.Field), {
-      insertText: ident(x.col.name), range, sortText: `0${x.col.name}`,
+      insertText: ident(x.col.name, q), range, sortText: `0${x.col.name}`,
     });
   }
 
@@ -100,25 +102,29 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
     const keywords = () => (parts.length ? [] : rank(keywordItems(word, kwCase, range), word));
     const c = this.fileConn(doc.uri);
     if (!c) return keywords();
-    const current = c.database || 'master'; // shortcut: koneksi tanpa database default dianggap master
+    const q = drivers[c.type].quote;
+    const current = c.database || drivers[c.type].defaultDb; // shortcut: koneksi tanpa database dianggap master / mysql / postgres
     try {
       const stmt = statementAt(doc.getText(), doc.offsetAt(pos));
       if (parts.length === 0) {
         const [cols, dbs, objs] = await Promise.all([this.columns(c, current, stmt), this.databases(c), this.objects(c, current)]);
-        return rank([...cols.map((x) => this.colItem(x, range)), ...dbs.map((db) => this.dbItem(db, range)), ...objs.map((o) => this.objItem(o, range, true)),
+        return rank([...cols.map((x) => this.colItem(x, range, q)), ...dbs.map((db) => this.dbItem(db, range, q)), ...objs.map((o) => this.objItem(o, range, true, q)),
           ...keywordItems(word, kwCase, range)], word);
       }
       if (parts.length === 1) {
         // `X.`: X database (-> schema) atau schema di database file ini (-> tabel)
         const [dbs, objs] = await Promise.all([this.databases(c), this.objects(c, current)]);
         const db = dbs.find((d) => d.toLowerCase() === parts[0].toLowerCase());
-        const items = objs.filter((o) => o.schema.toLowerCase() === parts[0].toLowerCase()).map((o) => this.objItem(o, range, false));
+        const items = objs.filter((o) => o.schema.toLowerCase() === parts[0].toLowerCase()).map((o) => this.objItem(o, range, false, q));
         // `alias.` / `tabel.`: kolom tabel itu
-        items.unshift(...(await this.columns(c, current, stmt, parts[0])).map((x) => this.colItem(x, range)));
-        if (db) {
+        items.unshift(...(await this.columns(c, current, stmt, parts[0])).map((x) => this.colItem(x, range, q)));
+        if (db && drivers[c.type].dialect === 'mysql') {
+          // MySQL `db.`: langsung tabel / view database itu
+          items.push(...(await this.objects(c, db)).map((o) => this.objItem(o, range, false, q)));
+        } else if (db) {
           const schemas = [...new Set((await this.objects(c, db)).map((o) => o.schema))].sort();
           items.push(...schemas.map((s) => Object.assign(new vscode.CompletionItem(s, vscode.CompletionItemKind.Folder), {
-            detail: `schema in ${db}`, insertText: ident(s), range,
+            detail: `schema in ${db}`, insertText: ident(s, q), range,
             command: { command: 'editor.action.triggerSuggest', title: '' }, // langsung lanjut ke tabel setelah titik diketik
           })));
         }
@@ -127,22 +133,22 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
       // `DB.schema.` atau `DB..` (schema default dbo)
       const [db, schema] = parts;
       const objs = await this.objects(c, db);
-      return rank(objs.filter((o) => o.schema.toLowerCase() === (schema || 'dbo').toLowerCase()).map((o) => this.objItem(o, range, false)), word);
+      return rank(objs.filter((o) => o.schema.toLowerCase() === (schema || schemaOf(c, db)).toLowerCase()).map((o) => this.objItem(o, range, false, q)), word);
     } catch (e) {
       this.log.error(`SqlCompletion - EXCEPTION CAUGHT | ${c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return keywords();
     }
   }
 
-  private dbItem(db: string, range: vscode.Range): vscode.CompletionItem {
-    return Object.assign(new vscode.CompletionItem(db, vscode.CompletionItemKind.Module), { detail: 'database', insertText: ident(db), range, sortText: `2${db}` });
+  private dbItem(db: string, range: vscode.Range, q: (n: string) => string): vscode.CompletionItem {
+    return Object.assign(new vscode.CompletionItem(db, vscode.CompletionItemKind.Module), { detail: 'database', insertText: ident(db, q), range, sortText: `2${db}` });
   }
 
   /** withSchema: tanpa titik sebelumnya, sisipkan `schema.nama` tapi tetap bisa dicari dengan nama saja */
-  private objItem(o: Obj, range: vscode.Range, withSchema: boolean): vscode.CompletionItem {
+  private objItem(o: Obj, range: vscode.Range, withSchema: boolean, q: (n: string) => string): vscode.CompletionItem {
     const label = withSchema ? `${o.schema}.${o.name}` : o.name;
     return Object.assign(new vscode.CompletionItem({ label, description: o.kind }, o.kind === 'view' ? vscode.CompletionItemKind.Interface : vscode.CompletionItemKind.Class), {
-      insertText: withSchema ? `${ident(o.schema)}.${ident(o.name)}` : ident(o.name),
+      insertText: withSchema ? `${ident(o.schema, q)}.${ident(o.name, q)}` : ident(o.name, q),
       filterText: withSchema ? `${o.name} ${o.schema}.${o.name}` : o.name,
       range,
       sortText: `1${o.name}`,

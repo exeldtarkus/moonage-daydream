@@ -115,6 +115,12 @@ const PLAN_COLUMN = /showplan/i;
 export const mssqlDriver: Driver = {
   label: 'SQL Server',
   defaultPort: 1433,
+  dialect: 'mssql',
+  formatter: 'transactsql',
+  quote: q,
+  defaultSchema: 'dbo',
+  defaultDb: 'master',
+  testSql: 'SELECT @@SERVERNAME AS server, DB_NAME() AS db',
 
   async run(conn, password, text, signal, limit, skip) {
     const p = await pool(conn, password);

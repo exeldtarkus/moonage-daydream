@@ -3,12 +3,12 @@ import type { Connections } from './connections';
 import { ConnectionInfo, drivers } from './db';
 import { FormData, formHtml, toConnection, validate } from './connectionFormHtml';
 
-/** Test connection: `SELECT @@SERVERNAME, DB_NAME()` lewat pool sementara (tidak mengganggu pool koneksi tersimpan) */
+/** Test connection: testSql driver (server, database) lewat pool sementara (tidak mengganggu pool koneksi tersimpan) */
 export async function testConnection(c: ConnectionInfo, password: string, log: vscode.LogOutputChannel): Promise<{ ok: boolean; message: string }> {
   const tmp = { ...c, name: `__test__${Date.now()}` };
   const t = Date.now();
   try {
-    const r = await drivers[c.type].run(tmp, password, 'SELECT @@SERVERNAME AS server, DB_NAME() AS db');
+    const r = await drivers[c.type].run(tmp, password, drivers[c.type].testSql);
     const [server, db] = r.resultSets[0].rows[0] as string[];
     return { ok: true, message: `Connected to ${server} / ${db} in ${Date.now() - t} ms` };
   } catch (e) {

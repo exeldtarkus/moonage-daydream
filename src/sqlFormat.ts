@@ -2,6 +2,8 @@ import { format } from 'sql-formatter';
 import { maskSql } from './sqlContext';
 
 export interface FormatSettings {
+  /** dialek sql-formatter (default transactsql) */
+  language?: 'transactsql' | 'mysql' | 'mariadb' | 'postgresql' | 'sqlite';
   keywordCase: 'upper' | 'lower' | 'preserve';
   leadingComma: boolean;
   /** `;` di baris sendiri */
@@ -25,8 +27,8 @@ export function leadingCommas(sql: string): string {
   return lines.join('\n');
 }
 
-/** format T-SQL (sql-formatter, dialek transactsql); melempar error bila SQL tidak bisa di-parse */
+/** format SQL (sql-formatter, dialek koneksi file; default transactsql); melempar error bila SQL tidak bisa di-parse */
 export function formatSql(sql: string, s: FormatSettings): string {
-  const out = format(sql, { language: 'transactsql', keywordCase: s.keywordCase, newlineBeforeSemicolon: s.semicolonNewline, tabWidth: s.tabWidth, useTabs: s.useTabs });
+  const out = format(sql, { language: s.language ?? 'transactsql', keywordCase: s.keywordCase, newlineBeforeSemicolon: s.semicolonNewline, tabWidth: s.tabWidth, useTabs: s.useTabs });
   return s.leadingComma ? leadingCommas(out) : out;
 }
