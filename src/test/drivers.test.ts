@@ -165,3 +165,19 @@ test('numeric column types of every driver are right aligned', async () => {
   for (const t of ['int', 'decimal(12,0)', 'decimal(12, 2)', 'int unsigned', 'int4', 'float8', 'double', 'long', 'numeric']) assert.ok(NUMERIC.test(t), t);
   for (const t of ['varchar(10)', 'interval', 'point', 'nvarchar(max)']) assert.ok(!NUMERIC.test(t), t);
 });
+
+test('mongodb completion context', async () => {
+  const { mongoContext } = await import('../mongoContext');
+  assert.deepEqual(mongoContext('db.'), { kind: 'db', word: '' });
+  assert.deepEqual(mongoContext('db.getCo'), { kind: 'db', word: 'getCo' });
+  assert.deepEqual(mongoContext('db.orders.fi'), { kind: 'collection', coll: 'orders', word: 'fi' });
+  assert.deepEqual(mongoContext('db.system.views.'), { kind: 'collection', coll: 'system.views', word: '' });
+  assert.deepEqual(mongoContext('db.getCollection("customers").'), { kind: 'collection', coll: 'customers', word: '' });
+  assert.deepEqual(mongoContext('db.getCollection("cu'), { kind: 'collectionName', word: 'cu' });
+  assert.deepEqual(mongoContext('db.getCollection("customers").find({}).li'), { kind: 'cursor', word: 'li' });
+  assert.deepEqual(mongoContext('db.orders.find({ sta'), { kind: 'field', coll: 'orders', word: 'sta' });
+  assert.deepEqual(mongoContext('db.orders.find({ status: "paid", total: { $'), { kind: 'field', coll: 'orders', word: '$' });
+  assert.deepEqual(mongoContext('db.getCollection("customers").find({}).sort({ '), { kind: 'field', coll: 'customers', word: '' });
+  assert.deepEqual(mongoContext('db.orders.find({}); '), { kind: 'top', word: '' });
+  assert.deepEqual(mongoContext('d'), { kind: 'top', word: 'd' });
+});

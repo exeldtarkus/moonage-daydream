@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { Connections } from './connections';
 import { Column, ConnectionInfo, DbObject, ObjectKind, drivers, schemaOf } from './db';
 import { ident, identifierChain, statementAt, tableRefs } from './sqlContext';
+import { COLLECTION_METHODS, CURSOR_METHODS, DB_METHODS, OPERATORS, mongoContext } from './mongoContext';
 
 type Obj = DbObject & { kind: ObjectKind };
 
@@ -94,7 +95,10 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
     });
   }
 
-  async provideCompletionItems(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.CompletionItem[]> {
+  async provideCompletionItems(doc: vscode.TextDocument, pos: vscode.Position, _t?: vscode.CancellationToken, ctx?: vscode.CompletionContext): Promise<vscode.CompletionItem[]> {
+    const mc = this.fileConn(doc.uri);
+    if (mc?.type === 'mongodb') return this.mongo(mc, doc, pos);
+    if (ctx?.triggerCharacter === '"' || ctx?.triggerCharacter === "'") return []; // kutip memicu saran hanya untuk getCollection(" MongoDB
     const { parts, word } = identifierChain(doc.lineAt(pos.line).text.slice(0, pos.character));
     const range = new vscode.Range(pos.translate(0, -word.length - (doc.lineAt(pos.line).text[pos.character - word.length - 1] === '[' ? 1 : 0)), pos);
     const kwCase = vscode.workspace.getConfiguration('moonageDaydream.format', doc).get('keywordCase', 'upper');
@@ -137,6 +141,43 @@ export class SqlCompletion implements vscode.CompletionItemProvider {
     } catch (e) {
       this.log.error(`SqlCompletion - EXCEPTION CAUGHT | ${c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return keywords();
+    }
+  }
+
+  /** MongoDB: method db / collection / cursor, nama collection, field + operator di dalam filter */
+  private async mongo(c: ConnectionInfo, doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.CompletionItem[]> {
+    const offset = doc.offsetAt(pos);
+    const text = doc.getText();
+    // teks statement sampai kursor (statement bisa beberapa baris)
+    const start = text.lastIndexOf(';', offset - 1) + 1;
+    const ctx = mongoContext(text.slice(start, offset));
+    const range = new vscode.Range(pos.translate(0, -ctx.word.length), pos);
+    const db = c.database || drivers.mongodb.defaultDb;
+    const methods = (list: [string, string][], detail: string) => list.map(([name, snippet], i) => Object.assign(
+      new vscode.CompletionItem({ label: name, description: detail }, vscode.CompletionItemKind.Method),
+      { insertText: new vscode.SnippetString(snippet), range, sortText: `1${String(i).padStart(2, '0')}` }));
+    const collections = async (kind: vscode.CompletionItemKind) => (await this.objects(c, db)).map((o) => Object.assign(
+      new vscode.CompletionItem({ label: o.name, description: o.kind === 'view' ? 'view' : 'collection' }, kind),
+      { insertText: o.name, range, sortText: `0${o.name}` }));
+    try {
+      switch (ctx.kind) {
+        case 'db': return rank([...await collections(vscode.CompletionItemKind.Class), ...methods(DB_METHODS, 'db')], ctx.word);
+        case 'collectionName': return rank(await collections(vscode.CompletionItemKind.Class), ctx.word);
+        case 'collection': return methods(COLLECTION_METHODS, `collection ${ctx.coll}`);
+        case 'cursor': return methods(CURSOR_METHODS, 'cursor');
+        case 'field': {
+          const ops = OPERATORS.map((o) => Object.assign(new vscode.CompletionItem(o, vscode.CompletionItemKind.Operator), { range, sortText: `2${o}` }));
+          if (ctx.word.startsWith('$')) return rank(ops, ctx.word);
+          const cols = await this.cached(`${c.name}\n${db}\ndb.${ctx.coll}`, async () =>
+            drivers.mongodb.columns(c, await this.conns.password(c.name), db, { schema: 'db', name: ctx.coll }));
+          return rank([...cols.map((col) => Object.assign(new vscode.CompletionItem({ label: col.name, description: col.type }, vscode.CompletionItemKind.Field),
+            { insertText: /^[A-Za-z_$][\w$]*$/.test(col.name) ? col.name : JSON.stringify(col.name), range, sortText: `0${col.name}` })), ...ops], ctx.word);
+        }
+        default: return [Object.assign(new vscode.CompletionItem({ label: 'db', description: db }, vscode.CompletionItemKind.Module), { range })];
+      }
+    } catch (e) {
+      this.log.error(`SqlCompletion.mongo - EXCEPTION CAUGHT | ${c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+      return ctx.kind === 'collection' ? methods(COLLECTION_METHODS, 'collection') : [];
     }
   }
 

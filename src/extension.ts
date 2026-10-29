@@ -162,7 +162,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.languages.registerDocumentRangeFormattingEditProvider({ language: 'sql' }, {
       provideDocumentRangeFormattingEdits: (doc, range, o) => formatEdits(doc, range, o),
     }),
-    vscode.languages.registerCompletionItemProvider({ language: 'sql' }, completion, '.'),
+    vscode.languages.registerCompletionItemProvider({ language: 'sql' }, completion, '.', '"', "'", '$'),
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, { onDidChangeCodeLenses: lensChanged.event, provideCodeLenses }),
     vscode.window.onDidChangeActiveTextEditor(updateFileStatus),
     vscode.window.registerWebviewViewProvider(VIEW_ID, results),
