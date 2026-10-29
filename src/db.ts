@@ -30,6 +30,14 @@ export interface ConnectionInfo {
   group?: string;
   /** warna koneksi: ikon di Connections + label & garis di editor (lihat connColor.ts) */
   color?: import('./connColor').ConnColor;
+  /** SSL / TLS (mssql: encrypt); undefined = default driver (mssql aktif, lainnya mati) */
+  ssl?: boolean;
+  /** batas waktu connect dalam detik; undefined = default driver (15) */
+  connectTimeout?: number;
+  /** hanya statement read-only (SELECT) yang boleh dijalankan di koneksi ini */
+  readOnly?: boolean;
+  /** Driver settings: opsi tambahan yang diteruskan ke driver (key / value) */
+  options?: Record<string, string>;
 }
 
 // shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil
@@ -53,7 +61,10 @@ export interface ResultSet {
 
 export interface QueryResult {
   resultSets: ResultSet[];
+  /** jumlah baris tiap statement non-SELECT (urut) */
   rowsAffected: number[];
+  /** statement asal tiap rowsAffected (n = nomor statement di teks yang dijalankan); undefined = tidak bisa dipastikan */
+  affected?: ({ n: number; sql: string } | undefined)[];
   messages: string[];
   durationMs: number;
 }
@@ -156,6 +167,12 @@ export function openSession(tx: { session: Session; conn: string; db: string } |
   if (busy) throw new Error('A query is still running in this transaction; wait or cancel it first.');
   return tx.session;
 }
+
+/** Driver settings -> opsi driver: 'true' / 'false' -> boolean, angka -> number, selain itu teks */
+export const typedOptions = (o?: Record<string, string>): Record<string, string | number | boolean> =>
+  Object.fromEntries(Object.entries(o ?? {}).map(([k, v]) => [k, /^(true|false)$/i.test(v) ? v.toLowerCase() === 'true' : /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v]));
+/** batas waktu connect (ms) dari setting koneksi (detik), default 15 detik */
+export const connectMs = (c: ConnectionInfo) => (c.connectTimeout ?? 15) * 1000;
 
 /** alamat untuk ditampilkan: host\instance atau host:port */
 export const address = (c: ConnectionInfo) => (c.type === 'sqlite' ? c.file ?? '' : c.instance ? `${c.host}\\${c.instance}` : `${c.host}:${c.port}`);

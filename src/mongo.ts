@@ -1,8 +1,8 @@
 import * as vm from 'vm';
 import { randomUUID } from 'crypto';
 import { BSON, Binary, Decimal128, Double, Int32, Long, MongoClient, ObjectId } from 'mongodb';
-import type { AbstractCursor, Db, Document } from 'mongodb';
-import { MAX_ROWS } from './db';
+import type { AbstractCursor, Db, Document, MongoClientOptions } from 'mongodb';
+import { MAX_ROWS, connectMs, typedOptions } from './db';
 import type { ConnectionInfo, Driver, QueryResult, ResultSet } from './db';
 
 /** satu perintah shell yang direkam: db.<collection>.<method>(args) atau db.<method>(args), plus chain cursor */
@@ -101,16 +101,21 @@ export function toSet(docs: Document[], total = docs.length, limited?: number): 
 
 const clients = new Map<string, Promise<MongoClient>>();
 
+/** opsi MongoClient: login, TLS, timeout, Driver settings (mis. replicaSet, retryWrites) */
+export const mongoOptions = (conn: ConnectionInfo, password: string): MongoClientOptions => ({
+  ...typedOptions(conn.options),
+  ...(conn.user ? { auth: { username: conn.user, password } } : {}),
+  ...(conn.authSource ? { authSource: conn.authSource } : {}),
+  ...(conn.ssl ? { tls: true, tlsAllowInvalidCertificates: conn.trustServerCertificate } : {}),
+  serverSelectionTimeoutMS: connectMs(conn), connectTimeoutMS: connectMs(conn),
+});
+
 function client(conn: ConnectionInfo, password: string): Promise<MongoClient> {
   let c = clients.get(conn.name);
   if (!c) {
     // host boleh connection string lengkap (mongodb:// / mongodb+srv:// untuk Atlas); user / password dari form
     const url = /^mongodb(\+srv)?:\/\//.test(conn.host) ? conn.host : `mongodb://${conn.host}:${conn.port}`;
-    c = new MongoClient(url, {
-      ...(conn.user ? { auth: { username: conn.user, password } } : {}),
-      ...(conn.authSource ? { authSource: conn.authSource } : {}),
-      serverSelectionTimeoutMS: 15_000,
-    }).connect();
+    c = new MongoClient(url, mongoOptions(conn, password)).connect();
     clients.set(conn.name, c);
     c.catch(() => clients.delete(conn.name)); // gagal connect: coba ulang di run berikutnya (error dilaporkan pemanggil)
   }

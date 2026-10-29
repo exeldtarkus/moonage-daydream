@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { fmtType, poolConfig, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
-import { ident, identifierChain, maskSql, parallelSafe, preview, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
+import { affectedStatements, readOnlyBlocked, txEndStatement, ident, identifierChain, maskSql, parallelSafe, preview, readOnly, splitStatements, statementAt, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
 
 test('splitBatches splits on GO lines only', () => {
   assert.deepEqual(splitBatches('select 1\nGO\nselect 2\n  go 5  \r\nselect 3\ngo -- end\n'), ['select 1', 'select 2', 'select 3']);
@@ -30,9 +30,19 @@ test('render shows result sets, messages and errors', () => {
   assert.ok(html.includes('<td class="num">1</td>') && html.includes('Rows: <b class="count" data-total="2">5000</b>') && html.includes('</svg><b>7ms</b>'), 'numbers right-aligned, footer');
   const typed = render('csp', 't', { result: { resultSets: [{ columns: ['n', 's'], types: ['int', 'nvarchar'], rows: [], total: 0 }], rowsAffected: [], messages: [], durationMs: 1 } });
   assert.ok(typed.includes('<th data-c="0" data-name="n" data-type="int" class="num" title="int"><span class="ty">#</span>n<span class="hb">') && typed.includes('<span class="ty">abc</span>s'), 'type icons');
-  const upd = render('csp', 'local', { result: { resultSets: [], rowsAffected: [2, 3], messages: [], durationMs: 1 } });
-  assert.ok(upd.includes('5 row(s) affected'));
   assert.ok(render('csp', 'local', { error: 'Login failed <x>' }).includes('Login failed &lt;x&gt;'));
+});
+
+test('render: rows affected of every non-SELECT statement, also next to SELECT results', () => {
+  const sel = { columns: ['a'], rows: [[1]], total: 1 };
+  const both = render('csp', 'local', { result: { resultSets: [sel], rowsAffected: [1], messages: [], durationMs: 1 } });
+  assert.ok(both.includes('Result 1') && both.includes('1 row(s) affected'), 'SELECT + UPDATE: UPDATE result shown');
+  const two = render('csp', 'local', { result: { resultSets: [], rowsAffected: [2, 3], messages: [], durationMs: 1 } });
+  assert.ok(two.includes('2 row(s) affected\n3 row(s) affected') && !two.includes('5 row(s)'), 'one line per statement, in order');
+  const ddl = render('csp', 'local', { result: { resultSets: [], rowsAffected: [], messages: [], durationMs: 1 } });
+  assert.ok(ddl.includes('Commands completed successfully.') && !ddl.includes('0 row(s) affected'), 'DDL / EXEC without rows');
+  const printed = render('csp', 'local', { result: { resultSets: [], rowsAffected: [], messages: ['hello'], durationMs: 1 } });
+  assert.ok(printed.includes('hello') && !printed.includes('Commands completed'), 'PRINT output is the result');
 });
 
 test('render loading shows spinner', () => {
@@ -95,6 +105,38 @@ test('statementAt picks the statement under the cursor', () => {
   assert.equal(statementAt("SELECT 'a;b'\nGO\nSELECT 2", 20), 'SELECT 2', 'GO separates, ; in string ignored');
   assert.equal(statementAt("SELECT 'a;b'\nGO\nSELECT 2", 3), "SELECT 'a;b'");
   assert.equal(statementAt('SELECT 1', 4), 'SELECT 1', 'no separator');
+});
+
+test('tableRefs finds the UPDATE target (SET / WHERE columns)', () => {
+  assert.deepEqual(tableRefs('UPDATE dbo.Orders SET  WHERE '), [{ parts: ['dbo', 'Orders'], alias: undefined }]);
+  assert.deepEqual(tableRefs('update [Sales DB]..Orders\nset x = 1\nwhere '), [{ parts: ['Sales DB', '', 'Orders'], alias: undefined }]);
+  assert.deepEqual(tableRefs('UPDATE TOP (10) Orders SET a = 1'), [{ parts: ['Orders'], alias: undefined }], 'UPDATE TOP (n)');
+});
+
+test('tableRefs: UPDATE / DELETE alias target resolves to the FROM table only', () => {
+  assert.deepEqual(tableRefs('UPDATE o SET o.x = 1 FROM dbo.Orders o JOIN Lines l ON l.id = o.id WHERE '),
+    [{ parts: ['dbo', 'Orders'], alias: 'o' }, { parts: ['Lines'], alias: 'l' }]);
+  assert.deepEqual(tableRefs('DELETE o FROM dbo.Orders o WHERE '), [{ parts: ['dbo', 'Orders'], alias: 'o' }]);
+});
+
+test('tableRefs finds the INSERT target (column list)', () => {
+  assert.deepEqual(tableRefs('INSERT INTO SalesDb.dbo.Orders ('), [{ parts: ['SalesDb', 'dbo', 'Orders'], alias: undefined }]);
+  assert.deepEqual(tableRefs('insert Orders (a, b) values (1, 2)'), [{ parts: ['Orders'], alias: undefined }], 'INTO is optional');
+  assert.deepEqual(tableRefs('INSERT INTO Archive (id) SELECT id FROM Orders WHERE '),
+    [{ parts: ['Archive'], alias: undefined }, { parts: ['Orders'], alias: undefined }], 'INSERT ... SELECT');
+});
+
+test('tableRefs finds the DELETE target with or without FROM', () => {
+  assert.deepEqual(tableRefs('DELETE dbo.Orders WHERE '), [{ parts: ['dbo', 'Orders'], alias: undefined }]);
+  assert.deepEqual(tableRefs('DELETE FROM dbo.Orders WHERE '), [{ parts: ['dbo', 'Orders'], alias: undefined }]);
+  assert.deepEqual(tableRefs('DELETE TOP (5) FROM Orders OUTPUT deleted.id WHERE '), [{ parts: ['Orders'], alias: undefined }], 'TOP (n), OUTPUT is no alias');
+  assert.deepEqual(tableRefs("SELECT 'update x set' FROM T"), [{ parts: ['T'], alias: undefined }], 'keywords inside strings ignored');
+});
+
+test('tableRefs: UPDATE that is not a statement target (FOR UPDATE, ON ... UPDATE) is no table', () => {
+  assert.deepEqual(tableRefs('SELECT * FROM t FOR UPDATE NOWAIT'), [{ parts: ['t'], alias: undefined }], 'edit grid needs exactly one table');
+  assert.deepEqual(tableRefs('SELECT * FROM t FOR UPDATE OF t SKIP LOCKED'), [{ parts: ['t'], alias: undefined }]);
+  assert.deepEqual(tableRefs('INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = 2'), [{ parts: ['t'], alias: undefined }]);
 });
 
 test('tableRefs finds FROM / JOIN tables and aliases', () => {
@@ -209,4 +251,72 @@ test('poolConfig: SQL login vs Windows (NTLM)', () => {
 test('poolConfig: no request timeout (mssql default 15 s), long queries stop via Cancel', () => {
   const c = poolConfig({ name: 'n', type: 'mssql', host: 'h', port: 1433, user: 'u', database: '', trustServerCertificate: true }, 'pw');
   assert.equal(c.requestTimeout, 0);
+});
+
+test('readOnly: plain SELECT / WITH only (manual transaction mode does not BEGIN TRAN for them)', () => {
+  assert.ok(readOnly(['SELECT order_no, status\nFROM dbo.orders\nWHERE order_no = \'10001\';']));
+  assert.ok(readOnly(['WITH x AS (SELECT 1 AS a) SELECT a FROM x', 'select * from t']));
+  assert.ok(readOnly(["SELECT 'update x; delete y' AS s -- insert z"]), 'keywords inside strings / comments');
+  assert.ok(!readOnly([]), 'nothing to run');
+  assert.ok(!readOnly(['UPDATE t SET a = 1']));
+  assert.ok(!readOnly(['SELECT 1', 'DELETE FROM t']), 'mixed script');
+  assert.ok(!readOnly(['WITH x AS (SELECT id FROM t) DELETE FROM x']), 'CTE + DML');
+  assert.ok(!readOnly(['SELECT * INTO #t FROM t']), 'SELECT INTO creates a table');
+  assert.ok(!readOnly(['SELECT * FROM t WITH (UPDLOCK, ROWLOCK)']), 'lock hints are held until commit / rollback');
+  assert.ok(!readOnly(['SELECT * FROM t WITH (HOLDLOCK)']) && !readOnly(['SELECT * FROM t (XLOCK)']));
+  assert.ok(!readOnly(['EXEC dbo.proc']) && !readOnly(['DECLARE @a INT']) && !readOnly(['SET XACT_ABORT ON']));
+});
+
+test('affectedStatements: each rows-affected count belongs to its INSERT / UPDATE / DELETE statement', () => {
+  const sel = 'SELECT order_no FROM dbo.orders WHERE order_no = 1';
+  const upd = "UPDATE dbo.orders SET status = 'IF' WHERE order_no = 1";
+  assert.deepEqual(affectedStatements([sel, upd], 1), [{ n: 2, sql: upd }], 'SELECT + UPDATE');
+  assert.deepEqual(affectedStatements(['INSERT INTO t VALUES (1)', sel, 'delete from t where a = 1', 'WITH x AS (SELECT 1 AS a) MERGE t USING x ON 1 = 0 WHEN NOT MATCHED THEN INSERT (a) VALUES (x.a)'], 3)
+    .map((x: { n: number } | undefined) => x?.n), [1, 3, 4], 'INSERT, DELETE, CTE + MERGE in order');
+  assert.deepEqual(affectedStatements(['CREATE TABLE #t (a INT)', 'SELECT 1 AS a INTO #u', 'DROP TABLE #t'], 1).map((x: { n: number } | undefined) => x?.n), [2], 'SELECT INTO reports a count, DDL none');
+  assert.deepEqual(affectedStatements([upd, 'EXEC dbo.proc'], 3), [undefined, undefined, undefined], 'EXEC: counts cannot be matched, no labels');
+  assert.deepEqual(affectedStatements([upd, upd], 1), [undefined], 'count mismatch (SET NOCOUNT, trigger, error): no labels');
+  assert.deepEqual(affectedStatements([upd], 0), []);
+});
+
+test('render: rows affected under a "Statement n" heading with its SQL, blocks separated', () => {
+  const upd = "UPDATE dbo.orders SET status = 'IF' WHERE order_no = '10001'";
+  const html = render('csp', 'local', { result: {
+    resultSets: [{ columns: ['a'], rows: [[1]], total: 1 }], rowsAffected: [1], affected: [{ n: 2, sql: upd }], messages: [], durationMs: 1,
+  } });
+  assert.ok(html.includes(`Statement 2 <span>${preview(upd)}</span>`), 'heading names the UPDATE');
+  assert.ok(html.includes('<div class="aff">1 row(s) affected</div>'));
+  assert.equal((html.match(/<div class="blk">/g) ?? []).length, 2, 'Result 1 and Statement 2 are separate blocks');
+  const plain = render('csp', 'local', { result: { resultSets: [], rowsAffected: [2, 3], affected: [undefined, undefined], messages: [], durationMs: 1 } });
+  assert.ok(plain.includes('2 row(s) affected\n3 row(s) affected') && !plain.includes('<h3>Statement'), 'unmatched counts stay unlabelled');
+});
+
+test('readOnlyBlocked: read-only connections run only statements that do not change data', () => {
+  for (const ok of [['SELECT * FROM t WITH (NOLOCK)'], ['WITH x AS (SELECT 1 AS a) SELECT * FROM x'], ['DECLARE @id INT = 5', 'SELECT * FROM t WHERE id = @id'],
+    ['SET @x = 1'], ['SHOW TABLES'], ['describe t'], ["SELECT 'drop table t' AS s -- delete"], ['SELECT * FROM t WITH (UPDLOCK)']]) {
+    assert.equal(readOnlyBlocked('mssql', ok), undefined, ok.join('; '));
+  }
+  assert.match(readOnlyBlocked('mssql', ['SELECT 1', "UPDATE dbo.orders SET status = 'IF'"])!, /read-only.*UPDATE dbo\.orders/);
+  for (const bad of ['INSERT INTO t VALUES (1)', 'DELETE FROM t', 'MERGE t USING s ON 1=1 WHEN MATCHED THEN DELETE', 'TRUNCATE TABLE t', 'DROP TABLE t',
+    'ALTER TABLE t ADD c INT', 'CREATE TABLE t (a INT)', 'EXEC dbo.proc', 'SELECT * INTO #t FROM t', 'WITH x AS (SELECT 1 AS a) DELETE FROM x',
+    'GRANT SELECT ON t TO u', 'SET GLOBAL max_connections = 10', 'SET XACT_ABORT ON']) {
+    assert.ok(readOnlyBlocked('mssql', [bad]), bad);
+  }
+  assert.equal(readOnlyBlocked('mongodb', ['db.orders.find({ a: 1 }).limit(5)']), undefined);
+  assert.equal(readOnlyBlocked('mongodb', ['db.orders.aggregate([{ $match: {} }])']), undefined);
+  assert.equal(readOnlyBlocked('mongodb', ['db.orders.countDocuments({})']), undefined);
+  for (const bad of ['db.orders.insertOne({ a: 1 })', 'db.orders.updateMany({}, { $set: { a: 1 } })', 'db.orders.deleteOne({})', 'db.orders.drop()',
+    'db.orders.findOneAndUpdate({}, {})', 'db.orders.aggregate([{ $out: "x" }])', 'db.orders.aggregate([{ $merge: { into: "x" } }])', 'db.createCollection("x")']) {
+    assert.ok(readOnlyBlocked('mongodb', [bad]), bad);
+  }
+});
+
+test('txEndStatement: COMMIT / ROLLBACK in the script that ended the transaction', () => {
+  assert.equal(txEndStatement(['COMMIT;']), 'commit');
+  assert.equal(txEndStatement(["UPDATE t SET a = 1", 'commit tran']), 'commit');
+  assert.equal(txEndStatement(['COMMIT TRANSACTION', 'SELECT 1']), 'commit', 'SELECT after the COMMIT');
+  assert.equal(txEndStatement(['ROLLBACK;']), 'rollback');
+  assert.equal(txEndStatement(['COMMIT', 'BEGIN TRAN', 'ROLLBACK WORK']), 'rollback', 'last one wins');
+  assert.equal(txEndStatement(["SELECT 'commit' AS c -- rollback"]), undefined, 'strings / comments');
+  assert.equal(txEndStatement(['UPDATE t SET a = 1', 'SELECT 1/0']), undefined, 'ended by the server (error)');
 });

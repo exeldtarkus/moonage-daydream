@@ -43,6 +43,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "moonageDaydream.importDbcode",
+        "title": "Import Connections from DBCode…",
+        "category": "Moonage Daydream",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "moonageDaydream.editConnection",
         "title": "Edit Connection…",
         "category": "Moonage Daydream",
@@ -339,6 +345,11 @@
           "command": "moonageDaydream.addConnection",
           "when": "view == moonageDaydream.explorer",
           "group": "navigation@1"
+        },
+        {
+          "command": "moonageDaydream.importDbcode",
+          "when": "view == moonageDaydream.explorer",
+          "group": "import@1"
         },
         {
           "command": "moonageDaydream.refreshExplorer",

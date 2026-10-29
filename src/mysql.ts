@@ -1,6 +1,7 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
 import type { ConnectionInfo, Driver, ObjectKind } from './db';
+import { connectMs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
 
@@ -10,8 +11,10 @@ const pools = new Map<string, mysql.Pool>();
 /** quote identifier MySQL: `nama`` aneh` */
 export const quoteMy = (s: string) => `\`${s.replace(/`/g, '``')}\``;
 
-const config = (conn: ConnectionInfo, password: string, db?: string): mysql.ConnectionOptions => ({
-  host: conn.host, port: conn.port, user: conn.user, password, database: (db ?? conn.database) || undefined, connectTimeout: 15_000,
+export const mysqlConfig = (conn: ConnectionInfo, password: string, db?: string): mysql.ConnectionOptions => ({
+  ...typedOptions(conn.options),
+  host: conn.host, port: conn.port, user: conn.user, password, database: (db ?? conn.database) || undefined, connectTimeout: connectMs(conn),
+  ...(conn.ssl ? { ssl: { rejectUnauthorized: !conn.trustServerCertificate } } : {}),
   // beberapa statement sekaligus (seperti batch SQL Server); tanggal sebagai teks apa adanya (tanpa geser zona waktu); BIGINT / DECIMAL tanpa pembulatan
   multipleStatements: true, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true, decimalNumbers: false,
 });
@@ -20,7 +23,7 @@ function pool(conn: ConnectionInfo, password: string, db?: string): mysql.Pool {
   const key = `${conn.name}\n${(db ?? conn.database) || ''}`;
   let p = pools.get(key);
   if (!p) {
-    p = mysql.createPool({ ...config(conn, password, db), connectionLimit: 5 });
+    p = mysql.createPool({ ...mysqlConfig(conn, password, db), connectionLimit: 5 });
     pools.set(key, p);
   }
   return p;
@@ -121,7 +124,7 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
       return link(c, p, async () => c.release());
     },
     async dedicated(conn, password) {
-      const open = () => mysql.createConnection(config(conn, password));
+      const open = () => mysql.createConnection(mysqlConfig(conn, password));
       const c = await open();
       return link(c, open, () => c.end());
     },

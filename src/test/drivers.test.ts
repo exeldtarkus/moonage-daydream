@@ -194,3 +194,32 @@ test('openSession: Load more / Export use the open transaction of the same conne
   assert.equal(openSession({ ...tx, conn: 'b' }, c, false), undefined, 'other connection');
   assert.throws(() => openSession(tx, c, true), /still running/, 'query running in the transaction');
 });
+
+test('driver config: SSL/TLS, trust certificate, connect timeout and driver settings per connection', async () => {
+  const { mysqlConfig } = await import('../mysql');
+  const { pgConfig } = await import('../postgres');
+  const { mongoOptions } = await import('../mongo');
+  const { poolConfig } = await import('../mssql');
+  const base = { name: 'n', host: 'h', port: 1, user: 'u', database: 'd', trustServerCertificate: false };
+
+  const ms = poolConfig({ ...base, type: 'mssql' }, 'pw');
+  assert.equal(ms.options?.encrypt, true, 'SQL Server: encrypt on by default');
+  assert.equal(ms.connectionTimeout, 15_000);
+  const ms2 = poolConfig({ ...base, type: 'mssql', ssl: false, connectTimeout: 30, options: { appName: 'moonage', packetSize: '8192', abortTransactionOnError: 'true' } }, 'pw');
+  assert.deepEqual([ms2.options?.encrypt, ms2.connectionTimeout, ms2.options?.appName, ms2.options?.packetSize, ms2.options?.abortTransactionOnError],
+    [false, 30_000, 'moonage', 8192, true], 'ssl off, timeout, typed driver settings');
+
+  const my = mysqlConfig({ ...base, type: 'mysql' }, 'pw');
+  assert.deepEqual([my.ssl, my.connectTimeout], [undefined, 15_000], 'MySQL: no TLS by default');
+  const my2 = mysqlConfig({ ...base, type: 'mysql', ssl: true, trustServerCertificate: true, connectTimeout: 5, options: { charset: 'utf8mb4' } }, 'pw');
+  assert.deepEqual([my2.ssl, my2.connectTimeout, my2.charset], [{ rejectUnauthorized: false }, 5_000, 'utf8mb4']);
+
+  const pg = pgConfig({ ...base, type: 'postgres', ssl: true, connectTimeout: 7, options: { application_name: 'moonage' } }, 'pw');
+  assert.deepEqual([pg.ssl, pg.connectionTimeoutMillis, pg.application_name], [{ rejectUnauthorized: true }, 7_000, 'moonage'], 'certificate checked unless trusted');
+  assert.equal(pgConfig({ ...base, type: 'postgres' }, 'pw').ssl, undefined);
+
+  const mg = mongoOptions({ ...base, type: 'mongodb', ssl: true, trustServerCertificate: true, connectTimeout: 9, options: { replicaSet: 'rs0', retryWrites: 'false' } }, 'pw');
+  assert.deepEqual([mg.tls, mg.tlsAllowInvalidCertificates, mg.serverSelectionTimeoutMS, mg.connectTimeoutMS, mg.replicaSet, mg.retryWrites],
+    [true, true, 9_000, 9_000, 'rs0', false]);
+  assert.equal(mongoOptions({ ...base, type: 'mongodb' }, 'pw').tls, undefined);
+});

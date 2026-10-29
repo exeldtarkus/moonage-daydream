@@ -1,7 +1,8 @@
 import * as sql from 'mssql';
-import { MAX_ROWS } from './db';
+import { MAX_ROWS, connectMs, typedOptions } from './db';
 import type { ConnectionInfo, Driver, ObjectKind, QueryResult, ResultSet, Session, Sink } from './db';
 import { driverLog } from './log';
+import { readOnly, splitStatements } from './sqlContext';
 
 const errText = (e: unknown) => (e instanceof Error ? `${e.message} - stack-trace: ${e.stack}` : String(e));
 
@@ -37,7 +38,8 @@ export const poolConfig = (conn: ConnectionInfo, password: string): sql.config =
     : { user: conn.user, password }),
   database: conn.database || undefined,
   requestTimeout: 0, // tanpa batas (default mssql 15 detik): query lama dihentikan lewat Cancel, bukan timeout diam-diam
-  options: { encrypt: true, trustServerCertificate: conn.trustServerCertificate, instanceName: conn.instance || undefined },
+  connectionTimeout: connectMs(conn),
+  options: { ...typedOptions(conn.options), encrypt: conn.ssl ?? true, trustServerCertificate: conn.trustServerCertificate, instanceName: conn.instance || undefined },
 });
 
 function pool(conn: ConnectionInfo, password: string): Promise<sql.ConnectionPool> {
@@ -87,13 +89,20 @@ async function collect(req: sql.Request, batch: string, out: QueryResult, signal
   req.on('info', (i: { message: string }) => out.messages.push(i.message)); // PRINT / RAISERROR level rendah
   const cancel = () => req.cancel(); // kirim attention ke server: query dihentikan di server, bukan hanya di client
   signal?.addEventListener('abort', cancel);
-  const r = await new Promise<sql.IResult<unknown>>((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     let err: unknown;
     let cur: ResultSet | undefined;
     let limited = false;
-    req.on('recordset', (cols: { name: string; type?: { declaration?: string } }[]) => out.resultSets.push(cur = {
-      columns: cols.map((c) => c.name), types: cols.map((c) => c.type?.declaration ?? ''), rows: [], total: 0,
-    }));
+    let inSet = false; // rowsaffected berikutnya milik SELECT ini (jumlahnya sudah ada di result set)
+    req.on('recordset', (cols: { name: string; type?: { declaration?: string } }[]) => {
+      inSet = true;
+      out.resultSets.push(cur = { columns: cols.map((c) => c.name), types: cols.map((c) => c.type?.declaration ?? ''), rows: [], total: 0 });
+    });
+    // satu event per statement: hanya UPDATE / INSERT / DELETE / MERGE dll. yang masuk rowsAffected (seperti driver lain)
+    req.on('rowsaffected', (n: number) => {
+      if (inSet) inSet = false;
+      else out.rowsAffected.push(n);
+    });
     req.on('row', (row: unknown[]) => {
       if (!cur || limited) return;
       cur.total++;
@@ -105,12 +114,11 @@ async function collect(req: sql.Request, batch: string, out: QueryResult, signal
       }
     });
     req.on('error', (e: unknown) => (err ??= e)); // mode stream: error lewat event, yang pertama yang dilaporkan
-    const done = (_e: unknown, result?: sql.IResult<unknown>) => (err && !(limited && !signal?.aborted) ? reject(err) : resolve(result ?? ({ rowsAffected: [] } as unknown as sql.IResult<unknown>)));
+    const done = () => (err && !(limited && !signal?.aborted) ? reject(err) : resolve());
     // asBatch: SQL batch biasa (bukan sp_executesql), dibutuhkan agar output SET SHOWPLAN_XML / STATISTICS XML ikut kembali
     if (asBatch) req.batch(batch, done);
     else req.query(batch, done);
   }).finally(() => signal?.removeEventListener('abort', cancel));
-  out.rowsAffected.push(...r.rowsAffected);
 }
 
 /** export All Data: semua baris result set pertama ke sink (lihat Driver.stream); req = pool biasa atau koneksi sesi transaksi */
@@ -216,15 +224,20 @@ export const mssqlDriver: Driver = {
       get open() { return open; },
       async run(text, signal, limit, skip) {
         const before = await alive();
-        if (before.n === 0) await p.request().batch('BEGIN TRAN');
+        const batches = splitBatches(text);
+        // SELECT biasa tanpa transaksi terbuka: tidak ada yang perlu di-commit, transaksi tidak dibuka
+        const begin = before.n === 0 && !readOnly(batches.flatMap(splitStatements));
+        if (begin) await p.request().batch('BEGIN TRAN');
         spid = before.spid;
-        open = true;
+        open = before.n > 0 || begin;
         const out: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
         const start = Date.now();
         try {
-          for (const batch of splitBatches(text)) {
+          for (const batch of batches) {
             signal?.throwIfAborted();
-            await collect(p.request(), batch, out, signal, limit, false, skip);
+            // SQL batch seperti SSMS, bukan sp_executesql: COMMIT / ROLLBACK / BEGIN TRAN di script tanpa error 266,
+            // SET dan #temp tetap ada di run berikutnya (koneksi sesi ini khusus untuk file ini)
+            await collect(p.request(), batch, out, signal, limit, true, skip);
           }
         } finally {
           await refresh().catch((e: unknown) => driverLog.error(`mssql session.run state - EXCEPTION CAUGHT | ${errText(e)}`));

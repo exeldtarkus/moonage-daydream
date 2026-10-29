@@ -52,6 +52,18 @@
 - [x] MongoDB (query gaya mongosh `db.c.find(...)`, explorer database → collection, cancel = killOp; tanpa transaksi manual)
 - [x] SQL Server Windows Authentication (NTLM: domain + user + password; SSO user Windows aktif tidak didukung tedious)
 
+## Berikutnya (urut)
+- [ ] Transaksi manual SQL Server: script dijalankan sebagai SQL batch (tanpa error 266 untuk COMMIT / ROLLBACK / BEGIN TRAN di script), SELECT tidak membuka transaksi bila belum ada yang terbuka — kode + unit test selesai, menunggu test real (user)
+- [ ] Fix UI form New Connection (pilih database): logo menutupi seluruh kartu, nama / deskripsi database terpotong di tepi kanan, layout grid + CSS dirapikan (lihat screenshot 2026-10-29) — CSS logo yang terhapus di 2944b76 dikembalikan + padding search, test layout `docs/main/temp/form-layout-run.sh`, menunggu cek user
+- [ ] Hasil statement non-SELECT ikut tampil saat dijalankan bersama SELECT (mis. SELECT + UPDATE sekaligus: panel hanya menampilkan result set SELECT, "n row(s) affected" UPDATE tidak muncul). Cek juga INSERT, DELETE, MERGE, EXEC, DDL; per statement terlihat hasil / jumlah baris terdampak, berjudul "Statement n <SQL>" + pemisah antar blok — kode + unit test selesai, menunggu test real (user)
+- [ ] Form koneksi ala DBCode (sidebar kiri: Connection / SSL-TLS / Timeouts / Permissions / Driver settings), per tahap dengan TDD — kode + unit test selesai, menunggu test real (user):
+  - [x] Import connection string (ADO SQL Server `Server=..;Database=..`, URL mysql:// mariadb:// postgres:// mongodb(+srv)://) -> isi form
+  - [x] Import koneksi DBCode (`dbcode.connections` di user settings): nama, tipe, host, port, user, database, group — tanpa password
+  - [x] SSL/TLS + connection timeout per koneksi, dipakai semua driver
+  - [x] Permissions: koneksi read-only (hanya statement read-only yang boleh dijalankan)
+  - [x] Driver settings: tabel key/value opsi driver yang diteruskan ke driver
+  - [x] UI form: sidebar section + panel, layout test (Chromium headless)
+
 ## Rilis
 - [x] README (EN + ID) + icon + screenshot (`node scripts/screenshots.js`, data contoh)
 - [x] Field `repository` di package.json

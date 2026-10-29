@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, PAGE_ROWS, Session, address, drivers, openSession, schemaOf } from './db';
+import { ConnectionInfo, PAGE_ROWS, QueryResult, Session, address, drivers, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -17,8 +17,9 @@ import type { ConnColor } from './connColor';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { splitBatches } from './mssql';
-import { addWhere, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { addWhere, affectedStatements, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
+import { importDbcode } from './connString';
 
 let log: vscode.LogOutputChannel;
 export let conns: Connections;
@@ -146,6 +147,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (ok) await history.clear();
     }),
     vscode.commands.registerCommand('moonageDaydream.addConnection', (n?: Node) => editConnection(undefined, n?.kind === 'group' ? n.group : undefined)),
+    vscode.commands.registerCommand('moonageDaydream.importDbcode', importFromDbcode),
     vscode.commands.registerCommand('moonageDaydream.editConnection', async (n?: Node) => {
       const c = connOf(n) ?? (await pickConnection('Edit connection'));
       if (c) await editConnection(c);
@@ -386,7 +388,7 @@ function updateFileStatus() {
   status.command = uri ? 'moonageDaydream.setFileConnection' : 'moonageDaydream.selectConnection';
 }
 
-/** CodeLens: di atas tiap statement Execute | Explain | Analyze (Analyze hanya SELECT); statement pertama juga koneksi | database */
+/** CodeLens: di atas tiap statement Execute | Explain | Analyze (Analyze hanya SELECT) | koneksi | database | mode transaksi */
 function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
   const c = fileConn(doc.uri);
   const q = running.get(doc.uri.toString());
@@ -405,7 +407,7 @@ function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
   } else if (!segs.length) {
     lenses.push(new vscode.CodeLens(first, { title: '$(play) Execute', command: 'moonageDaydream.runQuery' }));
   }
-  segs.forEach((seg, i) => {
+  segs.forEach((seg) => {
     const r = at(seg.start);
     const args = [doc.uri, seg.start, seg.end];
     if (!q) {
@@ -415,7 +417,7 @@ function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
         lenses.push(new vscode.CodeLens(r, { title: '$(pulse) Analyze', command: 'moonageDaydream.analyze', arguments: args, tooltip: 'Actual execution plan (runs the SELECT inside a rolled back transaction)' }));
       }
     }
-    if (i === 0) pushConn(lenses, r, doc, c);
+    pushConn(lenses, r, doc, c); // koneksi | database | mode transaksi di setiap statement
   });
   if (!segs.length) pushConn(lenses, first, doc, c);
   return lenses;
@@ -605,6 +607,24 @@ async function pickConnection(title: string): Promise<ConnectionInfo | undefined
   return picked?.c;
 }
 
+/** koneksi DBCode (setting dbcode.connections) -> Connections; password ditanya saat pertama dipakai */
+async function importFromDbcode() {
+  const list = vscode.workspace.getConfiguration('dbcode').get<unknown[]>('connections', []);
+  if (!Array.isArray(list) || !list.length) return void vscode.window.showInformationMessage('No DBCode connections found (setting "dbcode.connections").');
+  const { conns: found, skipped } = importDbcode(list, new Set(conns.list().map((c) => c.name)));
+  const picked = found.length ? await vscode.window.showQuickPick(found.map((c) => ({
+    label: c.name, description: `${drivers[c.type].label} · ${address(c)}`, detail: c.group, picked: true, c,
+  })), { canPickMany: true, title: `Import ${found.length} connection(s) from DBCode (passwords are asked on first use)` }) : [];
+  if (!picked?.length) {
+    if (skipped.length) vscode.window.showInformationMessage(`Nothing to import. Skipped: ${skipped.join(', ')}`);
+    return;
+  }
+  await conns.addMany(picked.map((p) => p.c));
+  log.info(`importFromDbcode: ${picked.length} imported, skipped: ${skipped.join(', ') || '-'}`);
+  explorer.refresh();
+  vscode.window.showInformationMessage(`Imported ${picked.length} connection(s) from DBCode.${skipped.length ? ` Skipped: ${skipped.join(', ')}` : ''}`);
+}
+
 function editConnection(old?: ConnectionInfo, group?: string) {
   openConnectionForm(conns, log, saveConnection, old, group);
 }
@@ -746,6 +766,9 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
     },
   );
 }
+
+/** "rows affected" diberi statement asalnya (judul Statement n di panel hasil) */
+const withAffected = (r: QueryResult, stmts: string[]) => ({ ...r, affected: affectedStatements(stmts, r.rowsAffected.length) });
 
 /** sesi transaksi manual per file (key = uri) */
 export const txs = new Map<string, { session: Session; conn: string; db: string; statements: number }>();
@@ -1004,6 +1027,13 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   }
 
   const key = uri.toString();
+  // Permissions: koneksi read-only tidak pernah mengirim statement yang bisa mengubah data ke server
+  const blocked = c.readOnly ? readOnlyBlocked(drivers[c.type].dialect, splitBatches(text).flatMap(splitStatements)) : undefined;
+  if (blocked) {
+    log.info(`runQuery blocked (read-only connection ${c.name}): ${preview(text)}`);
+    await results.show(c.database ? `${c.name} / ${c.database}` : c.name, { error: blocked, uri: key });
+    return;
+  }
   const { q, ac, end } = startRun(key, c, text);
   log.info(`runQuery start: ${c.name} / ${c.database}`);
   const title = c.database ? `${c.name} / ${c.database}` : c.name;
@@ -1029,12 +1059,27 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
         if (!('parts' in o)) {
           if (manual) {
             const tx = await txFor(key, c, pw);
-            outcome = { result: await tx.session.run(text, ac.signal, limitFor(stmts)), source: src };
+            const wasOpen = tx.session.open;
+            const result = withAffected(await tx.session.run(text, ac.signal, limitFor(stmts)), stmts);
+            outcome = { result, source: src };
             if (tx.session.open) tx.statements++;
-            else vscode.window.showWarningMessage('The transaction is no longer open: ended by COMMIT / ROLLBACK in the script, or rolled back by the server (error or cancel).');
+            // SELECT biasa tanpa transaksi terbuka memang tidak membuka transaksi: bukan transaksi yang berakhir
+            else if (wasOpen || !readOnly(stmts)) {
+              const how = txEndStatement(stmts);
+              if (how) {
+                // COMMIT / ROLLBACK ditulis di script dan berhasil: hasil yang jelas, bukan peringatan
+                const msg = how === 'commit' ? 'Transaction committed.' : 'Transaction rolled back.';
+                result.messages.push(msg);
+                log.info(`transaction ${how} by the script (${tx.statements + 1} run(s)): ${tx.conn} / ${tx.db}`);
+                vscode.window.setStatusBarMessage(`$(check) ${msg}`, 4000);
+                tx.statements = 0;
+              } else {
+                vscode.window.showWarningMessage('The transaction was rolled back by the server (error or cancel); nothing was committed.');
+              }
+            }
             return;
           }
-          outcome = { result: await drivers[c.type].run(c, pw, text, ac.signal, limitFor(stmts)), source: src };
+          outcome = { result: withAffected(await drivers[c.type].run(c, pw, text, ac.signal, limitFor(stmts)), stmts), source: src };
           return;
         }
         const acs = (q.parts = o.parts.map(() => new AbortController()));

@@ -404,6 +404,10 @@ async function planTest(m: typeof import('../../extension')) {
   const exec = lenses.filter((l) => l.command?.command === 'moonageDaydream.runStatement');
   assert.deepEqual(exec.map((l) => l.range.start.line), [0, 4], 'Execute lens above each statement');
   assert.equal(lenses.filter((l) => l.command?.command === 'moonageDaydream.analyze').length, 2, 'Analyze for SELECT statements');
+  // koneksi | database | mode transaksi di atas setiap statement, bukan hanya yang pertama
+  for (const cmd of ['setFileConnection', 'setFileDatabase', 'toggleTransactionMode']) {
+    assert.deepEqual(lenses.filter((l) => l.command?.command === `moonageDaydream.${cmd}`).map((l) => l.range.start.line), [0, 4], `${cmd} lens above each statement`);
+  }
 
   await vscode.commands.executeCommand(exec[1].command!.command, ...exec[1].command!.arguments!);
   let html = resultHtml(m);
@@ -427,7 +431,7 @@ async function planTest(m: typeof import('../../extension')) {
   const before = resultHtml(m);
   await m.explainQuery('actual', dml.uri, 0, dml.getText().length);
   assert.equal(resultHtml(m), before, 'Analyze refused for UPDATE');
-  say(`PASS plan: lenses on lines 0 and 4, Execute 2nd statement only, Explain ${ops} operator(s), Analyze actual rows, Analyze refused for UPDATE`);
+  say(`PASS plan: lenses (Execute / connection / database / tx mode) on lines 0 and 4, Execute 2nd statement only, Explain ${ops} operator(s), Analyze actual rows, Analyze refused for UPDATE`);
 }
 
 /** Pin: snapshot hasil di tab sendiri, pin kedua di sebelahnya (side by side), tidak tertimpa run baru; export dari pin pakai snapshot */
@@ -463,56 +467,112 @@ async function pinTest(m: typeof import('../../extension')) {
   }
 }
 
+/** SELECT + UPDATE / INSERT / DELETE / DDL sekaligus: jumlah baris terdampak tiap statement non-SELECT tampil (hanya #temp, data tidak berubah) */
+async function affectedTest(m: typeof import('../../extension')) {
+  const doc = await fixture('affected', [
+    'CREATE TABLE #moonage_aff (id INT PRIMARY KEY, name VARCHAR(20));',
+    "INSERT INTO #moonage_aff VALUES (1, 'a'), (2, 'b'), (3, 'c');",
+    'SELECT * FROM #moonage_aff WHERE id = 1;',
+    "UPDATE #moonage_aff SET name = 'x' WHERE id <= 2;",
+    'DELETE FROM #moonage_aff WHERE id = 3;',
+    'SELECT COUNT(*) AS n FROM #moonage_aff;',
+    'DROP TABLE #moonage_aff;',
+  ].join('\n') + '\n');
+  await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'tempdb' });
+  await vscode.window.showTextDocument(doc);
+  await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  const html = resultHtml(m);
+  const o = m.results.current!.outcome;
+  assert.ok('result' in o, `no error: ${'error' in o ? o.error : ''}`);
+  assert.equal(o.result.resultSets.length, 2, 'two SELECT result sets');
+  // tiap jumlah baris di bawah judul statement asalnya (nomor statement di file), dipisah per blok
+  for (const [n, sql, rows] of [[2, 'INSERT INTO #moonage_aff', 3], [4, 'UPDATE #moonage_aff', 2], [5, 'DELETE FROM #moonage_aff', 1]] as const) {
+    assert.ok(new RegExp(`Statement ${n} <span>${sql}[^<]*</span></h3><div class="aff">${rows} row\\(s\\) affected</div>`).test(html), `statement ${n} (${sql}): ${rows} row(s) affected`);
+  }
+  assert.equal((html.match(/<div class="blk">/g) ?? []).length, 5, '2 results + 3 statements, separated');
+  const fixtureDdl = await fixture('affected-ddl', 'CREATE TABLE #moonage_ddl (a INT);\nDROP TABLE #moonage_ddl;\n');
+  await m.conns.bind(fixtureDdl.uri.toString(), { conn: CONN, db: 'tempdb' });
+  await vscode.window.showTextDocument(fixtureDdl);
+  await vscode.commands.executeCommand('moonageDaydream.runQuery');
+  assert.ok(resultHtml(m).includes('Commands completed successfully.'), 'DDL only');
+  say('PASS affected: SELECT + INSERT 3 / UPDATE 2 / DELETE 1 under "Statement n" headings, separated blocks, DDL "Commands completed successfully."');
+}
+
 /** transaksi manual: BEGIN TRAN otomatis, Commit / Rollback, kembali ke auto-commit (hanya SELECT @@TRANCOUNT) */
 async function txTest(m: typeof import('../../extension')) {
   const doc = await fixture('tx', 'SELECT @@TRANCOUNT AS tc;\n');
   await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
   await vscode.window.showTextDocument(doc);
   const key = doc.uri.toString();
+  const setText = async (text: string) => {
+    const e = new vscode.WorkspaceEdit();
+    e.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), text);
+    await vscode.workspace.applyEdit(e);
+  };
   const tc = async () => {
+    await setText('SELECT @@TRANCOUNT AS tc;\n');
     await vscode.commands.executeCommand('moonageDaydream.runQuery');
     return /<td class="num">(\d+)<\/td>/.exec(resultHtml(m))?.[1];
   };
+  /** jalankan text; hasil error (mis. error 266) dikembalikan */
+  const run = async (text: string) => {
+    await setText(text);
+    await vscode.commands.executeCommand('moonageDaydream.runQuery');
+    const o = m.results.current!.outcome;
+    return 'error' in o ? o.error : undefined;
+  };
+  const open = () => !!m.txs.get(key)?.session.open;
+  // pembuka transaksi tanpa mengubah data: DECLARE bukan statement read-only (SELECT biasa tidak membuka transaksi)
+  const OPEN_TX = 'DECLARE @open INT;\n';
   const titles = async () => (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri)).map((l) => l.command?.title ?? '');
   try {
     assert.ok((await titles()).includes('$(unlock) Auto-commit'), 'default auto-commit lens');
     assert.equal(await tc(), '0', 'auto-commit: no transaction');
     await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'manual');
-    assert.equal(await tc(), '1', 'manual: transaction open');
-    await tc();
+    assert.equal(await tc(), '0', 'manual: SELECT alone opens no transaction');
+    assert.ok(!open() && (await titles()).includes('$(lock) Manual commit'), 'no TX open after SELECT');
+    assert.equal(await run(OPEN_TX), undefined);
+    assert.equal(await tc(), '1', 'non-SELECT opens the transaction, SELECT runs inside it');
     const t = await titles();
     assert.ok(t.includes('$(lock) TX open (2)') && t.includes('$(check) Commit') && t.includes('$(discard) Rollback'), `tx lenses ${t}`);
     await vscode.commands.executeCommand('moonageDaydream.commitTransaction', doc.uri);
-    assert.equal(m.txs.get(key)?.session.open, false, 'committed');
-    assert.equal(await tc(), '1', 'next run opens a new transaction');
+    assert.ok(!open(), 'committed');
+    assert.equal(await tc(), '0', 'SELECT after commit: still no transaction');
+    await run(OPEN_TX);
     await vscode.commands.executeCommand('moonageDaydream.rollbackTransaction', doc.uri);
-    assert.equal(m.txs.get(key)?.session.open, false, 'rolled back');
-    // status dari @@TRANCOUNT server: BEGIN TRAN nested di script ikut di-commit semua, COMMIT di script menutup transaksi
-    const setText = async (text: string) => {
-      const e = new vscode.WorkspaceEdit();
-      e.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), text);
-      await vscode.workspace.applyEdit(e);
-    };
-    // BEGIN TRAN / COMMIT sendirian di script = error 266 dari sp_executesql, tapi @@TRANCOUNT di server tetap berubah
-    const runText = async (text: string) => {
-      await setText(text);
-      await vscode.commands.executeCommand('moonageDaydream.runQuery');
-      await setText('SELECT @@TRANCOUNT AS tc;\n');
-    };
-    await runText('BEGIN TRAN;\n');
+    assert.ok(!open(), 'rolled back');
+    assert.equal(await tc(), '0', 'SELECT after rollback: still no transaction');
+
+    // script dijalankan sebagai SQL batch (bukan sp_executesql): BEGIN TRAN / COMMIT / ROLLBACK di script tanpa error 266
+    // BEGIN TRAN otomatis (bukan SELECT) + BEGIN TRAN dari script = nested 2
+    assert.equal(await run('BEGIN TRAN;\n'), undefined, 'BEGIN TRAN in the script: no error 266');
     assert.equal(await tc(), '2', 'nested BEGIN TRAN in the script');
     await vscode.commands.executeCommand('moonageDaydream.commitTransaction', doc.uri);
-    assert.equal(m.txs.get(key)?.session.open, false, 'commit closes every level');
-    assert.equal(await tc(), '1', 'after commit: new transaction, not nested');
-    await runText('COMMIT;\n');
-    assert.equal(m.txs.get(key)?.session.open, false, 'COMMIT in the script closes the transaction');
+    assert.ok(!open(), 'commit closes every level');
+    assert.equal(await tc(), '0', 'nothing left open');
+    await run(OPEN_TX);
+    assert.equal(await run('COMMIT;\n'), undefined, 'COMMIT in the script: no error 266');
+    assert.ok(!open(), 'COMMIT in the script closes the transaction');
+    assert.ok(resultHtml(m).includes('Transaction committed.') && !resultHtml(m).includes('Commands completed'), 'panel says the script committed');
+    await run(OPEN_TX);
+    assert.equal(await run('ROLLBACK;\n'), undefined, 'ROLLBACK in the script: no error 266');
+    assert.ok(!open(), 'ROLLBACK in the script closes the transaction');
+    assert.ok(resultHtml(m).includes('Transaction rolled back.'), 'panel says the script rolled back');
+    // batch: SET tetap berlaku di run berikutnya (sp_executesql mengembalikannya di akhir run)
+    await run('SET XACT_ABORT ON;\n');
+    await setText('SELECT CASE WHEN @@OPTIONS & 16384 = 16384 THEN 1 ELSE 0 END AS xa;\n');
+    await vscode.commands.executeCommand('moonageDaydream.runQuery');
+    assert.equal(/<td class="num">(\d+)<\/td>/.exec(resultHtml(m))?.[1], '1', 'SET XACT_ABORT ON kept for the next run');
+    await run('SET XACT_ABORT OFF;\n');
+    if (open()) await vscode.commands.executeCommand('moonageDaydream.rollbackTransaction', doc.uri);
 
     // transaksi terbuka: Load more lewat koneksi sesi (@@SPID sama), Analyze ditolak (koneksi lain akan tertahan lock)
+    await run(OPEN_TX);
     await setText('SELECT @@SPID AS spid, name FROM sys.all_objects ORDER BY object_id;\n');
     await vscode.commands.executeCommand('moonageDaydream.runQuery');
     const rows = () => { const o = m.results.current!.outcome; return 'result' in o ? o.result.resultSets[0].rows : []; };
     const spid = rows()[0]?.[0];
-    assert.ok(m.txs.get(key)?.session.open && rows().length === 100, 'manual: 100 rows in an open transaction');
+    assert.ok(open() && rows().length === 100, 'manual: 100 rows in an open transaction');
     await m.loadMore({ type: 'more', set: 0 });
     assert.ok(rows().length > 100 && rows().every((r) => r[0] === spid), `load more on the session connection (spid ${spid})`);
     await m.explainQuery('actual', doc.uri);
@@ -522,7 +582,7 @@ async function txTest(m: typeof import('../../extension')) {
     await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'auto');
     assert.equal(await tc(), '0', 'back to auto-commit');
     assert.ok(!m.txs.has(key), 'session closed');
-    say('PASS transaction: auto tc=0 -> manual tc=1, TX open (2) lenses, commit, new tx, rollback, nested BEGIN + commit all, script COMMIT, load more on the session, Analyze refused, auto tc=0');
+    say('PASS transaction: SELECT opens no tx, DECLARE opens, TX open (2) lenses, commit / rollback, script BEGIN / COMMIT / ROLLBACK without error 266, nested commit all, SET kept, load more on the session, Analyze refused, auto tc=0');
   } finally {
     await vscode.commands.executeCommand('moonageDaydream.toggleTransactionMode', doc.uri, 'auto');
   }
@@ -1142,6 +1202,12 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL load more: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await affectedTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL affected: ${e instanceof Error ? e.message : e}`);
     }
     try {
       await txTest(m);

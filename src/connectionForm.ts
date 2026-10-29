@@ -4,6 +4,7 @@ import { join } from 'path';
 import type { Connections } from './connections';
 import { ConnectionInfo, drivers } from './db';
 import { FormData, formHtml, toConnection, validate } from './connectionFormHtml';
+import { parseConnectionString } from './connString';
 
 /** Test connection: testSql driver (server, database) lewat pool sementara (tidak mengganggu pool koneksi tersimpan) */
 export async function testConnection(c: ConnectionInfo, password: string, log: vscode.LogOutputChannel): Promise<{ ok: boolean; message: string }> {
@@ -59,8 +60,17 @@ export function openConnectionForm(
   const finalPassword = async (d: FormData) => (old && !d.password ? conns.password(old.name) : d.password);
   const reply = (msg: object) => panel.webview.postMessage(msg);
 
-  panel.webview.onDidReceiveMessage(async (msg: { type: string; data: FormData }) => {
+  panel.webview.onDidReceiveMessage(async (msg: { type: string; data: FormData; text?: string }) => {
     if (msg.type === 'cancel') return panel.dispose();
+    if (msg.type === 'parse') {
+      try {
+        return reply({ type: 'parsed', data: parseConnectionString(msg.text ?? '') });
+      } catch (e) {
+        // connection string yang salah: pesan di form, detail di log (isi string tidak di-log, bisa berisi password)
+        log.error(`connectionForm parse - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+        return reply({ type: 'parseError', message: e instanceof Error ? e.message : String(e) });
+      }
+    }
     const error = validate(msg.data, conns, old?.name);
     if (error) return reply({ type: 'status', ok: false, message: error });
     const c = toConnection(msg.data);

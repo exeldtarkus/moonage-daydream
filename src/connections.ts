@@ -108,8 +108,31 @@ export class Connections {
     if (this.active === name) await this.setActive(undefined);
   }
 
+  /** tambah koneksi hasil import (tanpa password: diminta saat pertama dipakai, lihat password()) */
+  addMany(list: ConnectionInfo[]): Promise<void> {
+    return this.serial(async () => {
+      const names = new Set(list.map((c) => c.name));
+      await this.write(LIST, [...this.list().filter((x) => !names.has(x.name)), ...list].sort((a, b) => a.name.localeCompare(b.name)));
+    });
+  }
+
+  private asking = new Map<string, Promise<string>>();
+
+  /** password koneksi; belum pernah disimpan (koneksi hasil import) = ditanya sekali lalu disimpan di SecretStorage */
   async password(name: string): Promise<string> {
-    return (await this.ctx.secrets.get(secretKey(name))) ?? '';
+    const stored = await this.ctx.secrets.get(secretKey(name));
+    if (stored !== undefined) return stored;
+    let p = this.asking.get(name); // autocomplete / explorer / run bersamaan: satu input box saja
+    if (!p) {
+      p = Promise.resolve(vscode.window.showInputBox({
+        title: `Password for ${name}`, prompt: 'Saved in VS Code Secret Storage (leave empty if the connection has no password)', password: true, ignoreFocusOut: true,
+      })).then(async (v) => {
+        if (v !== undefined) await this.ctx.secrets.store(secretKey(name), v);
+        return v ?? '';
+      }).finally(() => this.asking.delete(name));
+      this.asking.set(name, p);
+    }
+    return p;
   }
 
   private bindings(): Record<string, FileBinding> {

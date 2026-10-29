@@ -93,15 +93,21 @@ function resultHtml(r: QueryResult, canMore = false): string {
       return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
-    return `<h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
+    return `<div class="blk"><h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
 <div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 ? ' data-edit="1" title="Double-click a cell to edit (generates an UPDATE script)"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead>${s.rows.length > VIRTUAL_ROWS
       ? `<tbody></tbody></table><template class="vrows">${rows}</template>` : `<tbody>${rows}</tbody></table>`}</div>
 <div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0
       ? '<span class="editbar" hidden><b class="ecount"></b> change(s)<button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
-      ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div>`;
+      ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div></div>`;
   }).join('');
-  const msgs = [...r.messages, ...(r.resultSets.length ? [] : [`${r.rowsAffected.reduce((a, b) => a + b, 0)} row(s) affected`])];
-  return `${sets}${msgs.length ? `<pre class="msg">${esc(msgs.join('\n'))}</pre>` : ''}`;
+  // jumlah baris per statement non-SELECT (urut), juga di samping result set SELECT: berjudul statement asalnya bila pasti
+  const named = r.rowsAffected.flatMap((n, i) => {
+    const st = r.affected?.[i];
+    return st ? [`<div class="blk"><h3>Statement ${st.n} <span>${esc(preview(st.sql))}</span></h3><div class="aff">${n} row(s) affected</div></div>`] : [];
+  }).join('');
+  const msgs = [...r.messages, ...r.rowsAffected.flatMap((n, i) => (r.affected?.[i] ? [] : [`${n} row(s) affected`]))];
+  if (!r.resultSets.length && !named && !msgs.length) msgs.push('Commands completed successfully.'); // DDL / EXEC tanpa hasil, seperti SSMS
+  return `${sets}${named}${msgs.length ? `<div class="blk"><pre class="msg">${esc(msgs.join('\n'))}</pre></div>` : ''}`;
 }
 
 const fmtNum = (n: number) => (Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { maximumFractionDigits: 2 }));
@@ -273,6 +279,9 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
     border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   .err { color: var(--vscode-errorForeground); white-space: pre-wrap; }
   .msg { white-space: pre-wrap; opacity: .8; }
+  /* pemisah antar hasil: Result n / Statement n (rows affected) / pesan */
+  .blk + .blk { border-top: 1px solid var(--vscode-panel-border); margin-top: 14px; padding-top: 2px; }
+  .aff { padding: 4px 0 6px; opacity: .85; }
   /* loading: spinner tiga cincin di tengah + progress bar tipis di atas, hanya CSS (webview hasil tanpa script) */
   .loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
   .spin { position: relative; width: 48px; height: 48px; }

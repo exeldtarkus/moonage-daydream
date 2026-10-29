@@ -83,3 +83,30 @@ test('database picker search terms include aliases', () => {
   assert.ok(/data-type="postgres"[^>]*data-search="[^"]*\bpg\b/.test(html) && /data-type="mongodb"[^>]*data-search="[^"]*atlas/.test(html), 'aliases searchable');
   assert.ok(html.includes('Default port 1433') && html.includes('Connect →'), 'action row');
 });
+
+test('SSL/TLS, timeout, read-only and driver settings: validation and connection fields', () => {
+  const none = { get: () => undefined };
+  assert.match(validate({ ...ok, connectTimeout: '0' }, none)!, /timeout must be 1-3600/);
+  assert.match(validate({ ...ok, connectTimeout: 'abc' }, none)!, /timeout must be 1-3600/);
+  assert.equal(validate({ ...ok, connectTimeout: '' }, none), undefined, 'empty = driver default');
+  assert.match(validate({ ...ok, options: [[' ', 'x']] }, none)!, /Driver setting name is required/);
+  assert.match(validate({ ...ok, options: [['appName', 'a'], [' appName ', 'b']] }, none)!, /"appName" is set twice/);
+  assert.equal(validate({ ...ok, options: [['', '']] }, none), undefined, 'empty row is ignored');
+
+  const c = toConnection({ ...ok, ssl: false, connectTimeout: ' 30 ', readOnly: true, options: [[' appName ', 'moonage'], ['', '']] });
+  assert.deepEqual([c.ssl, c.connectTimeout, c.readOnly, c.options], [false, 30, true, { appName: 'moonage' }]);
+  const plain = toConnection(ok);
+  assert.ok(!('connectTimeout' in plain) && !('readOnly' in plain) && !('options' in plain), 'defaults are not stored');
+  const pg = toConnection({ ...ok, type: 'postgres', port: '5432', ssl: true, trust: true });
+  assert.deepEqual([pg.ssl, pg.trustServerCertificate], [true, true], 'trust certificate for every database type');
+});
+
+test('formHtml: sections (Connection, SSL/TLS, Timeouts, Permissions, Driver settings) and import connection string', () => {
+  const html = formHtml('csp');
+  for (const sec of ['connection', 'ssl', 'timeouts', 'permissions', 'driver']) assert.ok(html.includes(`data-sec="${sec}"`), `nav ${sec}`);
+  assert.ok(html.includes('Import connection string') && html.includes('id="connstr"'));
+  const edit = formHtml('csp', { ...toConnection(ok), ssl: false, connectTimeout: 45, readOnly: true, options: { appName: 'a"b' } });
+  assert.ok(!/id="ssl"[^>]*checked/.test(edit) && /id="readonly"[^>]*checked/.test(edit) && edit.includes('id="timeout" value="45"'));
+  assert.ok(edit.includes('value="appName"') && edit.includes('value="a&quot;b"'), 'driver settings rows, escaped');
+  assert.ok(/id="ssl"[^>]*checked/.test(formHtml('csp', toConnection(ok))), 'SQL Server: SSL on by default');
+});

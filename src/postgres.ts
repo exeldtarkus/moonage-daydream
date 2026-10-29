@@ -1,6 +1,7 @@
 import { Client, Pool, types } from 'pg';
 import type { ClientConfig, PoolClient, QueryArrayResult } from 'pg';
 import type { ConnectionInfo, ObjectKind } from './db';
+import { connectMs, typedOptions } from './db';
 import { driverLog } from './log';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
@@ -19,16 +20,18 @@ const typeParsers = {
     (TEXT_OIDS.has(oid) ? (v: string) => v : types.getTypeParser(oid, format as 'text'))) as typeof types.getTypeParser,
 };
 
-const config = (conn: ConnectionInfo, password: string, db?: string): ClientConfig => ({
+export const pgConfig = (conn: ConnectionInfo, password: string, db?: string): ClientConfig => ({
+  ...typedOptions(conn.options),
   host: conn.host, port: conn.port, user: conn.user, password, database: (db ?? conn.database) || 'postgres',
-  connectionTimeoutMillis: 15_000, types: typeParsers,
+  connectionTimeoutMillis: connectMs(conn), types: typeParsers,
+  ...(conn.ssl ? { ssl: { rejectUnauthorized: !conn.trustServerCertificate } } : {}),
 });
 
 function pool(conn: ConnectionInfo, password: string, db?: string): Pool {
   const key = `${conn.name}\n${(db ?? conn.database) || ''}`;
   let p = pools.get(key);
   if (!p) {
-    p = new Pool({ ...config(conn, password, db), max: 5 });
+    p = new Pool({ ...pgConfig(conn, password, db), max: 5 });
     p.on('error', (e) => {
       // koneksi idle putus: pool dibuat ulang di query berikutnya
       driverLog.error(`postgres pool - EXCEPTION CAUGHT | ${conn.name}: ${e.message} - stack-trace: ${e.stack}`);
@@ -102,7 +105,7 @@ export const postgresDriver = sqlDriver({
     return link(c, (pid) => p.query('SELECT pg_cancel_backend($1)', [pid]), async () => c.release());
   },
   async dedicated(conn, password) {
-    const c = new Client(config(conn, password));
+    const c = new Client(pgConfig(conn, password));
     await c.connect();
     return link(c, (pid) => pool(conn, password).query('SELECT pg_cancel_backend($1)', [pid]), () => c.end());
   },

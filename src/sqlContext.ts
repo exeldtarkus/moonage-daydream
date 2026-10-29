@@ -102,18 +102,26 @@ export function missingSemicolons(sql: string): { start: number; end: number }[]
   });
 }
 
-const NOT_ALIAS = /^(where|join|inner|left|right|full|outer|cross|on|group|order|having|union|except|intersect|with|as|go|select|set|values|option|for|apply|pivot|unpivot)$/i;
+const NOT_ALIAS = /^(where|join|inner|left|right|full|outer|cross|on|group|order|having|union|except|intersect|with|as|go|select|set|values|option|for|apply|pivot|unpivot|output)$/i;
 const NAME = String.raw`(?:\[[^\]]*\]|"[^"]*"|\`[^\`]*\`|[\w$#@]+)`;
 /** [x] / "x" / `x` -> x */
 const unquote = (p: string) => p.replace(/^[[`"]|[\]`"]$/g, '');
 
-/** tabel di FROM / JOIN statement: `Shop..T p`, `dbo.T AS x`, `[My DB].dbo.T`, `FROM a x, b y` -> parts (db, schema, nama) + alias */
+/**
+ * tabel di FROM / JOIN dan target UPDATE / INSERT [INTO] / DELETE [FROM]: `Shop..T p`, `dbo.T AS x`, `[My DB].dbo.T`,
+ * `FROM a x, b y` -> parts (db, schema, nama) + alias. Target `UPDATE o ... FROM T o` (alias) diwakili tabel di FROM.
+ */
 export function tableRefs(stmt: string): { parts: string[]; alias?: string }[] {
   const masked = maskSql(stmt);
-  const ref = String.raw`(${NAME}?(?:\s*\.\s*${NAME}?){0,2})(?:\s+(?:as\s+)?(${NAME}))?`;
-  const re = new RegExp(String.raw`\b(?:from|join)\s+${ref}`, 'gi');
+  // alias bukan FROM: `DELETE o FROM T o` / `UPDATE o FROM ...` (FROM berikutnya tetap terbaca)
+  const ref = String.raw`(${NAME}?(?:\s*\.\s*${NAME}?){0,2})(?:\s+(?:as\s+)?(?!from\b)(${NAME}))?`;
+  const top = String.raw`(?:\s+top\s*\([^)]*\)(?:\s+percent)?)?`;
+  // DELETE [TOP (n)] FROM t: tabelnya ditangkap cabang from
+  const dml = String.raw`update${top}|insert${top}(?:\s+into)?|delete(?!${top}\s+from\b)${top}`;
+  const re = new RegExp(String.raw`\b(?:from|join|(${dml}))\s+${ref}`, 'gi');
   const more = new RegExp(String.raw`\s*,\s*${ref}`, 'iy'); // FROM a, b, c (koma di level FROM)
   const out: { parts: string[]; alias?: string }[] = [];
+  const targets = new Set<{ parts: string[]; alias?: string }>(); // target UPDATE / INSERT / DELETE
   const push = (raw: string, alias?: string) => {
     const parts = raw.split('.').map((p) => unquote(p.trim()));
     if (!parts[parts.length - 1]) return false; // `FROM db.` belum selesai diketik
@@ -122,14 +130,17 @@ export function tableRefs(stmt: string): { parts: string[]; alias?: string }[] {
   };
   for (let m; (m = re.exec(stmt)); ) {
     if (masked[m.index] !== stmt[m.index]) continue; // `from` di dalam string / komentar
-    if (!push(m[1], m[2])) continue;
+    if (m[1] && /\b(?:for|key|on)\s*$/i.test(masked.slice(0, m.index))) continue; // FOR UPDATE, ON DUPLICATE KEY UPDATE, ON UPDATE CASCADE
+    if (!push(m[2], m[3])) continue;
+    if (m[1]) targets.add(out[out.length - 1]);
     more.lastIndex = re.lastIndex;
     for (let c; (c = more.exec(stmt)) && masked[c.index + c[0].indexOf(',')] === ','; ) {
       if (!push(c[1], c[2])) break;
       re.lastIndex = more.lastIndex;
     }
   }
-  return out;
+  const aliases = new Set(out.map((r) => r.alias?.toLowerCase()).filter(Boolean));
+  return out.filter((r) => !(targets.has(r) && r.parts.length === 1 && aliases.has(r.parts[0].toLowerCase())));
 }
 
 /** auto limit boleh: tepat satu statement SELECT / WITH tanpa TOP, OFFSET..FETCH, INTO, SET ROWCOUNT (dipotong = berhenti, tidak ada efek samping) */
@@ -173,6 +184,53 @@ export function addWhere(stmt: string, cond: string): string {
   }
   const at = topLevel(masked, tail)[0]?.index ?? sql.length;
   return `${sql.slice(0, at).trimEnd()}\nWHERE ${cond.trim()}${at < sql.length ? `\n${sql.slice(at)}` : ''}`;
+}
+
+/**
+ * hanya membaca: semua statement SELECT / WITH tanpa INTO, DML, EXEC, dan tanpa hint kunci yang ditahan sampai commit
+ * (UPDLOCK / HOLDLOCK / XLOCK ...). Transaksi manual tidak dibuka untuk statement seperti ini.
+ */
+export function readOnly(stmts: string[]): boolean {
+  return stmts.length > 0 && stmts.every((st) => {
+    const code = maskSql(st);
+    return /^\s*(select|with)\b/i.test(code)
+      && !/\b(into|insert|update|delete|merge|exec|execute|updlock|holdlock|xlock|tablockx|serializable|repeatableread)\b/i.test(code);
+  });
+}
+
+/**
+ * statement asal tiap jumlah "rows affected" (urut): INSERT / UPDATE / DELETE / MERGE (boleh diawali WITH) dan SELECT ... INTO.
+ * Hanya dipasangkan bila pasti: jumlahnya sama dan tanpa EXEC (prosedur bisa melaporkan banyak jumlah); selain itu undefined.
+ */
+export function affectedStatements(stmts: string[], counts: number): ({ n: number; sql: string } | undefined)[] {
+  const codes = stmts.map((st) => maskSql(st));
+  const dml = stmts.flatMap((sql, i) => (/^\s*(?:with\b[\s\S]*\)\s*)?(?:insert|update|delete|merge)\b/i.test(codes[i])
+    || (/^\s*(?:select|with)\b/i.test(codes[i]) && /\binto\b/i.test(codes[i])) ? [{ n: i + 1, sql: sql.trim() }] : []));
+  const sure = dml.length === counts && !codes.some((c) => /\bexec(?:ute)?\b/i.test(c));
+  return Array.from({ length: counts }, (_, i) => (sure ? dml[i] : undefined));
+}
+
+/**
+ * koneksi read-only (Permissions): pesan error bila ada statement yang bisa mengubah data, undefined = boleh dijalankan.
+ * Boleh: SELECT / WITH tanpa INTO / DML, DECLARE, SET @variabel, SHOW, DESCRIBE; MongoDB: method baca (find, aggregate tanpa $out / $merge, count ...).
+ */
+export function readOnlyBlocked(dialect: Dialect, stmts: string[]): string | undefined {
+  const bad = stmts.find((st) => {
+    const code = maskSql(st);
+    if (dialect === 'mongodb') {
+      return /\.(insert\w*|update\w*|replace\w*|delete\w*|remove|drop\w*|create\w*|rename\w*|bulkWrite|findOneAnd\w*|findAndModify)\s*\(|\$(out|merge)\b/i.test(st);
+    }
+    if (/^\s*(declare\s+@|set\s+@|show\b|desc(ribe)?\b)/i.test(code)) return false;
+    return !/^\s*(select|with)\b/i.test(code)
+      || /\b(into|insert|update|delete|merge|exec|execute|drop|alter|create|truncate|grant|revoke|deny)\b/i.test(code);
+  });
+  return bad === undefined ? undefined : `The connection is read-only: only statements that do not change data can run (blocked: ${preview(bad)})`;
+}
+
+/** COMMIT / ROLLBACK terakhir di script (yang menutup transaksi); undefined = tidak ada (transaksi diakhiri server: error / cancel) */
+export function txEndStatement(stmts: string[]): 'commit' | 'rollback' | undefined {
+  const last = stmts.map((st) => /^\s*(commit|rollback)\b/i.exec(maskSql(st))?.[1].toLowerCase()).filter(Boolean).pop();
+  return last as 'commit' | 'rollback' | undefined;
 }
 
 /** satu SELECT / WITH tanpa INTO: boleh diberi filter WHERE dari toolbar hasil */
