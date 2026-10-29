@@ -10,6 +10,8 @@ export interface FormData {
   file?: string;
   /** mongodb: database tempat user dibuat */
   authSource?: string;
+  /** folder di view Connections */
+  group?: string;
   name: string;
   host: string;
   port: string;
@@ -37,6 +39,12 @@ export function validate(d: FormData, conns: { get(name: string): unknown }, old
 }
 
 export function toConnection(d: FormData): ConnectionInfo {
+  const group = d.group?.trim();
+  const c = connectionOf(d);
+  return group ? { ...c, group } : c;
+}
+
+function connectionOf(d: FormData): ConnectionInfo {
   const type = (d.type || 'mssql') as DbType;
   if (type === 'sqlite') return { name: d.name.trim(), type, host: '', port: 0, user: '', database: '', trustServerCertificate: false, file: d.file!.trim() };
   if (type !== 'mssql') {
@@ -52,7 +60,7 @@ export function toConnection(d: FormData): ConnectionInfo {
   };
 }
 
-export function formHtml(cspSource: string, old?: ConnectionInfo): string {
+export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string[] = []): string {
   const nonce = randomBytes(16).toString('base64');
   const v = (s: string | number | undefined) => `value="${esc(String(s ?? ''))}"`;
   return `<!DOCTYPE html>
@@ -89,6 +97,8 @@ export function formHtml(cspSource: string, old?: ConnectionInfo): string {
 <form id="f">
   <div class="row"><label for="type">Database type</label><select id="type">${Object.entries(drivers).map(([k, d]) =>
     `<option value="${k}" data-port="${d.defaultPort}"${(old?.type ?? 'mssql') === k ? ' selected' : ''}>${esc(d.label)}</option>`).join('')}</select></div>
+  <div class="row"><label for="group">Group</label><input type="text" id="group" list="groups" ${v(old?.group)} placeholder="e.g. prod, non-prod (folder in Connections)"></div>
+  <datalist id="groups">${groups.map((g) => `<option value="${esc(g)}">`).join('')}</datalist>
   <div class="row file"><label for="file">Database file <span class="req">*</span></label><input type="text" id="file" ${v(old?.file)} placeholder="/path/to/database.sqlite"></div>
   <div class="row"><label for="name">Connection name <span class="req">*</span></label><input type="text" id="name" ${v(old?.name)} required></div>
   <div class="row net"><label for="host">Host <span class="req">*</span></label>
@@ -119,7 +129,7 @@ export function formHtml(cspSource: string, old?: ConnectionInfo): string {
   const $ = (id) => document.getElementById(id);
   const data = () => ({ name: $('name').value, host: $('host').value, port: $('port').value, instance: $('instance').value,
     user: $('user').value, password: $('password').value, database: $('database').value, trust: $('trust').checked,
-    auth: $('auth').value, domain: $('domain').value, type: $('type').value, file: $('file').value, authSource: $('authSource').value });
+    auth: $('auth').value, domain: $('domain').value, type: $('type').value, file: $('file').value, authSource: $('authSource').value, group: $('group').value });
   $('auth').onchange = () => { $('domainrow').hidden = $('auth').value !== 'windows'; };
   // baris sesuai tipe: SQLite cukup file; opsi instance / auth / sertifikat hanya SQL Server
   const showType = () => {

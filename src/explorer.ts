@@ -3,6 +3,7 @@ import type { Connections } from './connections';
 import { ConnectionInfo, DbObject, ObjectKind, address, drivers } from './db';
 
 export type Node =
+  | { kind: 'group'; group: string }
   | { kind: 'conn'; c: ConnectionInfo }
   | { kind: 'db'; c: ConnectionInfo; db: string }
   | { kind: 'folder'; c: ConnectionInfo; db: string; objKind: ObjectKind }
@@ -31,6 +32,12 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
   getTreeItem(n: Node): vscode.TreeItem {
     const C = vscode.TreeItemCollapsibleState.Collapsed;
     switch (n.kind) {
+      case 'group': {
+        const count = this.conns.list().filter((c) => c.group === n.group).length;
+        return Object.assign(new vscode.TreeItem(n.group, vscode.TreeItemCollapsibleState.Expanded), {
+          id: `group:${n.group}`, description: `${count}`, iconPath: new vscode.ThemeIcon('folder-library'), contextValue: 'group',
+        });
+      }
       case 'conn': {
         const active = this.conns.active === n.c.name;
         return Object.assign(new vscode.TreeItem(n.c.name, C), {
@@ -62,7 +69,9 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
   }
 
   async getChildren(n?: Node): Promise<Node[]> {
-    if (!n) return this.conns.list().map((c) => ({ kind: 'conn', c }));
+    // level atas: folder group (urut nama), lalu koneksi tanpa group
+    if (!n) return [...this.conns.groups().map((group): Node => ({ kind: 'group', group })), ...this.conns.list().filter((c) => !c.group).map((c): Node => ({ kind: 'conn', c }))];
+    if (n.kind === 'group') return this.conns.list().filter((c) => c.group === n.group).map((c) => ({ kind: 'conn', c }));
     if (n.kind === 'col' || n.kind === 'msg') return [];
     const d = drivers[n.c.type];
     try {

@@ -72,6 +72,33 @@ function resultTabColumn(): number | undefined {
 const errOf = (nodes: Node[]) => nodes.find((n) => n.kind === 'msg' && n.error);
 
 /** Explorer: database → folder → objek → kolom, lalu "Select Top 100" pada tabel pertama yang ketemu (SELECT saja). */
+/** group koneksi: koneksi sementara (tidak menyentuh koneksi user) -> folder group, Move to Group, Rename Group, tanpa group, dihapus */
+async function groupTest(m: typeof import('../../extension')) {
+  const name = '__moonage_it_group';
+  const before = m.conns.list();
+  const c = { name, type: 'sqlite' as const, host: '', port: 0, user: '', database: '', trustServerCertificate: false, file: '/nonexistent.sqlite', group: '__it non-prod' };
+  try {
+    await m.conns.save(c, '');
+    const top = await m.explorer.getChildren();
+    const g = top.find((n) => n.kind === 'group' && n.group === '__it non-prod');
+    assert.ok(g, `group folder at top: ${top.map((n) => n.kind).join(',')}`);
+    assert.equal(m.explorer.getTreeItem(g).description, '1');
+    assert.deepEqual((await m.explorer.getChildren(g)).map((n) => n.kind === 'conn' && n.c.name), [name]);
+    assert.ok(!top.some((n) => n.kind === 'conn' && n.c.name === name), 'grouped connection not at top level');
+    await m.renameGroup(g, '__it prod');
+    assert.equal(m.conns.get(name)?.group, '__it prod', 'rename group');
+    await m.moveToGroup({ kind: 'conn', c: m.conns.get(name)! }, '$(close) No group');
+    assert.equal(m.conns.get(name)?.group, undefined, 'no group');
+    assert.ok((await m.explorer.getChildren()).some((n) => n.kind === 'conn' && n.c.name === name), 'back at top level');
+    await m.moveToGroup({ kind: 'conn', c: m.conns.get(name)! }, '__it prod');
+    assert.deepEqual(m.conns.groups().filter((x) => x.startsWith('__it')), ['__it prod']);
+    say('PASS connection groups: folder with count, rename group, move to no group / back, quick pick');
+  } finally {
+    await m.conns.remove(name);
+    assert.deepEqual(m.conns.list(), before, 'connection list restored');
+  }
+}
+
 /** SQL Files: New SQL File di folder sementara, tampilan tree & flat, lalu folder dihapus */
 async function sqlFilesTest(m: typeof import('../../extension')) {
   const { sqlFileName } = require('../../sqlFiles') as typeof import('../../sqlFiles');
@@ -882,6 +909,20 @@ async function serversUiTest(m: typeof import('../../extension')): Promise<numbe
 
 export async function run(only?: string): Promise<void> {
   userUntitled = new Set(untitledTabs().map((u) => u.toString()));
+  if (only === 'groups') {
+    mkdirSync(OUT, { recursive: true });
+    writeFileSync(REPORT, '');
+    await vscode.extensions.getExtension('exeltarkus.moonage-daydream')!.activate();
+    let failed = 0;
+    try {
+      await groupTest(require('../../extension') as typeof import('../../extension'));
+    } catch (e) {
+      failed = 1;
+      say(`FAIL groups: ${e instanceof Error ? e.message : e}`);
+    }
+    say(`DONE failed=${failed}`);
+    return;
+  }
   if (only === 'files') {
     mkdirSync(OUT, { recursive: true });
     writeFileSync(REPORT, '');
@@ -950,8 +991,10 @@ export async function run(only?: string): Promise<void> {
     const doc = await fixture('locations', QUERY);
     const editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
 
+    await sleep(2000); // jendela dev baru dibuka: tab lama dipulihkan dulu (bisa merebut fokus)
     for (const loc of ['panel', 'right', 'left'] as Location[]) {
       try {
+        await vscode.window.showTextDocument(doc, editor.viewColumn);
         await m.results.setLocation(loc);
         await vscode.commands.executeCommand('moonageDaydream.runQuery', { all: true });
         await sleep(1500);
@@ -1091,6 +1134,12 @@ export async function run(only?: string): Promise<void> {
     } catch (e) {
       failed++;
       say(`FAIL sql files: ${e instanceof Error ? e.message : e}`);
+    }
+    try {
+      await groupTest(m);
+    } catch (e) {
+      failed++;
+      say(`FAIL groups: ${e instanceof Error ? e.message : e}`);
     }
   } catch (e) {
     failed++;

@@ -36,3 +36,10 @@ test('Windows authentication (NTLM): validation and connection fields', () => {
   assert.equal(toConnection(ok).auth, undefined, 'SQL login stays default');
   assert.ok(formHtml('csp', c).includes('<option value="windows" selected>') && !formHtml('csp', c).includes('id="domainrow" hidden'));
 });
+
+test('connection group: trimmed, empty = no group, suggestions in the form', () => {
+  assert.equal(toConnection({ ...ok, group: ' prod ' }).group, 'prod');
+  assert.ok(!('group' in toConnection({ ...ok, group: ' ' })));
+  const html = formHtml('csp', { ...toConnection(ok), group: 'non-prod' }, ['non-prod', 'prod<x>']);
+  assert.ok(html.includes('id="group" list="groups" value="non-prod"') && html.includes('<option value="prod&lt;x&gt;">'), 'group field + escaped datalist');
+});

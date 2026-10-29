@@ -84,6 +84,20 @@ export class Connections {
     if (oldName && this.active === oldName) await this.setActive(c.name);
   }
 
+  /** pindahkan koneksi ke group (undefined / '' = tanpa group); dipakai juga untuk rename group */
+  setGroup(names: string[], group: string | undefined): Promise<void> {
+    return this.serial(() => this.write(LIST, this.list().map((c) => {
+      if (!names.includes(c.name)) return c;
+      const { group: _old, ...rest } = c;
+      return group?.trim() ? { ...rest, group: group.trim() } : rest;
+    })));
+  }
+
+  /** nama group yang dipakai, urut */
+  groups(): string[] {
+    return [...new Set(this.list().flatMap((c) => (c.group ? [c.group] : [])))].sort((a, b) => a.localeCompare(b));
+  }
+
   remove(name: string): Promise<void> {
     return this.serial(() => this.removeNow(name));
   }

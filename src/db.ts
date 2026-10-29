@@ -26,6 +26,8 @@ export interface ConnectionInfo {
   file?: string;
   /** mongodb: database tempat user dibuat (mis. admin) */
   authSource?: string;
+  /** folder di view Connections (mis. prod, non-prod); kosong = di level atas */
+  group?: string;
 }
 
 // shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil

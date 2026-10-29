@@ -187,6 +187,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTextEditor(updateFileStatus),
     vscode.window.registerWebviewViewProvider(VIEW_ID, results),
     vscode.window.registerTreeDataProvider('moonageDaydream.explorer', explorer),
+    vscode.commands.registerCommand('moonageDaydream.moveConnectionToGroup', (n?: Node, pick?: string) => moveToGroup(n, pick)),
+    vscode.commands.registerCommand('moonageDaydream.renameGroup', (n?: Node, name?: string) => renameGroup(n, name)),
     vscode.commands.registerCommand('moonageDaydream.refreshExplorer', (n?: Node) => {
       completion.clear(); // tabel baru juga muncul di autocomplete
       explorer.refresh(n);
@@ -478,6 +480,38 @@ async function closePool(c: ConnectionInfo) {
   }
 }
 
+/** klik kanan koneksi -> Move to Group: group yang ada, group baru, atau tanpa group; pick diisi test (tanpa quick pick) */
+export async function moveToGroup(n?: Node, pick?: string): Promise<void> {
+  const c = connOf(n);
+  if (!c) return;
+  try {
+    const NEW = '$(add) New group…', NONE = '$(close) No group';
+    let group = pick ?? (await vscode.window.showQuickPick([...conns.groups().filter((g) => g !== c.group), NEW, ...(c.group ? [NONE] : [])],
+      { title: `Move ${c.name} to group` }));
+    if (group === NEW) group = await vscode.window.showInputBox({ title: 'New group', placeHolder: 'e.g. prod, non-prod', validateInput: (v) => (v.trim() ? undefined : 'Name is required') });
+    if (group === undefined) return;
+    await conns.setGroup([c.name], group === NONE ? undefined : group);
+    explorer.refresh();
+  } catch (e) {
+    log.error(`moveToGroup - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Move to group failed: ${errMsg(e)}`);
+  }
+}
+
+/** klik kanan folder group -> Rename Group (semua koneksi di dalamnya); nama group yang sudah ada = digabung */
+export async function renameGroup(n?: Node, name?: string): Promise<void> {
+  if (n?.kind !== 'group') return;
+  try {
+    const to = name ?? (await vscode.window.showInputBox({ title: `Rename group ${n.group}`, value: n.group, validateInput: (v) => (v.trim() ? undefined : 'Name is required') }));
+    if (to === undefined || to.trim() === n.group) return;
+    await conns.setGroup(conns.list().filter((c) => c.group === n.group).map((c) => c.name), to);
+    explorer.refresh();
+  } catch (e) {
+    log.error(`renameGroup - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Rename group failed: ${errMsg(e)}`);
+  }
+}
+
 async function pickConnection(title: string): Promise<ConnectionInfo | undefined> {
   const list = conns.list();
   if (!list.length) {
@@ -486,7 +520,7 @@ async function pickConnection(title: string): Promise<ConnectionInfo | undefined
     return undefined;
   }
   const picked = await vscode.window.showQuickPick(
-    list.map((c) => ({ label: c.name, description: `${drivers[c.type].label} · ${c.user}@${address(c)}/${c.database}`, c })),
+    list.map((c) => ({ label: c.name, description: `${c.group ? `[${c.group}] ` : ''}${drivers[c.type].label} · ${c.user}@${address(c)}/${c.database}`, c })),
     { title },
   );
   return picked?.c;

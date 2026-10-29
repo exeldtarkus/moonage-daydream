@@ -42,7 +42,7 @@ export function openConnectionForm(
     vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
   panels.set(key, panel);
   panel.onDidDispose(() => panels.delete(key));
-  panel.webview.html = formHtml(panel.webview.cspSource, old);
+  panel.webview.html = formHtml(panel.webview.cspSource, old, conns.groups());
 
   const finalPassword = async (d: FormData) => (old && !d.password ? conns.password(old.name) : d.password);
   const reply = (msg: object) => panel.webview.postMessage(msg);

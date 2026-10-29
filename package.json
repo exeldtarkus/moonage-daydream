@@ -255,6 +255,18 @@
         "command": "moonageDaydream.revealSqlFile",
         "title": "Reveal in Explorer View",
         "category": "Moonage Daydream"
+      },
+      {
+        "command": "moonageDaydream.moveConnectionToGroup",
+        "title": "Move to Group…",
+        "category": "Moonage Daydream",
+        "icon": "$(folder-library)"
+      },
+      {
+        "command": "moonageDaydream.renameGroup",
+        "title": "Rename Group…",
+        "category": "Moonage Daydream",
+        "icon": "$(edit)"
       }
     ],
     "keybindings": [
@@ -485,6 +497,16 @@
           "command": "moonageDaydream.copySqlFileRelativePath",
           "when": "view == moonageDaydream.sqlFiles && viewItem =~ /^sql/",
           "group": "4_copy@2"
+        },
+        {
+          "command": "moonageDaydream.moveConnectionToGroup",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "1_conn@4"
+        },
+        {
+          "command": "moonageDaydream.renameGroup",
+          "when": "view == moonageDaydream.explorer && viewItem == group",
+          "group": "1_group"
         }
       ],
       "commandPalette": [
@@ -554,6 +576,14 @@
         },
         {
           "command": "moonageDaydream.revealSqlFile",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.moveConnectionToGroup",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.renameGroup",
           "when": "false"
         }
       ],
