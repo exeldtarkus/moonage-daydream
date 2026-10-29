@@ -735,17 +735,35 @@ async function completionTest(m: typeof import('../../extension')) {
 async function explorerTest(m: typeof import('../../extension')) {
   const ex = m.explorer;
   const conn = await connNode(ex);
-  const dbs = await ex.getChildren(conn);
-  assert.ok(!errOf(dbs) && dbs.length && dbs.every((n) => n.kind === 'db'), `databases: ${JSON.stringify(errOf(dbs))}`);
-  say(`explorer databases=${dbs.length}`);
+  // SQL Server: Databases / Security / Server Objects / SQL Server Agent (seperti extension mssql)
+  const top = await ex.getChildren(conn);
+  const label = (n: Node) => ex.getTreeItem(n).label;
+  assert.deepEqual(top.map(label), ['Databases', 'Security', 'Server Objects', 'SQL Server Agent'], 'server folders');
+  const dbFolder = await ex.getChildren(top[0]);
+  assert.equal(label(dbFolder[0]), 'System Databases', 'System Databases first');
+  const sysDbs = await ex.getChildren(dbFolder[0]);
+  assert.ok(sysDbs.some((n) => n.kind === 'db' && n.db === 'master') && !dbFolder.some((n) => n.kind === 'db' && n.db === 'master'), 'master only under System Databases');
+  const dbs = dbFolder.filter((n) => n.kind === 'db');
+  assert.ok(!errOf(dbFolder) && dbs.length, `databases: ${JSON.stringify(errOf(dbFolder))}`);
+  for (const f of [top[1], top[2]]) {
+    for (const sub of await ex.getChildren(f)) assert.ok(!errOf(await ex.getChildren(sub)), `${label(f)} / ${label(sub)}`);
+  }
+  say(`explorer databases=${dbs.length} system=${sysDbs.length}; Security / Server Objects folders load`);
   for (const db of dbs.slice(0, 10)) {
-    const [tables, views, procs] = await Promise.all((await ex.getChildren(db)).map((f) => ex.getChildren(f)));
+    const folders = await ex.getChildren(db);
+    assert.deepEqual(folders.map(label), ['Tables', 'Views', 'Synonyms', 'Programmability', 'Security'], 'database folders');
+    const tables = await ex.getChildren(folders[0]);
+    const views = await ex.getChildren(folders[1]);
+    const procs = await ex.getChildren((await ex.getChildren(folders[3]))[0]);
     for (const list of [tables, views, procs]) assert.ok(!errOf(list), `objects in ${db.kind === 'db' && db.db}: ${JSON.stringify(errOf(list))}`);
     const t = tables.find((n) => n.kind === 'obj');
     if (!t || t.kind !== 'obj') continue;
-    const cols = await ex.getChildren(t);
+    const tFolders = await ex.getChildren(t);
+    assert.deepEqual(tFolders.map(label), ['Columns', 'Keys', 'Constraints', 'Triggers', 'Indexes', 'Statistics'], 'table folders');
+    for (const f of tFolders.slice(1)) assert.ok(!errOf(await ex.getChildren(f)), `table ${label(f)}`);
+    const cols = await ex.getChildren(tFolders[0]);
     assert.ok(!errOf(cols) && cols[0]?.kind === 'col', `columns of ${t.obj.name}`);
-    say(`explorer ${t.db}: tables=${tables.length} views=${views.length} procs=${procs.length}; ${t.obj.schema}.${t.obj.name} columns=${cols.length} first=${cols[0].kind === 'col' && cols[0].label} (${cols[0].kind === 'col' && cols[0].description})`);
+    say(`explorer ${t.db}: tables=${tables.filter((n) => n.kind === 'obj').length} views=${views.filter((n) => n.kind === 'obj').length} procs=${procs.length}; ${t.obj.schema}.${t.obj.name} columns=${cols.length} first=${cols[0].kind === 'col' && cols[0].label} (${cols[0].kind === 'col' && cols[0].description})`);
     await vscode.commands.executeCommand('moonageDaydream.selectTop', t);
     await sleep(1500);
     const html = (m.results.location === 'panel' ? m.results.view?.webview.html : m.results.panel?.webview.html) ?? '';
@@ -1010,7 +1028,7 @@ async function serversUiTest(m: typeof import('../../extension')): Promise<numbe
       assert.ok(dbs.some((n) => n.kind === 'db' && n.db === db), `explorer databases: ${dbs.map((n) => ('db' in n ? n.db : n.kind)).join(', ')}`);
       const tables = await m.explorer.getChildren({ kind: 'folder', c, db, objKind: 'table' } as never);
       const item = tables.find((n) => n.kind === 'obj' && n.obj.name === 'item');
-      assert.ok(item, `explorer tables: ${tables.map((n) => ('obj' in n ? n.obj.name : n.kind)).join(', ')}`);
+      assert.ok(item, `explorer tables: ${tables.map((n) => (n.kind === 'obj' ? n.obj.name : n.kind)).join(', ')}`);
       const cols = await m.explorer.getChildren(item);
       assert.ok(cols.length >= 3, `explorer columns: ${cols.length}`);
 

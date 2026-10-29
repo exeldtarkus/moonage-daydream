@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { alterScript, execScript, fmtType, paramDefaults, poolConfig, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
+import { alterScript, backupScript, createTableScript, execScript, fmtType, fnScript, jobScript, killScript, paramDefaults, restoreScript, scriptAs, poolConfig, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
 import { cell, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
 import { affectedStatements, readOnlyBlocked, txEndStatement, ident, identifierChain, maskSql, parallelSafe, preview, readOnly, splitStatements, statementAt, statementSegments, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
@@ -381,4 +381,103 @@ test('statements: routine bodies stay whole (SQL Server to GO, MySQL BEGIN ... E
   const pg = 'CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql; SELECT $body$ a;b $body$;';
   assert.deepEqual(splitStatements(pg), ['CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;', 'SELECT $body$ a;b $body$;'], 'dollar-quoted strings');
   assert.ok(!maskSql('SELECT $x$ FROM t; $x$').includes('FROM'), 'masked like a string');
+});
+
+test('alterScript: functions and triggers (table and database triggers)', () => {
+  assert.equal(alterScript('CREATE FUNCTION dbo.f() RETURNS INT AS BEGIN RETURN 1 END'), 'CREATE OR ALTER FUNCTION dbo.f() RETURNS INT AS BEGIN RETURN 1 END');
+  assert.equal(alterScript('CREATE TRIGGER trg_db ON DATABASE FOR CREATE_TABLE AS SET NOCOUNT ON;'), 'CREATE OR ALTER TRIGGER trg_db ON DATABASE FOR CREATE_TABLE AS SET NOCOUNT ON;');
+});
+
+test('fnScript: scalar function = SELECT f(...) AS [result], table-valued = SELECT * FROM f(...)', () => {
+  const ps = [
+    { name: '@a', type: 'int', output: false, hasDefault: false },
+    { name: '@b', type: 'int', output: false, hasDefault: true },
+  ];
+  assert.equal(fnScript('Shop', { schema: 'dbo', name: 'twice' }, ps, false),
+    'SELECT [Shop].[dbo].[twice](\n    NULL -- @a int\n  , DEFAULT -- @b int (has default)\n) AS [result];');
+  assert.equal(fnScript('Shop', { schema: 'dbo', name: 'f_tvf' }, [ps[0]], true), 'SELECT * FROM [Shop].[dbo].[f_tvf](\n    NULL -- @a int\n);');
+  assert.equal(fnScript('Shop', { schema: 'dbo', name: 'now_utc' }, [], false), 'SELECT [Shop].[dbo].[now_utc]() AS [result];');
+  assert.equal(fnScript('Shop', { schema: 'dbo', name: 'all_rows' }, [], true), 'SELECT * FROM [Shop].[dbo].[all_rows]();');
+});
+
+test('scriptAs: SELECT / INSERT / UPDATE / DELETE / DROP / CREATE TABLE from columns and primary key', () => {
+  const t = { schema: 'dbo', name: 'orders' };
+  const cols = [{ name: 'id', type: 'int', nullable: false }, { name: 'code', type: 'varchar(10)', nullable: true }];
+  assert.equal(scriptAs('select', t, 'table', cols, ['id']), 'SELECT TOP (1000)\n    [id]\n  , [code]\nFROM [dbo].[orders];');
+  assert.equal(scriptAs('insert', t, 'table', cols, ['id']),
+    'INSERT INTO [dbo].[orders] (\n    [id]\n  , [code]\n)\nVALUES (\n    NULL -- id int\n  , NULL -- code varchar(10)\n);');
+  assert.equal(scriptAs('update', t, 'table', cols, ['id']), 'UPDATE [dbo].[orders]\nSET\n    [code] = NULL -- varchar(10)\nWHERE\n    [id] = NULL -- int\n;');
+  assert.equal(scriptAs('delete', t, 'table', cols, ['id']), 'DELETE FROM [dbo].[orders]\nWHERE\n    [id] = NULL -- int\n;');
+  assert.equal(scriptAs('delete', t, 'table', cols, []), 'DELETE FROM [dbo].[orders]\nWHERE\n    <condition>\n;', 'no primary key: condition to fill in');
+  assert.equal(scriptAs('drop', t, 'table', cols, ['id']), 'DROP TABLE [dbo].[orders];');
+  assert.equal(scriptAs('drop', { schema: 'dbo', name: 'p' }, 'procedure', [], []), 'DROP PROCEDURE [dbo].[p];');
+  assert.equal(scriptAs('drop', { schema: '', name: 'trg_db' }, 'trigger', [], []), 'DROP TRIGGER [trg_db] ON DATABASE;', 'database trigger');
+  assert.equal(scriptAs('create', t, 'table', cols, ['id']),
+    'CREATE TABLE [dbo].[orders] (\n    [id] int NOT NULL\n  , [code] varchar(10) NULL\n  , CONSTRAINT [PK_orders] PRIMARY KEY ([id])\n);');
+});
+
+test('server scripts: job start / stop, kill session (validated), backup / restore', () => {
+  assert.equal(jobScript('start', "nightly 'etl'"), "EXEC msdb.dbo.sp_start_job @job_name = N'nightly ''etl''';");
+  assert.equal(jobScript('stop', 'x'), "EXEC msdb.dbo.sp_stop_job @job_name = N'x';");
+  assert.equal(killScript('57'), 'KILL 57;');
+  assert.throws(() => killScript('57; DROP TABLE t'), /session id/);
+  assert.throws(() => killScript('0'), /session id/);
+  assert.equal(backupScript('Shop', '/var/opt/mssql/data/', '20261029_1530'),
+    "BACKUP DATABASE [Shop]\nTO DISK = N'/var/opt/mssql/data/Shop_20261029_1530.bak'\nWITH COPY_ONLY, INIT, CHECKSUM, STATS = 10;");
+  assert.equal(backupScript("O'Brien", 'C:\\Backup', 'x'), "BACKUP DATABASE [O'Brien]\nTO DISK = N'C:\\Backup\\O''Brien_x.bak'\nWITH COPY_ONLY, INIT, CHECKSUM, STATS = 10;");
+  assert.match(restoreScript('Shop', '/b/Shop.bak'), /^-- 1\. check the backup.*\nRESTORE FILELISTONLY FROM DISK = N'\/b\/Shop\.bak';\n.*\n-- RESTORE DATABASE \[Shop\] FROM DISK = N'\/b\/Shop\.bak' WITH REPLACE, RECOVERY, STATS = 10;$/s);
+});
+
+test('scriptAs: INSERT / UPDATE skip identity, computed and rowversion columns (SELECT keeps them)', () => {
+  const t = { schema: 'dbo', name: 'orders' };
+  const cols = [
+    { name: 'id', type: 'int', nullable: false, generated: true },
+    { name: 'code', type: 'varchar(10)', nullable: true },
+    { name: 'total', type: 'decimal(12,2)', nullable: true },
+    { name: 'total_tax', type: 'decimal(13,2)', nullable: true, generated: true },
+    { name: 'ver', type: 'timestamp', nullable: false, generated: true },
+  ];
+  assert.equal(scriptAs('insert', t, 'table', cols, ['id']),
+    'INSERT INTO [dbo].[orders] (\n    [code]\n  , [total]\n)\nVALUES (\n    NULL -- code varchar(10)\n  , NULL -- total decimal(12,2)\n);');
+  assert.equal(scriptAs('update', t, 'table', cols, ['id']),
+    'UPDATE [dbo].[orders]\nSET\n    [code] = NULL -- varchar(10)\n  , [total] = NULL -- decimal(12,2)\nWHERE\n    [id] = NULL -- int\n;');
+  assert.match(scriptAs('select', t, 'table', cols, ['id']), /\[total_tax\]\n  , \[ver\]\nFROM/);
+});
+
+test('createTableScript: identity, computed, default, collation, PK / unique / check, then foreign keys and indexes', () => {
+  const sql = createTableScript({
+    schema: 'dbo', name: 'orders',
+    columns: [
+      { name: 'id', type: 'int', nullable: false, identity: { seed: '1', increment: '1' } },
+      { name: 'code', type: 'varchar(10)', nullable: true, collation: 'Latin1_General_BIN' },
+      { name: 'qty', type: 'int', nullable: false, default: { name: 'df_qty', definition: '((0))' } },
+      { name: 'total', type: 'decimal(12,2)', nullable: true },
+      { name: 'total_tax', type: 'decimal(13,2)', nullable: true, computed: { definition: '([total]*(1.1))', persisted: true } },
+      { name: 'customer_id', type: 'int', nullable: true },
+    ],
+    keys: [
+      { name: 'pk_orders', primary: true, clustered: true, columns: [{ name: 'id', desc: false }] },
+      { name: 'uq_code', primary: false, clustered: false, columns: [{ name: 'code', desc: true }] },
+    ],
+    checks: [{ name: 'ck_qty', definition: '([qty]>=(0))' }],
+    foreignKeys: [{ name: 'fk_orders_customer', columns: ['customer_id'], refSchema: 'sales', refTable: 'customer', refColumns: ['id'], onDelete: 'CASCADE', onUpdate: 'NO_ACTION' }],
+    indexes: [{ name: 'ix_orders_customer', unique: false, clustered: false, columns: [{ name: 'customer_id', desc: false }], included: ['total'], filter: '([customer_id] IS NOT NULL)' }],
+  });
+  assert.equal(sql, [
+    'CREATE TABLE [dbo].[orders] (',
+    '    [id] int IDENTITY(1, 1) NOT NULL',
+    '  , [code] varchar(10) COLLATE Latin1_General_BIN NULL',
+    '  , [qty] int NOT NULL CONSTRAINT [df_qty] DEFAULT ((0))',
+    '  , [total] decimal(12,2) NULL',
+    '  , [total_tax] AS ([total]*(1.1)) PERSISTED',
+    '  , [customer_id] int NULL',
+    '  , CONSTRAINT [pk_orders] PRIMARY KEY CLUSTERED ([id] ASC)',
+    '  , CONSTRAINT [uq_code] UNIQUE NONCLUSTERED ([code] DESC)',
+    '  , CONSTRAINT [ck_qty] CHECK ([qty]>=(0))',
+    ');',
+    'ALTER TABLE [dbo].[orders] ADD CONSTRAINT [fk_orders_customer] FOREIGN KEY ([customer_id]) REFERENCES [sales].[customer] ([id]) ON DELETE CASCADE;',
+    'CREATE NONCLUSTERED INDEX [ix_orders_customer] ON [dbo].[orders] ([customer_id] ASC) INCLUDE ([total]) WHERE ([customer_id] IS NOT NULL);',
+  ].join('\n'));
+  assert.equal(createTableScript({ schema: 's', name: 't', columns: [{ name: 'a', type: 'int', nullable: true }], keys: [], checks: [], foreignKeys: [], indexes: [] }),
+    'CREATE TABLE [s].[t] (\n    [a] int NULL\n);', 'minimal table');
 });

@@ -1,6 +1,6 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
-import type { ConnectionInfo, Driver, ObjectKind, ProcParam } from './db';
+import type { ConnectionInfo, Driver, ListKind, ObjectKind, ProcParam } from './db';
 import { connectMs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
@@ -130,7 +130,7 @@ async function select<T>(conn: ConnectionInfo, password: string, sql: string, pa
   return rows as T[];
 }
 
-const KIND: Record<ObjectKind, string> = {
+const KIND: Record<ListKind, string> = {
   table: `SELECT table_schema AS \`schema\`, table_name AS name FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name`,
   view: `SELECT table_schema AS \`schema\`, table_name AS name FROM information_schema.tables WHERE table_schema = ? AND table_type = 'VIEW' ORDER BY table_name`,
   procedure: `SELECT routine_schema AS \`schema\`, routine_name AS name FROM information_schema.routines WHERE routine_schema = ? ORDER BY routine_name`,

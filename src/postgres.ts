@@ -1,6 +1,6 @@
 import { Client, Pool, types } from 'pg';
 import type { ClientConfig, PoolClient, QueryArrayResult } from 'pg';
-import type { ConnectionInfo, ObjectKind, ProcParam } from './db';
+import type { ConnectionInfo, ListKind, ObjectKind, ProcParam } from './db';
 import { connectMs, typedOptions } from './db';
 import { maskSql } from './sqlContext';
 import { driverLog } from './log';
@@ -146,7 +146,7 @@ async function select<T>(conn: ConnectionInfo, password: string, db: string | un
 }
 
 const SYSTEM = `NOT IN ('pg_catalog', 'information_schema', 'pg_toast')`;
-const KIND: Record<ObjectKind, string> = {
+const KIND: Record<ListKind, string> = {
   table: `SELECT table_schema AS schema, table_name AS name FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema ${SYSTEM} ORDER BY 1, 2`,
   view: `SELECT table_schema AS schema, table_name AS name FROM information_schema.views WHERE table_schema ${SYSTEM} ORDER BY 1, 2`,
   procedure: `SELECT DISTINCT routine_schema AS schema, routine_name AS name FROM information_schema.routines WHERE routine_schema ${SYSTEM} ORDER BY 1, 2`,

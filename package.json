@@ -109,6 +109,60 @@
         "icon": "$(play)"
       },
       {
+        "command": "moonageDaydream.scriptAs",
+        "title": "Script as…",
+        "category": "Moonage Daydream",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "moonageDaydream.startJob",
+        "title": "Start Job",
+        "category": "Moonage Daydream",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "moonageDaydream.stopJob",
+        "title": "Stop Job",
+        "category": "Moonage Daydream",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "moonageDaydream.activityMonitor",
+        "title": "Activity Monitor (sessions / blocking)",
+        "category": "Moonage Daydream",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "moonageDaydream.killSession",
+        "title": "Kill Session…",
+        "category": "Moonage Daydream",
+        "icon": "$(close)"
+      },
+      {
+        "command": "moonageDaydream.serverInfo",
+        "title": "Server Info",
+        "category": "Moonage Daydream",
+        "icon": "$(info)"
+      },
+      {
+        "command": "moonageDaydream.databaseInfo",
+        "title": "Database Info",
+        "category": "Moonage Daydream",
+        "icon": "$(info)"
+      },
+      {
+        "command": "moonageDaydream.backupDatabase",
+        "title": "Backup Database (script)…",
+        "category": "Moonage Daydream",
+        "icon": "$(save)"
+      },
+      {
+        "command": "moonageDaydream.restoreDatabase",
+        "title": "Restore Database (script)…",
+        "category": "Moonage Daydream",
+        "icon": "$(history)"
+      },
+      {
         "command": "moonageDaydream.setFileConnection",
         "title": "Change Connection for This File",
         "category": "Moonage Daydream"
@@ -423,47 +477,47 @@
         },
         {
           "command": "moonageDaydream.runProcedure",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^procedure\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(procedure|function)\\.def$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.runProcedure",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^procedure\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(procedure|function)\\.def$/",
           "group": "1_run@1"
         },
         {
           "command": "moonageDaydream.showDefinition",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure)\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure|function|trigger)\\.def$/",
           "group": "2_script@1"
         },
         {
           "command": "moonageDaydream.editObject",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure)\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure|function|trigger)\\.def$/",
           "group": "2_script@2"
         },
         {
           "command": "moonageDaydream.selectConnection",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.selectConnection",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "1_conn@1"
         },
         {
           "command": "moonageDaydream.editConnection",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "2_edit@1"
         },
         {
           "command": "moonageDaydream.removeConnection",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "9_delete@1"
         },
         {
           "command": "moonageDaydream.refreshExplorer",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn|db)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn|db)(\\.mssql)?$/",
           "group": "2_refresh"
         },
         {
@@ -518,12 +572,12 @@
         },
         {
           "command": "moonageDaydream.newQueryForDb",
-          "when": "view == moonageDaydream.explorer && viewItem == db",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^db(\\.mssql)?$/",
           "group": "1_query"
         },
         {
           "command": "moonageDaydream.newQueryForDb",
-          "when": "view == moonageDaydream.explorer && viewItem == db",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^db(\\.mssql)?$/",
           "group": "inline"
         },
         {
@@ -563,7 +617,7 @@
         },
         {
           "command": "moonageDaydream.moveConnectionToGroup",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "2_edit@4"
         },
         {
@@ -583,18 +637,63 @@
         },
         {
           "command": "moonageDaydream.renameConnection",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "2_edit@2"
         },
         {
           "command": "moonageDaydream.changeConnectionColor",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "2_edit@3"
         },
         {
           "command": "moonageDaydream.editConnection",
-          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.mssql)?$/",
           "group": "inline@2"
+        },
+        {
+          "command": "moonageDaydream.scriptAs",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view|procedure|function|trigger)\\.def$/",
+          "group": "2_script@3"
+        },
+        {
+          "command": "moonageDaydream.startJob",
+          "when": "view == moonageDaydream.explorer && viewItem == job",
+          "group": "1_job@1"
+        },
+        {
+          "command": "moonageDaydream.stopJob",
+          "when": "view == moonageDaydream.explorer && viewItem == job",
+          "group": "1_job@2"
+        },
+        {
+          "command": "moonageDaydream.activityMonitor",
+          "when": "view == moonageDaydream.explorer && viewItem == conn.mssql",
+          "group": "3_server@1"
+        },
+        {
+          "command": "moonageDaydream.killSession",
+          "when": "view == moonageDaydream.explorer && viewItem == conn.mssql",
+          "group": "3_server@2"
+        },
+        {
+          "command": "moonageDaydream.serverInfo",
+          "when": "view == moonageDaydream.explorer && viewItem == conn.mssql",
+          "group": "3_server@3"
+        },
+        {
+          "command": "moonageDaydream.databaseInfo",
+          "when": "view == moonageDaydream.explorer && viewItem == db.mssql",
+          "group": "3_db@1"
+        },
+        {
+          "command": "moonageDaydream.backupDatabase",
+          "when": "view == moonageDaydream.explorer && viewItem == db.mssql",
+          "group": "3_db@2"
+        },
+        {
+          "command": "moonageDaydream.restoreDatabase",
+          "when": "view == moonageDaydream.explorer && viewItem == db.mssql",
+          "group": "3_db@3"
         }
       ],
       "commandPalette": [

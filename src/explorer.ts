@@ -1,23 +1,29 @@
 import * as vscode from 'vscode';
 import type { Connections } from './connections';
-import { ConnectionInfo, DbObject, ObjectKind, address, drivers } from './db';
+import { ConnectionInfo, DbObject, ListKind, ObjectKind, address, drivers } from './db';
 import { CONN_COLORS } from './connColor';
+import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './mssqlTree';
 
 export type Node =
   | { kind: 'group'; group: string }
   | { kind: 'conn'; c: ConnectionInfo }
   | { kind: 'db'; c: ConnectionInfo; db: string }
-  | { kind: 'folder'; c: ConnectionInfo; db: string; objKind: ObjectKind }
+  | { kind: 'folder'; c: ConnectionInfo; db: string; objKind: ListKind }
   | { kind: 'obj'; c: ConnectionInfo; db: string; objKind: ObjectKind; obj: DbObject }
+  // SQL Server Object Explorer (mssqlTree): folder dan item non-objek (login, endpoint, key, index ...)
+  | { kind: 'mfolder'; c: ConnectionInfo; folder: string; db?: string; obj?: DbObject; full?: string }
+  | { kind: 'item'; c: ConnectionInfo; folder: string; db?: string; label: string; description?: string; full: string }
   | { kind: 'col'; label: string; description: string }
   | { kind: 'msg'; label: string; error?: boolean };
 
-const FOLDERS: { objKind: ObjectKind; label: string; icon: string }[] = [
+const FOLDERS: { objKind: ListKind; label: string; icon: string }[] = [
   { objKind: 'table', label: 'Tables', icon: 'table' },
   { objKind: 'view', label: 'Views', icon: 'eye' },
   { objKind: 'procedure', label: 'Stored Procedures', icon: 'symbol-method' },
 ];
-const icon = (k: ObjectKind) => FOLDERS.find((f) => f.objKind === k)!.icon;
+const ICONS: Record<ObjectKind, string> = { table: 'table', view: 'eye', procedure: 'symbol-method', function: 'symbol-function', trigger: 'zap' };
+const icon = (k: ObjectKind) => ICONS[k];
+const isMs = (c: ConnectionInfo) => c.type === 'mssql';
 
 /** Sidebar: koneksi → database → Tables / Views / Stored Procedures → objek → kolom. */
 export class Explorer implements vscode.TreeDataProvider<Node> {
@@ -49,20 +55,30 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
-          contextValue: 'conn',
+          contextValue: isMs(n.c) ? 'conn.mssql' : 'conn',
         });
       }
       case 'db':
-        return Object.assign(new vscode.TreeItem(n.db, C), { iconPath: new vscode.ThemeIcon('database'), contextValue: 'db' });
+        return Object.assign(new vscode.TreeItem(n.db, C), { iconPath: new vscode.ThemeIcon('database'), contextValue: isMs(n.c) ? 'db.mssql' : 'db' });
       case 'folder': {
         const f = FOLDERS.find((x) => x.objKind === n.objKind)!;
         return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder') });
       }
+      case 'mfolder': {
+        const f = MS_TREE[n.folder];
+        return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon(f.icon), contextValue: `ms.${n.folder}` });
+      }
+      case 'item': {
+        const it = MS_TREE[n.folder].item!;
+        return Object.assign(new vscode.TreeItem(n.label, it.children ? C : vscode.TreeItemCollapsibleState.None),
+          { description: n.description, tooltip: n.description ? `${n.label} · ${n.description}` : n.label, iconPath: new vscode.ThemeIcon(it.icon ?? 'circle-outline'), contextValue: it.context });
+      }
       case 'obj': {
         const d = drivers[n.c.type];
-        // procedure: anaknya parameter (bila driver mendukung); `.def` = Show Definition / Edit tersedia di menu
-        const open = n.objKind !== 'procedure' || d.parameters ? C : vscode.TreeItemCollapsibleState.None;
-        return Object.assign(new vscode.TreeItem(`${n.obj.schema}.${n.obj.name}`, open),
+        // procedure / function: anaknya parameter (bila driver mendukung), trigger: tanpa anak; `.def` = Show Definition / Edit di menu
+        const routine = n.objKind === 'procedure' || n.objKind === 'function';
+        const open = n.objKind === 'trigger' || (routine && !d.parameters) ? vscode.TreeItemCollapsibleState.None : C;
+        return Object.assign(new vscode.TreeItem(n.obj.schema ? `${n.obj.schema}.${n.obj.name}` : n.obj.name, open),
           { iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: `${n.objKind}${d.definition ? '.def' : ''}` });
       }
       case 'col':
@@ -86,16 +102,28 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       let out: Node[];
       switch (n.kind) {
         case 'conn':
-          out = (await d.databases(n.c, pw)).map((db) => ({ kind: 'db', c: n.c, db }));
+          out = isMs(n.c) ? MS_SERVER.map((folder) => ({ kind: 'mfolder', c: n.c, folder }))
+            : (await d.databases(n.c, pw)).map((db) => ({ kind: 'db', c: n.c, db }));
           break;
         case 'db':
-          out = FOLDERS.map((f) => ({ kind: 'folder', c: n.c, db: n.db, objKind: f.objKind }));
+          out = isMs(n.c) ? MS_DB.map((folder) => ({ kind: 'mfolder', c: n.c, folder, db: n.db }))
+            : FOLDERS.map((f) => ({ kind: 'folder', c: n.c, db: n.db, objKind: f.objKind }));
+          break;
+        case 'mfolder':
+          out = await this.msChildren(n, pw);
+          break;
+        case 'item':
+          out = await this.msChildren({ kind: 'mfolder', c: n.c, folder: MS_TREE[n.folder].item!.children!, db: n.db, full: n.full }, pw);
           break;
         case 'folder':
           out = (await d.objects(n.c, pw, n.db, n.objKind)).map((obj) => ({ kind: 'obj', c: n.c, db: n.db, objKind: n.objKind, obj }));
           break;
         case 'obj':
-          if (n.objKind === 'procedure') {
+          if (isMs(n.c) && (n.objKind === 'table' || n.objKind === 'view')) {
+            out = (n.objKind === 'table' ? MS_TABLE : MS_VIEW).map((folder) => ({ kind: 'mfolder', c: n.c, folder, db: n.db, obj: n.obj }));
+            break;
+          }
+          if (n.objKind === 'procedure' || n.objKind === 'function') {
             out = (await d.parameters!(n.c, pw, n.db, n.obj)).map((p) => ({
               kind: 'col', label: p.name, description: `${p.type}${p.output ? ', OUTPUT' : ''}${p.hasDefault ? ', default' : ''}`,
             }));
@@ -111,6 +139,34 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       this.log.error(`Explorer.getChildren - EXCEPTION CAUGHT | ${n.c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return [{ kind: 'msg', label: e instanceof Error ? e.message : String(e), error: true }];
     }
+  }
+
+  /** isi folder SQL Server: subfolder, lalu baris query katalog (database / objek / kolom / item) */
+  private async msChildren(n: Extract<Node, { kind: 'mfolder' }>, pw: string): Promise<Node[]> {
+    const f = MS_TREE[n.folder];
+    const d = drivers[n.c.type];
+    const subs: Node[] = (f.folders ?? []).map((folder) => ({ ...n, folder }));
+    if (f.columns && n.db && n.obj) {
+      return [...subs, ...(await d.columns(n.c, pw, n.db, n.obj)).map((col): Node => ({
+        kind: 'col', label: col.name, description: `${col.type}${col.nullable ? ', null' : ', not null'}`,
+      }))];
+    }
+    if (!f.sql) return subs;
+    const db = n.db ?? '';
+    const q = (x: string) => `[${x.replace(/]/g, ']]')}]`;
+    const full = n.obj ? `${q(db)}.${q(n.obj.schema)}.${q(n.obj.name)}` : n.full;
+    let rows: Awaited<ReturnType<NonNullable<typeof d.catalog>>>;
+    try {
+      rows = await d.catalog!(n.c, pw, f.sql(db), full);
+    } catch (e) {
+      const hint = permissionHint(n.folder, e);
+      if (!hint) throw e; // error lain: node error merah (getChildren)
+      this.log.error(`Explorer.msChildren ${n.folder} - EXCEPTION CAUGHT | ${n.c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+      return [...subs, { kind: 'msg', label: hint }];
+    }
+    return [...subs, ...rows.map((r): Node => (f.databases ? { kind: 'db', c: n.c, db: r.name }
+      : f.item?.obj ? { kind: 'obj', c: n.c, db, objKind: f.item.obj, obj: { schema: r.schema ?? '', name: r.name } }
+      : { kind: 'item', c: n.c, folder: n.folder, db: n.db, label: r.schema ? `${r.schema}.${r.name}` : r.name, description: r.description ?? undefined, full: r.name }))];
   }
 }
 

@@ -16,7 +16,7 @@ import { CONN_COLORS, colorLabel, isConnColor } from './connColor';
 import type { ConnColor } from './connColor';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
-import { splitBatches } from './mssql';
+import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
 import { addWhere, affectedStatements, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 import { importDbcode } from './connString';
@@ -243,6 +243,15 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.showDefinition', (n?: Node) => objectScript(n, 'show')),
     vscode.commands.registerCommand('moonageDaydream.editObject', (n?: Node) => objectScript(n, 'edit')),
     vscode.commands.registerCommand('moonageDaydream.runProcedure', (n?: Node) => objectScript(n, 'run')),
+    vscode.commands.registerCommand('moonageDaydream.scriptAs', scriptAsCommand),
+    vscode.commands.registerCommand('moonageDaydream.startJob', (n?: Node) => jobCommand(n, 'start')),
+    vscode.commands.registerCommand('moonageDaydream.stopJob', (n?: Node) => jobCommand(n, 'stop')),
+    vscode.commands.registerCommand('moonageDaydream.activityMonitor', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', ACTIVITY_SQL, true)),
+    vscode.commands.registerCommand('moonageDaydream.killSession', killCommand),
+    vscode.commands.registerCommand('moonageDaydream.serverInfo', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', SERVER_INFO_SQL, true)),
+    vscode.commands.registerCommand('moonageDaydream.databaseInfo', (n?: Node) => n?.kind === 'db' && openScript(n.c, n.db, DB_INFO_SQL, true)),
+    vscode.commands.registerCommand('moonageDaydream.backupDatabase', (n?: Node) => backupCommand(n, 'backup')),
+    vscode.commands.registerCommand('moonageDaydream.restoreDatabase', (n?: Node) => backupCommand(n, 'restore')),
     vscode.commands.registerCommand('moonageDaydream.moveResults', async () => {
       const picked = await vscode.window.showQuickPick(
         LOCATIONS.map((l) => ({ ...l, description: l.id === results.location ? '(current)' : '' })),
@@ -615,6 +624,93 @@ async function pickConnection(title: string): Promise<ConnectionInfo | undefined
  * show = definisi (CREATE ...), edit = script CREATE OR ALTER, run = script EXEC dengan parameter (tanpa parameter langsung dijalankan).
  * Script edit / run dengan parameter tidak pernah dijalankan otomatis.
  */
+/** tab SQL baru terikat ke koneksi + database; run = langsung dijalankan (query baca: activity / info) */
+async function openScript(c: ConnectionInfo, db: string, content: string, run = false) {
+  const doc = await vscode.workspace.openTextDocument({ language: 'sql', content });
+  await conns.bind(doc.uri.toString(), { conn: c.name, db });
+  await vscode.window.showTextDocument(doc, { preview: false });
+  updateFileStatus();
+  if (run) await runQuery();
+}
+
+/** Script as CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE (SQL Server): tab baru, tidak dijalankan */
+async function scriptAsCommand(n?: Node) {
+  if (n?.kind !== 'obj') return;
+  const d = drivers[n.c.type];
+  const data = n.objKind === 'table' || n.objKind === 'view';
+  const actions = [...(n.objKind === 'table' ? ['CREATE'] : ['CREATE', 'ALTER']), 'DROP', ...(data ? ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] : [])]
+    .filter((a) => !(a === 'INSERT' || a === 'UPDATE' || a === 'DELETE') || n.objKind === 'table');
+  const action = await vscode.window.showQuickPick(actions, { title: `Script ${n.obj.schema ? `${n.obj.schema}.` : ''}${n.obj.name} as` });
+  if (!action) return;
+  try {
+    const pw = await conns.password(n.c.name);
+    let content: string;
+    if (action === 'ALTER') content = await d.editScript!(n.c, pw, n.db, n.obj, n.objKind);
+    else if (action === 'CREATE' && n.objKind !== 'table') content = await d.definition!(n.c, pw, n.db, n.obj, n.objKind);
+    else if (action === 'CREATE' && d.createTableScript) content = await d.createTableScript(n.c, pw, n.db, n.obj);
+    else {
+      const [cols, pk] = data ? await Promise.all([d.columns(n.c, pw, n.db, n.obj), n.objKind === 'table' ? d.primaryKey(n.c, pw, n.db, n.obj) : Promise.resolve([])]) : [[], []];
+      content = scriptAs(action.toLowerCase() as Parameters<typeof scriptAs>[0], n.obj, n.objKind, cols, pk);
+    }
+    await openScript(n.c, n.db, content);
+  } catch (e) {
+    log.error(`scriptAs ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.db} / ${n.obj.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Script as ${action} failed: ${errMsg(e)}`);
+  }
+}
+
+/** SQL Server Agent: start / stop job setelah konfirmasi */
+async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
+  if (n?.kind !== 'item') return;
+  const ok = await vscode.window.showWarningMessage(`${action === 'start' ? 'Start' : 'Stop'} job "${n.label}" on ${n.c.name}?`, { modal: true }, action === 'start' ? 'Start' : 'Stop');
+  if (!ok) return;
+  try {
+    await drivers[n.c.type].run(n.c, await conns.password(n.c.name), jobScript(action, n.label));
+    log.info(`job ${action}: ${n.c.name} / ${n.label}`);
+    vscode.window.showInformationMessage(`Job "${n.label}" ${action === 'start' ? 'started' : 'stop requested'}.`);
+    explorer.refresh();
+  } catch (e) {
+    log.error(`jobCommand ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`${action === 'start' ? 'Start' : 'Stop'} job failed: ${errMsg(e)}`);
+  }
+}
+
+/** KILL session (SQL Server) setelah konfirmasi; id dari input, divalidasi angka */
+async function killCommand(n?: Node) {
+  if (n?.kind !== 'conn') return;
+  const id = await vscode.window.showInputBox({ title: `Kill session on ${n.c.name}`, prompt: 'Session id (session_id in Activity Monitor)', validateInput: (v) => {
+    try { killScript(v); return undefined; } catch (e) { return errMsg(e); } // pesan validasi di input box, bukan error
+  } });
+  if (!id) return;
+  const ok = await vscode.window.showWarningMessage(`Kill session ${id} on ${n.c.name}? Its open transaction is rolled back.`, { modal: true }, 'Kill');
+  if (!ok) return;
+  try {
+    await drivers[n.c.type].run(n.c, await conns.password(n.c.name), killScript(id));
+    log.info(`kill session ${id}: ${n.c.name}`);
+    vscode.window.showInformationMessage(`Session ${id} killed.`);
+  } catch (e) {
+    log.error(`killCommand - EXCEPTION CAUGHT | ${n.c.name} / ${id}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Kill session failed: ${errMsg(e)}`);
+  }
+}
+
+/** Backup / Restore (SQL Server): script di tab baru ke folder backup default server, dijalankan sendiri */
+async function backupCommand(n: Node | undefined, action: 'backup' | 'restore') {
+  if (n?.kind !== 'db') return;
+  try {
+    const pw = await conns.password(n.c.name);
+    const r = await drivers[n.c.type].run(n.c, pw, "SELECT CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS NVARCHAR(4000)) AS dir");
+    const dir = String(r.resultSets[0]?.rows[0]?.[0] ?? '');
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 13);
+    if (action === 'backup') return void await openScript(n.c, 'master', backupScript(n.db, dir, stamp));
+    const file = await vscode.window.showInputBox({ title: `Restore ${n.db}`, prompt: 'Backup file on the server', value: `${dir.replace(/[\\/]+$/, '')}${dir.includes('\\') ? '\\' : '/'}${n.db}.bak` });
+    if (file) await openScript(n.c, 'master', restoreScript(n.db, file));
+  } catch (e) {
+    log.error(`backupCommand ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`${action === 'backup' ? 'Backup' : 'Restore'} script failed: ${errMsg(e)}`);
+  }
+}
+
 async function objectScript(n: Node | undefined, mode: 'show' | 'edit' | 'run') {
   if (n?.kind !== 'obj') return;
   const d = drivers[n.c.type];

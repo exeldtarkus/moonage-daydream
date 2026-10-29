@@ -69,7 +69,10 @@ export interface QueryResult {
   durationMs: number;
 }
 
-export type ObjectKind = 'table' | 'view' | 'procedure';
+/** objek yang didaftar driver.objects() */
+export type ListKind = 'table' | 'view' | 'procedure';
+/** objek di explorer: ListKind + function / trigger (SQL Server) */
+export type ObjectKind = ListKind | 'function' | 'trigger';
 
 export interface DbObject {
   schema: string;
@@ -83,6 +86,8 @@ export interface Column {
   name: string;
   type: string;
   nullable: boolean;
+  /** nilai dibuat server (SQL Server identity / computed / rowversion): tidak diisi di INSERT / UPDATE */
+  generated?: boolean;
 }
 
 /** penerima baris export All Data; row() boleh mengembalikan Promise (backpressure) */
@@ -142,7 +147,7 @@ export interface Driver {
   stream(conn: ConnectionInfo, password: string, sql: string, signal: AbortSignal | undefined, sink: Sink): Promise<number>;
   /** explorer (read-only, query ke katalog) */
   databases(conn: ConnectionInfo, password: string): Promise<string[]>;
-  objects(conn: ConnectionInfo, password: string, db: string, kind: ObjectKind): Promise<DbObject[]>;
+  objects(conn: ConnectionInfo, password: string, db: string, kind: ListKind): Promise<DbObject[]>;
   columns(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<Column[]>;
   /** definisi view / procedure / function (teks CREATE ...); tidak ada = Show / Edit tidak tersedia */
   definition?(conn: ConnectionInfo, password: string, db: string, obj: DbObject, kind?: ObjectKind): Promise<string>;
@@ -150,8 +155,12 @@ export interface Driver {
   parameters?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<ProcParam[]>;
   /** Edit: script yang mengubah objek (CREATE OR ALTER / CREATE OR REPLACE / DROP + CREATE), tidak dijalankan otomatis */
   editScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject, kind: ObjectKind): Promise<string>;
+  /** Script as CREATE untuk tabel (lengkap: identity, computed, default, constraint, FK, index); tidak ada = kolom + PK saja */
+  createTableScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<string>;
   /** Run: script EXEC / CALL / SELECT dengan argumen; params = jumlah argumen (0 = langsung dijalankan) */
   runScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<{ sql: string; params: number }>;
+  /** SQL Server Object Explorer: baris query folder mssqlTree (@full = objek / item induk) */
+  catalog?(conn: ConnectionInfo, password: string, sql: string, full?: string): Promise<{ schema?: string; name: string; description?: string | null }[]>;
   /** query "SELECT TOP n" untuk tabel/view, sesuai dialek */
   selectTop(db: string, obj: DbObject, n: number): string;
   /** kolom primary key (urut key) tabel db.schema.name; kosong bila tidak ada PK */

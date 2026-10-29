@@ -77,18 +77,19 @@
   - [x] Body routine utuh saat dipecah per statement (lens Execute / statement di kursor / lint): SQL Server sampai GO, MySQL BEGIN ... END, PostgreSQL $$ ... $$
   - [x] MySQL / MariaDB: SHOW CREATE PROCEDURE / FUNCTION / VIEW, parameter dari information_schema.parameters, Run = CALL p(...) / SELECT f(...)
   - [x] PostgreSQL: pg_get_functiondef / pg_get_viewdef, procedure vs function (CALL vs SELECT), overload (nama sama, argumen beda), parameter dari pg_proc
-- [ ] SQL Server: struktur Object Explorer seperti extension mssql (referensi: marketplace ms-mssql.mssql), per tahap dengan TDD:
-  - [ ] Databases -> subfolder "System Databases" (master, model, msdb, tempdb, distribution; database_id <= 4 / is_distributor) terpisah dari database user
-  - [ ] Server Objects: Endpoints (sys.endpoints), Linked Servers (sys.servers is_linked; + test koneksi linked server), Triggers server (sys.server_triggers)
-  - [ ] Security (server): Logins, Server Roles (+ anggota), Credentials, Cryptographic Providers, Audits, Server Audit Specifications
-  - [ ] Per database: Tables (+ System Tables), Views (+ System Views), Synonyms, Programmability (Stored Procedures, Functions: table-valued / scalar / aggregate, Database Triggers, Types, Sequences), Security (Users, Roles, Schemas)
-  - [ ] Per tabel: Columns (PK / FK / tipe / null), Keys, Constraints, Triggers, Indexes, Statistics
-  - [ ] Script as: CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE untuk tabel, view, procedure, function, trigger (tab baru, tidak dijalankan otomatis)
-  - [ ] Fungsi / trigger: Show Definition / Edit (CREATE OR ALTER) / Run (SELECT dbo.f(...) / SELECT * FROM dbo.tvf(...)), sama seperti procedure
-  - [ ] SQL Server Agent: Jobs (status, last run, start / stop job), Job Activity
-  - [ ] Activity / sesi: sp_who2 / sys.dm_exec_requests (session, blocking, wait, query), kill session (dengan konfirmasi)
-  - [ ] Info server / database: versi, edition, collation, recovery model, ukuran file data / log
-  - [ ] Backup / Restore database (dialog, script BACKUP / RESTORE, dengan konfirmasi)
+- [ ] SQL Server: struktur Object Explorer seperti extension mssql (referensi: marketplace ms-mssql.mssql), per tahap dengan TDD — kode + unit test + query terverifikasi di SQL Server 2022 Docker, menunggu test real di VS Code (user):
+  - [x] Databases -> subfolder "System Databases" (master, model, msdb, tempdb, distribution; database_id <= 4 / is_distributor) terpisah dari database user
+  - [x] Server Objects: Endpoints (sys.endpoints), Linked Servers (sys.servers is_linked; + test koneksi linked server), Triggers server (sys.server_triggers)
+  - [x] Security (server): Logins, Server Roles (+ anggota), Credentials, Cryptographic Providers, Audits, Server Audit Specifications
+  - [x] Per database: Tables (+ System Tables), Views (+ System Views), Synonyms, Programmability (Stored Procedures, Functions: table-valued / scalar / aggregate, Database Triggers, Types, Sequences), Security (Users, Roles, Schemas)
+  - [x] Per tabel: Columns (PK / FK / tipe / null), Keys, Constraints, Triggers, Indexes, Statistics
+  - [x] Script as: CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE untuk tabel, view, procedure, function, trigger (tab baru, tidak dijalankan otomatis)
+  - [x] Fungsi / trigger: Show Definition / Edit (CREATE OR ALTER) / Run (SELECT dbo.f(...) / SELECT * FROM dbo.tvf(...)), sama seperti procedure
+  - [x] SQL Server Agent: Jobs (status, last run, start / stop job), Job Activity
+  - [x] Activity / sesi: sp_who2 / sys.dm_exec_requests (session, blocking, wait, query), kill session (dengan konfirmasi)
+  - [x] Info server / database: versi, edition, collation, recovery model, ukuran file data / log
+  - [x] Backup / Restore database (dialog, script BACKUP / RESTORE, dengan konfirmasi)
+  - [x] Batasan diperbaiki: CREATE TABLE lengkap (identity / computed / default / collation / PK / unique / check / FK / index INCLUDE + filter, uji bolak-balik identik di Docker), INSERT / UPDATE tanpa kolom identity / computed / rowversion, pesan izin (Jobs / Agent / Audits) bukan error merah + status service Agent, System Views per schema, Agent Start / Stop Job teruji (Docker dengan MSSQL_AGENT_ENABLED)
 
 ## Rilis
 - [x] README (EN + ID) + icon + screenshot (`node scripts/screenshots.js`, data contoh)

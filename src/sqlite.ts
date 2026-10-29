@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import type { Database, SqlJsStatic } from 'sql.js';
-import type { ConnectionInfo, ObjectKind } from './db';
+import type { ConnectionInfo, ListKind, ObjectKind } from './db';
 import { maskSql, splitStatements } from './sqlContext';
 import { sqlDriver } from './sqlDriver';
 import type { Link } from './sqlDriver';
@@ -56,7 +56,7 @@ function link(conn: ConnectionInfo, db: Database, session: boolean): Link {
   };
 }
 
-const KIND: Record<ObjectKind, string> = {
+const KIND: Record<ListKind, string> = {
   table: `SELECT 'main' AS schema, name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
   view: `SELECT 'main' AS schema, name FROM sqlite_master WHERE type = 'view' ORDER BY name`,
   procedure: '',
