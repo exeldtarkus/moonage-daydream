@@ -51,30 +51,39 @@ code --install-extension moonage-daydream-<version>.vsix
 
 Buka view **Moonage Daydream** di Activity Bar lalu klik **+** (**Add Connection**) di view **Connections**. Koneksi baru dibuat dalam dua langkah:
 
-1. **Pilih database**: kartu berlogo untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB. Kartu itu mengisi port default dan contoh username untuk tipe tersebut.
+1. **Pilih database**: di bawah header **New connection**, kartu berwarna khas tiap database, dengan logo, untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB. Kartu muncul dengan animasi singkat dan menampilkan **Connect →** saat di-hover (gerakan dikurangi bila OS meminta reduced motion). Kartu itu mengisi port default dan contoh username untuk tipe tersebut.
 2. **Isi form** untuk tipe itu. **Change database** (kanan atas) kembali ke langkah 1.
 
-![Langkah 1 koneksi baru: kartu SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB, masing-masing dengan logo dan deskripsi singkat](images/screenshots/new-connection.png)
+![Langkah 1 koneksi baru: header New connection dan kartu berwarna khas untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB, masing-masing dengan logo dan deskripsi singkat; kartu PostgreSQL yang di-hover menampilkan Connect →](images/screenshots/new-connection.png)
 
 Form dibagi menjadi beberapa bagian:
 
 - **Connection**: nama, **Group** dan **Color** (lihat di bawah);
 - **Server**: host dan port; untuk SQL Server juga instance name (port lalu ditentukan oleh SQL Server Browser). Untuk MongoDB host boleh berupa connection string lengkap `mongodb://` atau `mongodb+srv://`. Untuk SQLite bagian ini hanya berisi path file database;
-- **Authentication**: username dan password (**Show** menampilkannya); untuk SQL Server metode *SQL login* atau *Windows (NTLM)* dengan domain; untuk MongoDB auth database;
+- **Authentication**: username dan password (ikon mata menampilkan atau menyembunyikannya); untuk SQL Server metode *SQL login* atau *Windows (NTLM)* dengan domain; untuk MongoDB auth database;
 - **Options**: database default (opsional); untuk SQL Server *trust server certificate*.
 
 **Test connection** mengecek koneksi sebelum **Save connection**; hasilnya tampil di footer di samping tombol. **Edit Connection** langsung membuka form (langkah 2).
 
-![Edit koneksi PostgreSQL shop-pg: bagian Connection (Group prod, Color merah), Server, Authentication dan Options, dengan Test connection, Cancel dan Save connection di bawah](images/screenshots/connection.png)
+![Edit koneksi PostgreSQL shop-pg: bagian Connection (Group prod, Color merah dipilih dari 15 swatch warna), Server, Authentication (kolom password dengan ikon mata) dan Options, dengan Test connection, Cancel dan Save connection di bawah](images/screenshots/connection.png)
 
-**Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan koneksi untuk **Move to Group…**, atau folder group untuk **Rename Group…**. Di quick pick koneksi, group ditampilkan sebagai `[group]`.
+**Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan folder group untuk **Rename Group…**. Di quick pick koneksi, group ditampilkan sebagai `[group]`.
 
-**Color** (swatch: None, Red, Orange, Yellow, Green, Blue, Purple; warna chart dari tema VS Code) menandai koneksi:
+**Color** (swatch: None atau salah satu dari 15 warna: Red, Coral, Orange, Yellow, Gold, Lime, Green, Teal, Cyan, Sky, Blue, Purple, Magenta, Pink, Gray) menandai koneksi. Warnanya diambil dari tema VS Code (`charts.*` dan `terminal.ansi*`), jadi mengikuti tema terang maupun gelap:
 
 - di **Connections** nama koneksi tampil dengan warna itu dan badge ●;
 - di editor `.sql` yang terikat ke koneksi itu, ada bar berwarna di kiri semua baris, dan label `you are using connection <group> - <nama>` (tanpa group: `you are using connection <nama>`) tampil di akhir baris teratas yang terlihat, jadi tetap terlihat saat scroll.
 
 Pakai misalnya Red untuk koneksi production.
+
+Klik kanan koneksi di **Connections** untuk:
+
+- **Select Connection**: jadikan koneksi aktif;
+- **Edit Connection…** (juga tombol pensil di baris koneksi): buka form;
+- **Rename…**: nama baru yang unik; password tersimpan dan file `.sql` yang terikat ke koneksi ikut pindah ke nama baru;
+- **Change Color…**: quick pick dengan bulatan berwarna, atau *No color*;
+- **Move to Group…**;
+- **Delete Connection**: minta konfirmasi; password tersimpan ikut dihapus, dan file yang terikat kembali memakai koneksi aktif.
 
 Expand koneksi untuk melihat database, table, view, procedure dan kolom. Pakai ikon play pada table atau view untuk **Select Top 100**, atau ikon file baru pada database untuk **New SQL File** yang langsung terikat ke database itu.
 
@@ -180,7 +189,8 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 
 | Command | Keterangan |
 | --- | --- |
-| `Moonage Daydream: Add Connection` / `Edit Connection` / `Remove Connection` | Kelola koneksi |
+| `Moonage Daydream: Add Connection` / `Edit Connection…` / `Delete Connection` | Kelola koneksi |
+| `Moonage Daydream: Rename…` / `Change Color…` | Ganti nama atau warna koneksi (view Connections) |
 | `Moonage Daydream: Select Connection` | Pilih koneksi aktif |
 | `Moonage Daydream: Move to Group…` / `Rename Group…` | Group koneksi (view Connections) |
 | `Moonage Daydream: Change Connection for This File` / `Change Database for This File` | Koneksi dan database per file |
