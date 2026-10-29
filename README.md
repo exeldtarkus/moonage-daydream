@@ -49,15 +49,27 @@ code --install-extension moonage-daydream-<version>.vsix
 
 ### 1. Add a connection
 
-Open the **Moonage Daydream** view in the Activity Bar and click **+** (**Add Connection**) in the **Connections** view. Pick the **Database type**, then fill in the name, host, port, username, password and (optionally) the default database. **Test** checks the connection before saving.
+Open the **Moonage Daydream** view in the Activity Bar and click **+** (**Add Connection**) in the **Connections** view. A new connection takes two steps:
 
-![Connection form for a PostgreSQL connection with Group prod and Color Red](images/screenshots/connection.png)
+1. **Choose the database**: a card with a logo for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite and MongoDB. The card sets the default port and an example username for that type.
+2. **Fill in the form** for that type. **Change database** (top right) goes back to step 1.
 
-For SQL Server the form also has Windows authentication (domain), instance name and *trust server certificate*. For MongoDB the host may be a full `mongodb://` or `mongodb+srv://` connection string. For SQLite, enter the path of the database file.
+![Step 1 of a new connection: cards for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite and MongoDB, each with a logo and a short description](images/screenshots/new-connection.png)
+
+The form is split into sections:
+
+- **Connection**: name, **Group** and **Color** (see below);
+- **Server**: host and port; for SQL Server also the instance name (the port is then resolved by SQL Server Browser). For MongoDB the host may be a full `mongodb://` or `mongodb+srv://` connection string. For SQLite this section only has the path of the database file;
+- **Authentication**: username and password (**Show** reveals it); for SQL Server the method *SQL login* or *Windows (NTLM)* with a domain; for MongoDB the auth database;
+- **Options**: the default database (optional); for SQL Server *trust server certificate*.
+
+**Test connection** checks the connection before **Save connection**; the result is shown in the footer next to the buttons. **Edit Connection** opens the form (step 2) directly.
+
+![Editing the PostgreSQL connection shop-pg: sections Connection (Group prod, Color red), Server, Authentication and Options, with Test connection, Cancel and Save connection at the bottom](images/screenshots/connection.png)
 
 **Group** puts the connection in a folder in **Connections**: choose *No group*, an existing group, or *New group…* to type a new name. Each group folder shows the number of connections in it; **+** (**Add Connection**) on a group folder preselects that group. Right-click a connection for **Move to Group…**, or a group folder for **Rename Group…**. In the connection quick pick the group is shown as `[group]`.
 
-**Color** (None, Red, Orange, Yellow, Green, Blue, Purple; the chart colors of the VS Code theme) marks the connection:
+**Color** (a swatch: None, Red, Orange, Yellow, Green, Blue, Purple; the chart colors of the VS Code theme) marks the connection:
 
 - in **Connections** the connection name is shown in that color with a ● badge;
 - in a `.sql` editor bound to the connection, a colored bar runs along the left of all lines, and the label `you are using connection <group> - <name>` (without a group: `you are using connection <name>`) is shown at the end of the top visible line, so it stays visible while scrolling.
