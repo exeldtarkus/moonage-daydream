@@ -110,3 +110,17 @@ test('formHtml: sections (Connection, SSL/TLS, Timeouts, Permissions, Driver set
   assert.ok(edit.includes('value="appName"') && edit.includes('value="a&quot;b"'), 'driver settings rows, escaped');
   assert.ok(/id="ssl"[^>]*checked/.test(formHtml('csp', toConnection(ok))), 'SQL Server: SSL on by default');
 });
+
+test('Consul connection: card in the picker, token / datacenter fields, connection fields', async () => {
+  const { drivers } = await import('../db');
+  assert.equal(drivers.consul.label, 'Consul');
+  assert.equal(drivers.consul.defaultPort, 8500);
+  assert.equal(drivers.consul.transactions, false);
+  await assert.rejects(drivers.consul.run({ ...toConnection(ok), type: 'consul' }, '', 'SELECT 1'), /Consul.*KV/);
+  const html = formHtml('csp');
+  assert.ok(html.includes('data-type="consul"') && html.includes('data-port="8500"'), 'Consul card');
+  assert.ok(/class="[^"]*consul[^"]*"[^>]*>[^<]*<label for="password">|ACL token/.test(html), 'token field');
+  const c = toConnection({ ...ok, type: 'consul', port: '8500', user: 'ignored', database: ' dc1 ', instance: 'x', ssl: true });
+  assert.deepEqual([c.type, c.host, c.port, c.user, c.database, c.instance, c.ssl], ['consul', '192.0.2.10', 8500, '', 'dc1', undefined, true], 'datacenter in database, no user / instance');
+  assert.equal(validate({ ...ok, type: 'consul', port: '8500', user: '' }, { get: () => undefined }), undefined, 'no user needed');
+});

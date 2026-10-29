@@ -1,12 +1,13 @@
 import { mssqlDriver } from './mssql';
 import { mariadbDriver, mysqlDriver } from './mysql';
 import { mongoDriver } from './mongo';
+import { consulDriver } from './consul';
 import { postgresDriver } from './postgres';
 import { sqliteDriver } from './sqlite';
 
-export type DbType = 'mssql' | 'mysql' | 'mariadb' | 'postgres' | 'sqlite' | 'mongodb';
+export type DbType = 'mssql' | 'mysql' | 'mariadb' | 'postgres' | 'sqlite' | 'mongodb' | 'consul';
 /** dialek untuk literal / script UPDATE */
-export type Dialect = 'mssql' | 'mysql' | 'postgres' | 'sqlite' | 'mongodb';
+export type Dialect = 'mssql' | 'mysql' | 'postgres' | 'sqlite' | 'mongodb' | 'consul';
 
 export interface ConnectionInfo {
   name: string;
@@ -185,6 +186,7 @@ export const drivers: Record<DbType, Driver> = {
   postgres: postgresDriver,
   sqlite: sqliteDriver,
   mongodb: mongoDriver,
+  consul: consulDriver,
 };
 
 /**

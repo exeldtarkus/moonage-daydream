@@ -4,6 +4,7 @@ import { ConnectionInfo, DbObject, ListKind, ObjectKind, address, confirmAutoCom
 import { CONN_COLORS } from './connColor';
 import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './mssqlTree';
 import { monitorKit } from './monitorKits';
+import { ConsulClient, consulTarget, kvChildren } from './consul';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -14,6 +15,9 @@ export type Node =
   // SQL Server Object Explorer (mssqlTree): folder dan item non-objek (login, endpoint, key, index ...)
   | { kind: 'mfolder'; c: ConnectionInfo; folder: string; db?: string; obj?: DbObject; full?: string }
   | { kind: 'item'; c: ConnectionInfo; folder: string; db?: string; label: string; description?: string; full: string }
+  // Consul: key / folder KV (folder diakhiri /, '' = akar) dan Dashboard
+  | { kind: 'kv'; c: ConnectionInfo; key: string }
+  | { kind: 'consulDash'; c: ConnectionInfo }
   | { kind: 'col'; label: string; description: string }
   | { kind: 'msg'; label: string; error?: boolean };
 
@@ -51,13 +55,13 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       case 'conn': {
         const active = this.conns.active === n.c.name;
         return Object.assign(new vscode.TreeItem(n.c.name, C), {
-          description: `${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}${confirmAutoCommit(n.c, this.conns.groupSettings()) ? '' : ' · no commit confirm'}`,
+          description: `${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}${n.c.type === 'consul' || confirmAutoCommit(n.c, this.conns.groupSettings()) ? '' : ' · no commit confirm'}`,
           tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
           // logo jenis database; warna koneksi lewat ConnDecorations (nama berwarna + ●)
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
-          contextValue: isMs(n.c) ? 'conn.mssql' : monitorKit(n.c.type) ? 'conn.live' : 'conn',
+          contextValue: isMs(n.c) ? 'conn.mssql' : monitorKit(n.c.type) ? 'conn.live' : n.c.type === 'consul' ? 'conn.consul' : 'conn',
         });
       }
       case 'db':
@@ -66,6 +70,19 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         const f = FOLDERS.find((x) => x.objKind === n.objKind)!;
         return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder') });
       }
+      case 'kv': {
+        const folder = n.key.endsWith('/');
+        const label = n.key.replace(/\/$/, '').split('/').pop()!;
+        return Object.assign(new vscode.TreeItem(label, folder ? C : vscode.TreeItemCollapsibleState.None), {
+          iconPath: new vscode.ThemeIcon(folder ? 'folder' : 'key'), contextValue: folder ? 'kvFolder' : 'kvKey', tooltip: n.key,
+          ...(folder ? {} : { command: { command: 'moonageDaydream.consulOpenKey', title: 'Open', arguments: [n] } }),
+        });
+      }
+      case 'consulDash':
+        return Object.assign(new vscode.TreeItem('Dashboard', vscode.TreeItemCollapsibleState.None), {
+          iconPath: new vscode.ThemeIcon('dashboard'), contextValue: 'consulDash', tooltip: 'Leader, members, services and health, nodes',
+          command: { command: 'moonageDaydream.consulDashboard', title: 'Dashboard', arguments: [n] },
+        });
       case 'mfolder': {
         const f = MS_TREE[n.folder];
         return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon(f.icon), contextValue: `ms.${n.folder}` });
@@ -97,13 +114,20 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
     // level atas: folder group (urut nama), lalu koneksi tanpa group
     if (!n) return [...this.conns.groups().map((group): Node => ({ kind: 'group', group })), ...this.conns.list().filter((c) => !c.group).map((c): Node => ({ kind: 'conn', c }))];
     if (n.kind === 'group') return this.conns.list().filter((c) => c.group === n.group).map((c) => ({ kind: 'conn', c }));
-    if (n.kind === 'col' || n.kind === 'msg') return [];
+    if (n.kind === 'col' || n.kind === 'msg' || n.kind === 'consulDash') return [];
     const d = drivers[n.c.type];
     try {
       const pw = await this.conns.password(n.c.name);
-      let out: Node[];
+      let out: Node[] = [];
       switch (n.kind) {
+        case 'kv':
+          out = await this.kvChildren(n.c, pw, n.key);
+          break;
         case 'conn':
+          if (n.c.type === 'consul') {
+            out = [{ kind: 'consulDash', c: n.c }, ...(await this.kvChildren(n.c, pw, ''))];
+            break;
+          }
           out = isMs(n.c) ? MS_SERVER.map((folder) => ({ kind: 'mfolder', c: n.c, folder }))
             : (await d.databases(n.c, pw)).map((db) => ({ kind: 'db', c: n.c, db }));
           break;
@@ -141,6 +165,12 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       this.log.error(`Explorer.getChildren - EXCEPTION CAUGHT | ${n.c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return [{ kind: 'msg', label: e instanceof Error ? e.message : String(e), error: true }];
     }
+  }
+
+  /** satu level KV Consul di bawah prefix: folder dulu, lalu key */
+  private async kvChildren(c: ConnectionInfo, pw: string, prefix: string): Promise<Node[]> {
+    const { folders, keys } = kvChildren(await new ConsulClient(consulTarget(c), pw).keys(prefix), prefix);
+    return [...folders, ...keys].map((key): Node => ({ kind: 'kv', c, key }));
   }
 
   /** isi folder SQL Server: subfolder, lalu baris query katalog (database / objek / kolom / item) */

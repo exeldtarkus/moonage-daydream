@@ -80,6 +80,8 @@ export function toConnection(d: FormData): ConnectionInfo {
 function connectionOf(d: FormData): ConnectionInfo {
   const type = (d.type || 'mssql') as DbType;
   if (type === 'sqlite') return { name: d.name.trim(), type, host: '', port: 0, user: '', database: '', trustServerCertificate: false, file: d.file!.trim() };
+  // Consul: datacenter di field database, ACL token di password; tanpa user
+  if (type === 'consul') return { name: d.name.trim(), type, host: d.host.trim(), port: +d.port, user: '', database: d.database.trim(), trustServerCertificate: !!d.trust };
   if (type !== 'mssql') {
     return {
       name: d.name.trim(), type, host: d.host.trim(), port: +d.port, user: d.user.trim(), database: d.database.trim(), trustServerCertificate: !!d.trust,
@@ -96,22 +98,22 @@ function connectionOf(d: FormData): ConnectionInfo {
 /** deskripsi singkat di kartu pilih database */
 const DB_HINT: Record<DbType, string> = {
   mssql: 'Microsoft SQL Server, Azure SQL', mysql: 'MySQL 5.7 / 8.x', mariadb: 'MariaDB 10.x / 11.x',
-  postgres: 'PostgreSQL 12+', sqlite: 'Local database file', mongodb: 'MongoDB, Atlas (mongodb+srv)',
+  postgres: 'PostgreSQL 12+', sqlite: 'Local database file', mongodb: 'MongoDB, Atlas (mongodb+srv)', consul: 'HashiCorp Consul: KV store and service catalog',
 };
 /** warna brand untuk aksen kartu */
 const DB_BRAND: Record<DbType, string> = {
-  mssql: '#cc2927', mysql: '#00758f', mariadb: '#c0765a', postgres: '#336791', sqlite: '#0f80cc', mongodb: '#47a248',
+  mssql: '#cc2927', mysql: '#00758f', mariadb: '#c0765a', postgres: '#336791', sqlite: '#0f80cc', mongodb: '#47a248', consul: '#e03875',
 };
 const EYE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5 13.5 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
 /** kata lain yang cocok di pencarian database */
 const DB_ALIAS: Record<DbType, string> = {
-  mssql: 'mssql microsoft azure tsql t-sql', mysql: 'oracle', mariadb: 'maria', postgres: 'pg postgresql psql', sqlite: 'file local lite', mongodb: 'mongo atlas nosql document',
+  mssql: 'mssql microsoft azure tsql t-sql', mysql: 'oracle', mariadb: 'maria', postgres: 'pg postgresql psql', sqlite: 'file local lite', mongodb: 'mongo atlas nosql document', consul: 'hashicorp kv key value service catalog',
 };
 
 /** username contoh per tipe (diganti saat ganti tipe selama belum diubah user) */
-const DEFAULT_USER: Record<DbType, string> = { mssql: 'sa', mysql: 'root', mariadb: 'root', postgres: 'postgres', sqlite: '', mongodb: '' };
+const DEFAULT_USER: Record<DbType, string> = { mssql: 'sa', mysql: 'root', mariadb: 'root', postgres: 'postgres', sqlite: '', mongodb: '', consul: '' };
 
 /**
  * Form koneksi dua langkah: (1) pilih database (kartu + logo), (2) form per bagian untuk tipe itu. Edit langsung ke langkah 2.
@@ -311,8 +313,8 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
         <option value="windows"${old?.auth === 'windows' ? ' selected' : ''}>Windows (NTLM: domain \\ user + password)</option></select></div>
       <div class="field ms" id="domainrow"${old?.auth === 'windows' ? '' : ' hidden'}><label for="domain">Domain <span class="req">*</span></label><input type="text" id="domain" ${v(old?.domain)} placeholder="e.g. CORP"></div>
       <div class="grid2">
-        <div class="field"><label for="user">Username</label><input type="text" id="user" ${v(old?.user ?? DEFAULT_USER[old?.type ?? 'mssql'])}></div>
-        <div class="field"><label for="password">Password</label>
+        <div class="field noconsul"><label for="user">Username</label><input type="text" id="user" ${v(old?.user ?? DEFAULT_USER[old?.type ?? 'mssql'])}></div>
+        <div class="field"><label for="password" id="pwLabel">Password</label>
           <div class="pw"><input type="password" id="password" placeholder="${old ? 'Leave empty to keep current password' : ''}"><button type="button" class="eye" id="show" title="Show password" aria-label="Show password">${EYE}</button></div></div>
       </div>
       <div class="field mongo"><label for="authSource">Auth database</label><input type="text" id="authSource" ${v(old?.authSource)} placeholder="e.g. admin (where the user was created)"></div>
@@ -320,7 +322,7 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
 
     <section class="card net">
       <h2>Database</h2>
-      <div class="field"><label for="database">Database</label><input type="text" id="database" ${v(old?.database)} placeholder="empty = default database of the user"></div>
+      <div class="field"><label for="database" id="dbLabel">Database</label><input type="text" id="database" ${v(old?.database)} placeholder="empty = default database of the user"></div>
     </section>
   </div>
   <div class="panel" data-panel="ssl" hidden>
@@ -430,6 +432,11 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
     document.querySelectorAll('.net').forEach((e) => e.classList.toggle('off', t === 'sqlite'));
     document.querySelectorAll('.ms').forEach((e) => e.classList.toggle('off', t !== 'mssql'));
     document.querySelectorAll('.mongo').forEach((e) => e.classList.toggle('off', t !== 'mongodb'));
+    // Consul: tanpa username; password = ACL token, database = datacenter
+    document.querySelectorAll('.noconsul').forEach((e) => e.classList.toggle('off', t === 'consul'));
+    $('pwLabel').textContent = t === 'consul' ? 'ACL token' : 'Password';
+    $('dbLabel').textContent = t === 'consul' ? 'Datacenter' : 'Database';
+    $('database').placeholder = t === 'consul' ? 'empty = datacenter of the agent' : 'empty = default database of the user';
     document.querySelectorAll('[data-logo]').forEach((e) => (e.hidden = e.dataset.logo !== t));
     $('serverTitle').textContent = t === 'sqlite' ? 'Database file' : 'Server';
     if (!editing) $('title').textContent = 'New ' + LABEL[t] + ' connection';

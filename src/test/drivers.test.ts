@@ -76,7 +76,7 @@ test('connection form: type, SQLite file, default fields', () => {
   const my = toConnection({ ...base, type: 'mysql' });
   assert.equal(my.instance, undefined, 'mssql-only fields dropped');
   assert.equal(my.port, 3306);
-  assert.deepEqual(Object.keys(drivers).sort(), ['mariadb', 'mongodb', 'mssql', 'mysql', 'postgres', 'sqlite']);
+  assert.deepEqual(Object.keys(drivers).sort(), ['consul', 'mariadb', 'mongodb', 'mssql', 'mysql', 'postgres', 'sqlite']);
 });
 
 test('formatter follows the dialect', () => {

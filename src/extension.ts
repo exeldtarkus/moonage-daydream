@@ -20,6 +20,9 @@ import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, ki
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 import { monitorKit } from './monitorKits';
+import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
+import { ConsulClient, consulTarget, dashboardData } from './consul';
+import { consulDashboardHtml } from './consulDashHtml';
 import { monitorHtml } from './monitorHtml';
 import { permissionHint } from './mssqlTree';
 import { importDbcode } from './connString';
@@ -152,6 +155,17 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.addConnection', (n?: Node) => editConnection(undefined, n?.kind === 'group' ? n.group : undefined)),
     vscode.commands.registerCommand('moonageDaydream.importDbcode', importFromDbcode),
     vscode.commands.registerCommand('moonageDaydream.autoCommitConfirm', autoCommitConfirmCommand),
+    // Consul: value KV sebagai file moonage-consul:// (Ctrl+S = simpan), New / Delete Key, Dashboard
+    vscode.workspace.registerFileSystemProvider('moonage-consul', consulFs = new ConsulFs(ctx, conns, log, () => explorer.refresh())),
+    vscode.commands.registerCommand('moonageDaydream.consulOpenKey', (n?: Node) => n?.kind === 'kv' && openConsulKey(n.c, n.key).catch((e: unknown) => {
+      log.error(`consulOpenKey - EXCEPTION CAUGHT | ${n.c.name} / ${n.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      vscode.window.showErrorMessage(`Open key failed: ${errMsg(e)}`);
+    })),
+    vscode.commands.registerCommand('moonageDaydream.consulNewKey', (n?: Node) => (n?.kind === 'conn' || n?.kind === 'kv') && newConsulKey(consulFs, n.c, n.kind === 'kv' ? n.key : '')),
+    vscode.commands.registerCommand('moonageDaydream.consulDeleteKey', async (n?: Node) => {
+      if (n?.kind === 'kv' && (await deleteConsulKey(ctx, conns, log, n.c, n.key))) explorer.refresh();
+    }),
+    vscode.commands.registerCommand('moonageDaydream.consulDashboard', (n?: Node) => (n?.kind === 'consulDash' || n?.kind === 'conn') && consulDashboard(n.c)),
     vscode.commands.registerCommand('moonageDaydream.editConnection', async (n?: Node) => {
       const c = connOf(n) ?? (await pickConnection('Edit connection'));
       if (c) await editConnection(c);
@@ -789,6 +803,55 @@ function liveMonitor(n?: Node) {
   void tick();
 }
 
+/** Consul Dashboard: ringkasan leader / members / services + health / nodes tiap interval; berhenti saat tab tersembunyi / ditutup */
+function consulDashboard(c: ConnectionInfo) {
+  const panel = vscode.window.createWebviewPanel('moonageDaydream.consulDashboard', `Consul: ${c.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+  panel.webview.html = consulDashboardHtml(panel.webview.cspSource, c.database ? `${c.name} / ${c.database}` : c.name);
+  let interval = 10000;
+  let paused = false;
+  let disposed = false;
+  let busy = false;
+  let timer: NodeJS.Timeout | undefined;
+  const schedule = () => {
+    if (!disposed && !timer) timer = setTimeout(tick, interval);
+  };
+  async function tick() {
+    timer = undefined;
+    if (disposed) return;
+    if (paused || !panel.visible || busy) return schedule();
+    busy = true;
+    try {
+      void panel.webview.postMessage({ type: 'data', data: await dashboardData(new ConsulClient(consulTarget(c), await conns.password(c.name))) });
+    } catch (e) {
+      log.error(`consulDashboard - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      void panel.webview.postMessage({ type: 'error', message: errMsg(e) });
+    } finally {
+      busy = false;
+      schedule();
+    }
+  }
+  const restart = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    void tick();
+  };
+  panel.onDidChangeViewState(() => panel.visible && !paused && restart());
+  panel.onDidDispose(() => {
+    disposed = true;
+    if (timer) clearTimeout(timer);
+  });
+  panel.webview.onDidReceiveMessage((m: { type: string; ms?: number; paused?: boolean }) => {
+    if (m.type === 'interval' && m.ms) {
+      interval = Math.min(60000, Math.max(5000, m.ms));
+      restart();
+    } else if (m.type === 'pause') {
+      paused = !!m.paused;
+      if (!paused) restart();
+    }
+  });
+  void tick();
+}
+
 /** Backup / Restore (SQL Server): script di tab baru ke folder backup default server, dijalankan sendiri */
 async function backupCommand(n: Node | undefined, action: 'backup' | 'restore') {
   if (n?.kind !== 'db') return;
@@ -1020,6 +1083,8 @@ const dialectOf = (uri: vscode.Uri) => {
   const c = fileConn(uri);
   return c && drivers[c.type].dialect;
 };
+
+let consulFs: ConsulFs;
 
 /** sesi transaksi manual per file (key = uri) */
 export const txs = new Map<string, { session: Session; conn: string; db: string; statements: number }>();

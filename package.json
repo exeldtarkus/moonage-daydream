@@ -55,6 +55,30 @@
         "icon": "$(shield)"
       },
       {
+        "command": "moonageDaydream.consulOpenKey",
+        "title": "Open Key",
+        "category": "Moonage Daydream",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "moonageDaydream.consulNewKey",
+        "title": "New Key…",
+        "category": "Moonage Daydream",
+        "icon": "$(add)"
+      },
+      {
+        "command": "moonageDaydream.consulDeleteKey",
+        "title": "Delete Key…",
+        "category": "Moonage Daydream",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "moonageDaydream.consulDashboard",
+        "title": "Consul Dashboard",
+        "category": "Moonage Daydream",
+        "icon": "$(dashboard)"
+      },
+      {
         "command": "moonageDaydream.editConnection",
         "title": "Edit Connection…",
         "category": "Moonage Daydream",
@@ -726,6 +750,31 @@
           "command": "moonageDaydream.autoCommitConfirm",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
           "group": "4_safety@1"
+        },
+        {
+          "command": "moonageDaydream.consulNewKey",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.consul|kvFolder)$/",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.consulNewKey",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.consul|kvFolder)$/",
+          "group": "1_kv@1"
+        },
+        {
+          "command": "moonageDaydream.consulOpenKey",
+          "when": "view == moonageDaydream.explorer && viewItem == kvKey",
+          "group": "1_kv@1"
+        },
+        {
+          "command": "moonageDaydream.consulDeleteKey",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^kv(Key|Folder)$/",
+          "group": "1_kv@9"
+        },
+        {
+          "command": "moonageDaydream.consulDashboard",
+          "when": "view == moonageDaydream.explorer && viewItem == conn.consul",
+          "group": "3_server@0"
         }
       ],
       "commandPalette": [
@@ -811,6 +860,14 @@
         },
         {
           "command": "moonageDaydream.changeConnectionColor",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.consulOpenKey",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.consulDeleteKey",
           "when": "false"
         }
       ],
