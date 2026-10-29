@@ -151,7 +151,7 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | `Moonage Daydream: Add Connection` / `Edit Connection` / `Remove Connection` | Kelola koneksi |
 | `Moonage Daydream: Select Connection` | Pilih koneksi aktif |
 | `Moonage Daydream: Change Connection for This File` / `Change Database for This File` | Koneksi dan database per file |
-| `Moonage Daydream: Run Query (selection or whole file)` | Jalankan selection atau statement di posisi kursor |
+| `Moonage Daydream: Run Query (selection or statement at cursor)` | Jalankan selection atau statement di posisi kursor |
 | `Moonage Daydream: Explain (estimated plan)` / `Analyze (actual plan, SELECT only)` | Execution plan |
 | `Moonage Daydream: Cancel Query` / `Cancel All Running Queries` | Cancel di server |
 | `Moonage Daydream: Toggle Transaction Mode (Auto-commit / Manual)` | Ganti mode transaksi file |
@@ -176,6 +176,7 @@ npm install
 npm run compile          # TypeScript -> out/
 npm test                 # compile + unit test (node --test)
 npm run test:servers     # integration test ke MySQL 8.4, MariaDB 11.4, PostgreSQL 16, MongoDB 7 di Docker
+npm run test:servers-ui  # container Docker yang sama, ditest di Extension Development Host
 npm run test:real        # Extension Development Host ke koneksi SQL Server yang sudah ada (hanya SELECT)
 npm run package          # build .vsix (vsce)
 npm run install:local    # build + install ke VS Code lokal (tambah -- --force untuk install ulang versi yang sama)
@@ -183,6 +184,10 @@ node scripts/screenshots.js   # buat ulang gambar README (setelah npm run compil
 ```
 
 `npm run test:servers` butuh Docker. Script ini menjalankan container, menjalankan `src/test/servers.itest.ts`, lalu menghapus container dan image; set `KEEP_IMAGES=1` untuk menyimpan image untuk run berikutnya.
+
+`npm run test:servers-ui` menjalankan container Docker yang sama (MySQL, MariaDB, PostgreSQL, MongoDB) lalu menjalankan test di Extension Development Host (`scripts/real-test.sh servers`, `serversUiTest` di `src/test/real/index.ts`). Test ini menambahkan koneksi sementara bernama `__moonage_it_*` ke profil VS Code (plus file SQLite sementara), mencoba run / CodeLens / Load more / export / script UPDATE / Explain / transaksi manual / explorer / completion / format, lalu menghapus koneksi sementara beserta password-nya dan mengembalikan daftar koneksi persis seperti semula (backup daftar, tanpa password, ditulis ke `docs/main/backup/`). Container dan image dihapus setelah selesai kecuali `KEEP_IMAGES=1`.
+
+`npm run test:real` dan `npm run test:servers-ui` membuka URI `vscode://` lewat `powershell.exe`, jadi bisa dijalankan dari WSL dengan VS Code di Windows.
 
 ## Lisensi
 

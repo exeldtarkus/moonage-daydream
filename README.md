@@ -151,7 +151,7 @@ The extension also sets itself as the default formatter for `[sql]`.
 | `Moonage Daydream: Add Connection` / `Edit Connection` / `Remove Connection` | Manage connections |
 | `Moonage Daydream: Select Connection` | Choose the active connection |
 | `Moonage Daydream: Change Connection for This File` / `Change Database for This File` | Per-file connection and database |
-| `Moonage Daydream: Run Query (selection or whole file)` | Run the selection or the statement under the cursor |
+| `Moonage Daydream: Run Query (selection or statement at cursor)` | Run the selection or the statement under the cursor |
 | `Moonage Daydream: Explain (estimated plan)` / `Analyze (actual plan, SELECT only)` | Execution plans |
 | `Moonage Daydream: Cancel Query` / `Cancel All Running Queries` | Cancel on the server |
 | `Moonage Daydream: Toggle Transaction Mode (Auto-commit / Manual)` | Switch the file's transaction mode |
@@ -176,6 +176,7 @@ npm install
 npm run compile          # TypeScript -> out/
 npm test                 # compile + unit tests (node --test)
 npm run test:servers     # integration tests against MySQL 8.4, MariaDB 11.4, PostgreSQL 16, MongoDB 7 in Docker
+npm run test:servers-ui  # same Docker containers, tested in the Extension Development Host
 npm run test:real        # Extension Development Host against an existing SQL Server connection (SELECT only)
 npm run package          # build the .vsix (vsce)
 npm run install:local    # build + install into your local VS Code (add -- --force to reinstall the same version)
@@ -183,6 +184,10 @@ node scripts/screenshots.js   # regenerate the README images (after npm run comp
 ```
 
 `npm run test:servers` needs Docker. It starts the containers, runs `src/test/servers.itest.ts`, then removes the containers and images; set `KEEP_IMAGES=1` to keep the images for the next run.
+
+`npm run test:servers-ui` starts the same Docker containers (MySQL, MariaDB, PostgreSQL, MongoDB) and runs a test in the Extension Development Host (`scripts/real-test.sh servers`, `serversUiTest` in `src/test/real/index.ts`). It adds temporary connections named `__moonage_it_*` to your VS Code profile (plus a temporary SQLite file), exercises run / CodeLens / Load more / export / UPDATE script / Explain / manual transaction / explorer / completion / format, then removes the temporary connections and their passwords and restores the connection list exactly (a backup of the list, without passwords, is written to `docs/main/backup/`). Containers and images are removed afterwards unless `KEEP_IMAGES=1`.
+
+`npm run test:real` and `npm run test:servers-ui` open the `vscode://` URI with `powershell.exe`, so they work from WSL with VS Code on Windows.
 
 ## License
 

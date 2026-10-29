@@ -49,7 +49,7 @@
       },
       {
         "command": "moonageDaydream.runQuery",
-        "title": "Run Query (selection or whole file)",
+        "title": "Run Query (selection or statement at cursor)",
         "category": "Moonage Daydream",
         "icon": "$(play)"
       },
