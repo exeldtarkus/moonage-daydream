@@ -574,6 +574,7 @@
     "dev": "npm run compile && bash scripts/dev.sh",
     "test:real": "npm run compile && bash scripts/real-test.sh",
     "test:servers": "npm run compile && bash scripts/test-servers.sh",
+    "test:servers-ui": "npm run compile && bash scripts/test-servers.sh ui",
     "test": "npm run compile && node --test out/test/*.test.js",
     "package": "vsce package --skip-license",
     "install:local": "node scripts/install-local.js",

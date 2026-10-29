@@ -697,8 +697,174 @@ async function historyAndFormTest(m: typeof import('../../extension'), since: nu
   say(`PASS connection form opened; Test -> ${r.message}`);
 }
 
+/**
+ * UI dengan database di Docker (scripts/test-servers.sh ui): koneksi sementara __moonage_it_* ditambahkan lalu dihapus lagi;
+ * daftar koneksi user dibackup dulu ke docs/main/backup dan dicek sama persis setelah test. Database "shop" sekali pakai (boleh ditulis).
+ */
+const SERVER_PW = 'moonage-test'; // password container test lokal (scripts/test-servers.sh), bukan kredensial sungguhan
+async function serversUiTest(m: typeof import('../../extension')): Promise<number> {
+  const { drivers } = require('../../db') as typeof import('../../db');
+  const { testConnection } = require('../../connectionForm') as typeof import('../../connectionForm');
+  const IT = /^__moonage_it_/;
+  const store = (m.conns as unknown as { ctx: vscode.ExtensionContext }).ctx;
+  // koneksi test yang tertinggal dari run gagal sebelumnya tidak ikut dianggap milik user
+  const before = m.conns.list().filter((c) => !IT.test(c.name));
+  /** globalState bisa ditimpa nilai lama (beberapa jendela VS Code berbagi storage): tulis ulang sampai terbaca sesuai harapan */
+  const settle = async (ok: () => boolean, redo: () => Thenable<void>, what: string) => {
+    for (let i = 0; i < 20 && !ok(); i++) {
+      await sleep(250);
+      if (!ok()) await redo();
+    }
+    assert.ok(ok(), what);
+  };
+  const backup = join(__dirname, '..', '..', '..', 'docs', 'main', 'backup', `${new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)}_vscode-connections`);
+  mkdirSync(backup, { recursive: true });
+  writeFileSync(join(backup, 'connections.json'), JSON.stringify(before, null, 2)); // tanpa password (password di SecretStorage, tidak disentuh)
+  say(`backup connection list (${before.length}): ${backup}`);
+  const sqliteFile = join(FIXTURES, 'servers.sqlite');
+  rmSync(sqliteFile, { force: true });
+  writeFileSync(sqliteFile, '');
+  const base = { host: '127.0.0.1', database: 'shop', trustServerCertificate: false };
+  const list: import('../../db').ConnectionInfo[] = [
+    { ...base, name: '__moonage_it_mysql', type: 'mysql', port: 13306, user: 'root' },
+    { ...base, name: '__moonage_it_mariadb', type: 'mariadb', port: 13307, user: 'root' },
+    { ...base, name: '__moonage_it_postgres', type: 'postgres', port: 15432, user: 'postgres' },
+    { ...base, name: '__moonage_it_sqlite', type: 'sqlite', host: '', port: 0, user: '', database: '', file: sqliteFile },
+    { ...base, name: '__moonage_it_mongodb', type: 'mongodb', port: 27018, user: 'root', authSource: 'admin' },
+  ];
+  const outDir = join(FIXTURES, 'servers-export');
+  mkdirSync(outDir, { recursive: true });
+  let failed = 0;
+  for (const c of list) {
+    const d = drivers[c.type];
+    const mongo = c.type === 'mongodb';
+    const db = c.type === 'sqlite' ? 'main' : 'shop';
+    try {
+      await m.conns.save(c, SERVER_PW);
+      await settle(() => !!m.conns.get(c.name), () => m.conns.save(c, SERVER_PW), `connection ${c.name} saved`);
+      const rows = Array.from({ length: 250 }, (_, i) => `(${i + 1}, 'item ${i + 1}', ${(i + 1) / 2})`).join(', ');
+      await d.run(c, SERVER_PW, mongo
+        ? "db.item.drop(); db.item.insertMany(Array.from({ length: 250 }, (_, i) => ({ _id: i + 1, name: 'item ' + (i + 1), price: (i + 1) / 2 })));"
+        : `DROP TABLE IF EXISTS item; CREATE TABLE item (id INT PRIMARY KEY, name VARCHAR(50) NOT NULL, price DECIMAL(10,2)); INSERT INTO item VALUES ${rows};`);
+
+      const t = await testConnection(c, SERVER_PW, { error: () => undefined } as unknown as vscode.LogOutputChannel);
+      assert.ok(t.ok, `test connection: ${t.message}`);
+
+      // Execute lewat command (binding file -> koneksi + database), auto limit 100
+      const query = mongo ? 'db.item.find({}).sort({ _id: 1 });\n' : 'SELECT * FROM item ORDER BY id;\n';
+      const doc = await fixture(`servers-${c.type}`, query);
+      await m.conns.bind(doc.uri.toString(), { conn: c.name, db });
+      await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+      await vscode.commands.executeCommand('moonageDaydream.runQuery');
+      let html = resultHtml(m);
+      assert.ok(html.includes('100 row(s) · auto limit 100') && html.includes('item 3') && !html.includes('class="err"'),
+        `run: ${html.match(/<h3>[^\n]*|class="err">[^<]*/)?.[0]}`);
+      assert.ok(/<th data-c="0"[^>]*class="num"/.test(html), 'id column right aligned (numeric type)');
+
+      // CodeLens sesuai driver: Analyze hanya SQL selain SQLite, mode transaksi tidak ada di MongoDB
+      const lenses = ((await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri)) ?? []).map((l) => l.command?.title ?? '');
+      assert.ok(lenses.some((x) => x.includes('Execute')) && lenses.some((x) => x.includes('Explain')), `lenses: ${lenses.join(' | ')}`);
+      assert.equal(lenses.some((x) => x.includes('Analyze')), !mongo && c.type !== 'sqlite', `Analyze lens: ${lenses.join(' | ')}`);
+      const diag = () => `binding=${JSON.stringify(m.conns.binding(doc.uri.toString()))} raw=${JSON.stringify(store.globalState.get<Record<string, unknown>>('fileBindings', {})[doc.uri.toString()])} list=${m.conns.list().map((x) => x.name).join(',')}`;
+      assert.equal(lenses.some((x) => x.includes('Auto-commit')), !mongo, `transaction lens: ${lenses.join(' | ')} | ${diag()}`);
+
+      // Load more, export All Data, script UPDATE (SQL)
+      let extra = 'mongo: no Load more / edit';
+      if (!mongo) {
+        assert.equal(await m.loadMore({ type: 'more', set: 0 } as never), 150, 'load more appends the remaining 150 rows');
+        const csv = vscode.Uri.file(join(outDir, `${c.type}.csv`));
+        assert.equal(await m.exportResult({ type: 'export', set: 0, scope: 'all', format: 'csv' } as never, csv), 250, 'export all data');
+        const upd = await m.editScript({ type: 'edits', set: 0, edits: [{ row: 0, col: 1, value: "it's" }] } as never);
+        const script = upd?.getText() ?? '';
+        assert.ok(/UPDATE .*item/.test(script) && script.includes("'it''s'") && /WHERE .*id.* = 1;/.test(script), `update script: ${script}`);
+        await closeUntitled();
+        extra = 'load more 250, export 250, UPDATE script';
+      }
+
+      // Explain: grid hasil EXPLAIN tanpa error
+      await m.explainQuery('estimated', doc.uri, 0, query.length - 1);
+      html = resultHtml(m);
+      assert.ok(html.includes('<table class="rs"') && !html.includes('class="err"'), `explain: ${html.match(/class="err">[^<]*/)?.[0]}`);
+
+      // transaksi manual: UPDATE lalu Rollback (data tidak berubah)
+      if (!mongo) {
+        await m.setTransactionMode(doc.uri, 'manual');
+        const tx = await fixture(`servers-${c.type}-tx`, "UPDATE item SET name = 'tx' WHERE id = 1;\n");
+        await m.conns.bind(tx.uri.toString(), { conn: c.name, db });
+        await m.setTransactionMode(tx.uri, 'manual');
+        await vscode.window.showTextDocument(tx, vscode.ViewColumn.One);
+        await vscode.commands.executeCommand('moonageDaydream.runQuery');
+        assert.ok(m.txs.get(tx.uri.toString())?.session.open, 'transaction open');
+        await m.endTransaction('rollback', tx.uri);
+        await m.setTransactionMode(tx.uri, 'auto');
+        await m.setTransactionMode(doc.uri, 'auto');
+        const name = (await d.run(c, SERVER_PW, 'SELECT name FROM item WHERE id = 1')).resultSets[0].rows[0][0];
+        assert.equal(name, 'item 1', 'rollback kept the row');
+      }
+
+      // Explorer: database -> Tables -> item -> kolom
+      const dbs = await m.explorer.getChildren({ kind: 'conn', c } as never);
+      assert.ok(dbs.some((n) => n.kind === 'db' && n.db === db), `explorer databases: ${dbs.map((n) => ('db' in n ? n.db : n.kind)).join(', ')}`);
+      const tables = await m.explorer.getChildren({ kind: 'folder', c, db, objKind: 'table' } as never);
+      const item = tables.find((n) => n.kind === 'obj' && n.obj.name === 'item');
+      assert.ok(item, `explorer tables: ${tables.map((n) => ('obj' in n ? n.obj.name : n.kind)).join(', ')}`);
+      const cols = await m.explorer.getChildren(item);
+      assert.ok(cols.length >= 3, `explorer columns: ${cols.length}`);
+
+      // autocomplete tabel / collection
+      const comp = await fixture(`servers-${c.type}-complete`, mongo ? 'db.it' : 'SELECT * FROM it');
+      await m.conns.bind(comp.uri.toString(), { conn: c.name, db });
+      m.completion.clear();
+      const items = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', comp.uri, comp.positionAt(comp.getText().length));
+      const labels = items.items.map((x) => (typeof x.label === 'string' ? x.label : x.label.label));
+      assert.ok(labels.some((l) => l === 'item' || l.endsWith('.item')), `completion: ${labels.slice(0, 10).join(', ')}`);
+
+      // formatter dialek (MongoDB: tidak di-format)
+      const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>('vscode.executeFormatDocumentProvider', doc.uri, { tabSize: 2, insertSpaces: true });
+      if (!mongo) assert.ok((edits ?? []).length >= 1, 'format edits'); // formatter extension lain di jendela dev boleh ikut memberi edit
+      say(`PASS ${d.label} UI: run auto limit 100, lenses [${lenses.filter((x) => !x.startsWith('$(server)') && !x.startsWith('$(database)')).join(' | ')}], ${extra}, explain, explorer, completion, format`);
+    } catch (e) {
+      failed++;
+      say(`FAIL ${d.label} UI: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      await m.conns.remove(c.name);
+      await settle(() => !m.conns.get(c.name), () => m.conns.remove(c.name), `connection ${c.name} removed`);
+      await d.close(c.name).catch((e: unknown) => say(`close ${c.name}: ${e instanceof Error ? e.message : e}`));
+    }
+  }
+  rmSync(outDir, { recursive: true, force: true });
+  rmSync(sqliteFile, { force: true });
+  // kembalikan daftar persis seperti sebelum test (tanpa __moonage_it_*), hapus password sementara, cek lagi setelah jeda
+  for (const c of m.conns.list().filter((x) => IT.test(x.name))) await store.secrets.delete(`moonageDaydream.password.${c.name}`);
+  for (const c of list) await store.secrets.delete(`moonageDaydream.password.${c.name}`);
+  await settle(() => JSON.stringify(m.conns.list()) === JSON.stringify(before), () => store.globalState.update('connections', before), 'connection list restored');
+  await sleep(3000);
+  await settle(() => JSON.stringify(m.conns.list()) === JSON.stringify(before), () => store.globalState.update('connections', before), 'connection list still restored after 3 s');
+  say(`connection list restored (${before.length})`);
+  return failed;
+}
+
 export async function run(only?: string): Promise<void> {
   userUntitled = new Set(untitledTabs().map((u) => u.toString()));
+  if (only === 'servers') {
+    mkdirSync(OUT, { recursive: true });
+    writeFileSync(REPORT, '');
+    await vscode.extensions.getExtension('exeltarkus.moonage-daydream')!.activate();
+    const m = require('../../extension') as typeof import('../../extension');
+    const hist0 = m.history.list();
+    const active = m.conns.active;
+    let failed = 1;
+    try {
+      failed = await serversUiTest(m);
+    } catch (e) {
+      say(`FAIL servers: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      await (m.history as unknown as { state: vscode.Memento }).state.update('queryHistory', hist0);
+      await m.conns.setActive(active);
+      say(`DONE failed=${failed}`);
+    }
+    return;
+  }
   if (only === 'big') {
     mkdirSync(OUT, { recursive: true });
     writeFileSync(REPORT, '');

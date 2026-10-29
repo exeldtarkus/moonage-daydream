@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test driver MySQL / MariaDB / PostgreSQL / MongoDB ke server sungguhan di Docker (database "shop" sementara).
-# run: npm run test:servers   -> container + image dihapus lagi setelah selesai (KEEP_IMAGES=1 = image disimpan untuk run berikutnya)
+# run: npm run test:servers (driver) / npm run test:servers-ui (VS Code)   -> container + image dihapus lagi setelah selesai (KEEP_IMAGES=1 = image disimpan untuk run berikutnya)
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 PW=moonage-test # password container test lokal sekali pakai (bukan kredensial sungguhan)
@@ -31,4 +31,9 @@ for _ in $(seq 1 90); do ready && break; sleep 2; done
 ready || { echo "[servers] servers not ready after 180 s"; docker ps -a; exit 1; }
 echo "[servers] ready"
 
-cd "$root" && MOONAGE_TEST_PW=$PW node --test out/test/servers.itest.js
+# ui = test di Extension Development Host (koneksi sementara di profil VS Code, dihapus lagi); default = test driver di Node
+if [ "${1:-}" = ui ]; then
+  bash "$root/scripts/real-test.sh" servers
+else
+  cd "$root" && MOONAGE_TEST_PW=$PW node --test out/test/servers.itest.js
+fi
