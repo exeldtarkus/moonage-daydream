@@ -38,6 +38,9 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
   /** extensionUri: logo database di media/db/<type>.svg */
   constructor(private conns: Connections, private log: vscode.LogOutputChannel, private extensionUri?: vscode.Uri) {}
 
+  /** status "connected" koneksi (diisi extension: pool / transaksi / panel terbuka) */
+  connected: (c: ConnectionInfo) => boolean = () => false;
+
   refresh(node?: Node): void {
     this.changed.fire(node);
   }
@@ -55,7 +58,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       case 'conn': {
         const active = this.conns.active === n.c.name;
         return Object.assign(new vscode.TreeItem(n.c.name, C), {
-          description: `${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}${n.c.type === 'consul' || confirmAutoCommit(n.c, this.conns.groupSettings()) ? '' : ' · no commit confirm'}`,
+          description: `${this.connected(n.c) ? '● connected · ' : ''}${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}${n.c.type === 'consul' || confirmAutoCommit(n.c, this.conns.groupSettings()) ? '' : ' · no commit confirm'}`,
           tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
           // logo jenis database; warna koneksi lewat ConnDecorations (nama berwarna + ●)
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)

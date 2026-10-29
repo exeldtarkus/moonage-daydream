@@ -310,6 +310,7 @@ export const mongoDriver: Driver = {
   },
   primaryKey: async () => ['_id'],
   selectTop: (_db, obj, n) => `db.getCollection(${JSON.stringify(obj.name)}).find({}).limit(${n});`,
+  isOpen: (name) => clients.has(name),
   async close(name) {
     const c = clients.get(name);
     clients.delete(name);

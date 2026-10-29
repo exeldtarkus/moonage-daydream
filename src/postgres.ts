@@ -215,6 +215,7 @@ export const postgresDriver = sqlDriver({
     return { sql: (rs.length > 1 ? `-- ${rs.length} overloads: run the one you need\n` : '') + scripts.join('\n\n'),
       params: rs.length > 1 ? rs.length : pgArgs(rs[0].args).length };
   },
+  isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`)),
   async close(name) {
     const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
     for (const [k] of mine) pools.delete(k);

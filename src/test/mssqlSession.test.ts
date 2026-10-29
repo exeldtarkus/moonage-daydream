@@ -238,3 +238,13 @@ test('mssql session: rowsAffected holds only non-SELECT statements', async () =>
   assert.equal(r.resultSets.length, 1);
   await s.close();
 });
+
+test('mssql driver isOpen: pool opened by a query, gone after close (Disconnect)', async () => {
+  Object.assign(server, { n: 0, spid: 51, log: [] });
+  const c2 = { ...conn, name: 'open-check' };
+  assert.equal(mssqlDriver.isOpen!('open-check'), false, 'not used yet');
+  await mssqlDriver.run(c2, 'pw', 'SELECT 1');
+  assert.equal(mssqlDriver.isOpen!('open-check'), true);
+  await mssqlDriver.close('open-check');
+  assert.equal(mssqlDriver.isOpen!('open-check'), false);
+});

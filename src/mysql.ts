@@ -200,6 +200,7 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
       const [type, ps] = await Promise.all([routineType(conn, password, db, obj.name), mysqlLike.parameters!(conn, password, db, obj)]);
       return { sql: myRunScript(db, obj.name, type, ps), params: ps.length };
     },
+    isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`)),
     async close(name) {
       const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
       for (const [k] of mine) pools.delete(k);

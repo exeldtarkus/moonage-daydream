@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, PAGE_ROWS, QueryResult, ResultSet, Session, address, confirmAutoCommit, drivers, openSession, schemaOf } from './db';
+import { ConnectionInfo, PAGE_ROWS, QueryResult, ResultSet, Session, address, confirmAutoCommit, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -57,6 +57,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'moonageDaydream.selectConnection';
   explorer = new Explorer(conns, log, ctx.extensionUri);
+  explorer.connected = isConnected;
+  ctx.subscriptions.push(conns.used.event(touchConn), idleWatcher());
   connDecorations = new ConnDecorations(conns);
   updateFormatterContext(ctx);
   vscode.workspace.textDocuments.forEach(lintDoc);
@@ -155,6 +157,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.addConnection', (n?: Node) => editConnection(undefined, n?.kind === 'group' ? n.group : undefined)),
     vscode.commands.registerCommand('moonageDaydream.importDbcode', importFromDbcode),
     vscode.commands.registerCommand('moonageDaydream.autoCommitConfirm', autoCommitConfirmCommand),
+    vscode.commands.registerCommand('moonageDaydream.connect', (n?: Node) => n?.kind === 'conn' && connectCommand(n.c)),
+    vscode.commands.registerCommand('moonageDaydream.disconnect', (n?: Node) => n?.kind === 'conn' && disconnect(n.c)),
     // Consul: value KV sebagai file moonage-consul:// (Ctrl+S = simpan), New / Delete Key, Dashboard
     vscode.workspace.registerFileSystemProvider('moonage-consul', consulFs = new ConsulFs(ctx, conns, log, () => explorer.refresh())),
     vscode.commands.registerCommand('moonageDaydream.consulOpenKey', (n?: Node) => n?.kind === 'kv' && openConsulKey(n.c, n.key).catch((e: unknown) => {
@@ -727,7 +731,7 @@ function liveMonitor(n?: Node) {
   // SQL Server: DMV dibaca dari master; MySQL / PostgreSQL: database koneksi (statistik server tetap terbaca)
   const c = node.c.type === 'mssql' ? { ...node.c, database: 'master' } : node.c;
   const d = drivers[node.c.type];
-  const panel = vscode.window.createWebviewPanel('moonageDaydream.monitor', `Monitor: ${title}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+  const panel = trackPanel(node.c.name, vscode.window.createWebviewPanel('moonageDaydream.monitor', `Monitor: ${title}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
   panel.webview.html = monitorHtml(panel.webview.cspSource, title, db !== undefined, kit);
   let interval = 5000;
   let paused = false;
@@ -805,7 +809,7 @@ function liveMonitor(n?: Node) {
 
 /** Consul Dashboard: ringkasan leader / members / services + health / nodes tiap interval; berhenti saat tab tersembunyi / ditutup */
 function consulDashboard(c: ConnectionInfo) {
-  const panel = vscode.window.createWebviewPanel('moonageDaydream.consulDashboard', `Consul: ${c.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+  const panel = trackPanel(c.name, vscode.window.createWebviewPanel('moonageDaydream.consulDashboard', `Consul: ${c.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
   panel.webview.html = consulDashboardHtml(panel.webview.cspSource, c.database ? `${c.name} / ${c.database}` : c.name);
   let interval = 10000;
   let paused = false;
@@ -1085,6 +1089,113 @@ const dialectOf = (uri: vscode.Uri) => {
 };
 
 let consulFs: ConsulFs;
+
+/** panel Live Monitor / Dashboard per koneksi (Disconnect menutupnya; koneksi dianggap connected selama ada) */
+const connPanels = new Map<string, Set<vscode.WebviewPanel>>();
+function trackPanel(conn: string, p: vscode.WebviewPanel): vscode.WebviewPanel {
+  const set = connPanels.get(conn) ?? new Set();
+  connPanels.set(conn, set.add(p));
+  p.onDidDispose(() => {
+    set.delete(p);
+    refreshConnState();
+  });
+  return p;
+}
+/** Consul (HTTP, tanpa pool): connected sejak Connect sampai Disconnect */
+const consulUp = new Set<string>();
+const lastUsed = new Map<string, number>();
+
+/** status "connected": pool / client driver terbuka, sesi transaksi, panel monitor, atau Consul yang di-Connect */
+function isConnected(c: ConnectionInfo): boolean {
+  return !!drivers[c.type].isOpen?.(c.name) || [...txs.values()].some((t) => t.conn === c.name)
+    || (connPanels.get(c.name)?.size ?? 0) > 0 || consulUp.has(c.name);
+}
+
+// explorer diperbarui hanya bila daftar koneksi yang connected berubah (pool terbuka sesudah password diambil)
+let connSnapshot = '';
+let connTimer: NodeJS.Timeout | undefined;
+function refreshConnState() {
+  if (connTimer) clearTimeout(connTimer);
+  connTimer = setTimeout(() => {
+    const now = conns.list().filter(isConnected).map((c) => c.name).join('\n');
+    if (now !== connSnapshot) {
+      connSnapshot = now;
+      explorer.refresh();
+    }
+  }, 1500);
+}
+function touchConn(name: string) {
+  lastUsed.set(name, Date.now());
+  refreshConnState();
+}
+
+/** Connect: buka koneksi (pool tetap terbuka) + cek login; Consul = leader */
+async function connectCommand(c: ConnectionInfo) {
+  try {
+    const pw = await conns.password(c.name);
+    const t = Date.now();
+    let info: string;
+    if (c.type === 'consul') {
+      info = `leader ${await new ConsulClient(consulTarget(c), pw).leader()}`;
+      consulUp.add(c.name);
+    } else {
+      const r = await drivers[c.type].run(c, pw, drivers[c.type].testSql);
+      info = (r.resultSets[0]?.rows[0] ?? []).map(String).join(' / ');
+    }
+    log.info(`connect ${c.name}: ${info}`);
+    vscode.window.setStatusBarMessage(`$(plug) Connected to ${c.name}${info ? ` (${info})` : ''} in ${Date.now() - t} ms`, 5000);
+    refreshConnState();
+  } catch (e) {
+    log.error(`connect - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Connect to ${c.name} failed: ${errMsg(e)}`);
+  }
+}
+
+/**
+ * Disconnect: transaksi Manual commit yang masih terbuka ditanya Commit / Rollback dulu (Cancel = tidak jadi), query berjalan
+ * dibatalkan, panel monitor / dashboard ditutup, pool / client driver ditutup. quiet = auto disconnect idle (tanpa dialog).
+ */
+async function disconnect(c: ConnectionInfo, quiet = false): Promise<boolean> {
+  const mine = [...txs].filter(([, t]) => t.conn === c.name);
+  const open = mine.filter(([, t]) => t.session.open);
+  let how: 'commit' | 'rollback' = 'rollback';
+  if (open.length) {
+    if (quiet) return false;
+    const pick = await vscode.window.showWarningMessage(`${c.name} has ${open.length} open transaction(s) (${open.reduce((n, [, t]) => n + t.statements, 0)} run(s)).`,
+      { modal: true, detail: 'Commit or roll back before disconnecting.' }, 'Commit', 'Rollback');
+    if (!pick) return false;
+    how = pick === 'Commit' ? 'commit' : 'rollback';
+  }
+  for (const [key, t] of mine) {
+    await closeTx(key, t, t.session.open ? how : 'rollback').catch((e: unknown) =>
+      log.error(`disconnect closeTx - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`));
+  }
+  for (const q of running.values()) if (q.conn === c.name) cancel(q);
+  for (const p of [...(connPanels.get(c.name) ?? [])]) p.dispose();
+  await closePool(c);
+  consulUp.delete(c.name);
+  lastUsed.delete(c.name);
+  log.info(`disconnect ${c.name}${quiet ? ' (idle)' : ''}${open.length ? ` (${how} ${open.length} transaction(s))` : ''}`);
+  vscode.window.setStatusBarMessage(`$(debug-disconnect) Disconnected from ${c.name}${quiet ? ' (idle)' : ''}`, 5000);
+  updateFileStatus();
+  connSnapshot = '';
+  refreshConnState();
+  return true;
+}
+
+/** auto disconnect koneksi yang idle (setting connection.idleDisconnectMinutes, 0 = mati), dicek tiap menit */
+function idleWatcher(): vscode.Disposable {
+  const t = setInterval(() => {
+    const minutes = vscode.workspace.getConfiguration('moonageDaydream.connection').get<number>('idleDisconnectMinutes', 0);
+    const busy = new Set([...[...running.values()].map((q) => q.conn), ...[...txs.values()].filter((x) => x.session.open).map((x) => x.conn),
+      ...[...connPanels].filter(([, s]) => s.size).map(([n]) => n)]);
+    for (const name of idleConnections(Date.now(), lastUsed, minutes, (n) => { const c = conns.get(n); return !!c && isConnected(c); }, busy)) {
+      const c = conns.get(name);
+      if (c) void disconnect(c, true);
+    }
+  }, 60_000);
+  return new vscode.Disposable(() => clearInterval(t));
+}
 
 /** sesi transaksi manual per file (key = uri) */
 export const txs = new Map<string, { session: Session; conn: string; db: string; statements: number }>();

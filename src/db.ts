@@ -176,6 +176,8 @@ export interface Driver {
   primaryKey(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<string[]>;
   /** tutup koneksi/pool yang di-cache untuk nama koneksi ini */
   close(name: string): Promise<void>;
+  /** pool / client koneksi ini sedang terbuka (status "connected"); tidak ada = driver tanpa koneksi tetap (SQLite, Consul) */
+  isOpen?(name: string): boolean;
 }
 
 // tambah DB lain: buat file driver baru lalu daftarkan di sini (+ tambah ke DbType)
@@ -205,6 +207,12 @@ export const typedOptions = (o?: Record<string, string>): Record<string, string 
   Object.fromEntries(Object.entries(o ?? {}).map(([k, v]) => [k, /^(true|false)$/i.test(v) ? v.toLowerCase() === 'true' : /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v]));
 /** batas waktu connect (ms) dari setting koneksi (detik), default 15 detik */
 export const connectMs = (c: ConnectionInfo) => (c.connectTimeout ?? 15) * 1000;
+
+/** koneksi yang terbuka, tidak dipakai >= minutes menit dan tidak sibuk (query / transaksi) -> auto disconnect; minutes 0 = mati */
+export function idleConnections(now: number, lastUsed: Map<string, number>, minutes: number, isOpen: (name: string) => boolean, busy: Set<string>): string[] {
+  if (minutes <= 0) return [];
+  return [...lastUsed].filter(([name, t]) => now - t >= minutes * 60_000 && isOpen(name) && !busy.has(name)).map(([name]) => name);
+}
 
 /** alamat untuk ditampilkan: host\instance atau host:port */
 export const address = (c: ConnectionInfo) => (c.type === 'sqlite' ? c.file ?? '' : c.instance ? `${c.host}\\${c.instance}` : `${c.host}:${c.port}`);

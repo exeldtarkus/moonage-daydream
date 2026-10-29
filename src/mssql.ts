@@ -627,6 +627,7 @@ export const mssqlDriver: Driver = {
     return { sql, params: ps.length };
   },
 
+  isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`)),
   async close(name) {
     const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
     for (const [k] of mine) pools.delete(k);

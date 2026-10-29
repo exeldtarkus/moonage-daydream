@@ -142,7 +142,11 @@ export class Connections {
   private asking = new Map<string, Promise<string>>();
 
   /** password koneksi; belum pernah disimpan (koneksi hasil import) = ditanya sekali lalu disimpan di SecretStorage */
+  /** koneksi dipakai (setiap operasi mengambil password lebih dulu): status connected / idle */
+  readonly used = new vscode.EventEmitter<string>();
+
   async password(name: string): Promise<string> {
+    this.used.fire(name);
     const stored = await this.ctx.secrets.get(secretKey(name));
     if (stored !== undefined) return stored;
     let p = this.asking.get(name); // autocomplete / explorer / run bersamaan: satu input box saja
