@@ -2,7 +2,7 @@
   "name": "moonage-daydream",
   "displayName": "Moonage Daydream",
   "description": "Database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite and MongoDB: run queries from .sql files and view, filter, edit and export the results.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "exeltarkus",
   "icon": "images/icon.png",
   "license": "GPL-3.0-or-later",
@@ -479,32 +479,32 @@
       "view/item/context": [
         {
           "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?$/",
           "group": "1_query"
         },
         {
           "command": "moonageDaydream.runProcedure",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(procedure|function)\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(procedure|function)\\.def(\\.ms)?$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.runProcedure",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(procedure|function)\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(procedure|function)\\.def(\\.ms)?$/",
           "group": "1_run@1"
         },
         {
           "command": "moonageDaydream.showDefinition",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure|function|trigger)\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure|function|trigger)\\.def(\\.ms)?$/",
           "group": "2_script@1"
         },
         {
           "command": "moonageDaydream.editObject",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure|function|trigger)\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(view|procedure|function|trigger)\\.def(\\.ms)?$/",
           "group": "2_script@2"
         },
         {
@@ -664,7 +664,7 @@
         },
         {
           "command": "moonageDaydream.scriptAs",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view|procedure|function|trigger)\\.def$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view|procedure|function|trigger)\\.def\\.ms$/",
           "group": "2_script@3"
         },
         {
@@ -960,7 +960,8 @@
     "test": "npm run compile && node --test out/test/*.test.js",
     "package": "vsce package --skip-license",
     "install:local": "node scripts/install-local.js",
-    "bundle": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --external:./test/real --format=cjs --platform=node --target=node18 --minify"
+    "bundle": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --external:./test/real --format=cjs --platform=node --target=node18 --minify",
+    "deploy": "node scripts/deploy.js"
   },
   "dependencies": {
     "mongodb": "^6.21.0",

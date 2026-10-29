@@ -14,13 +14,17 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
   - **SQLite** (sql.js, WebAssembly): file database dibaca setiap query dan ditulis balik setelah statement yang mengubah data.
   - **MongoDB**: query gaya mongosh seperti `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` dan `db.runCommand(...)`. Dokumen ditampilkan sebagai kolom grid. Host boleh berupa connection string `mongodb://` atau `mongodb+srv://`.
 - **View Connections**: koneksi → database → Tables / Views / Procedures → kolom, dengan logo per jenis database. **Select Top 100** pada table atau view, **New SQL File** pada database. Password disimpan di SecretStorage VS Code.
+- **View, procedure dan function** (SQL Server, MySQL / MariaDB, PostgreSQL): klik kanan untuk **Show Definition**, **Edit** (script `CREATE OR ALTER` / `CREATE OR REPLACE`) dan **Run Procedure…** (script EXEC / CALL / SELECT dengan semua argumen); procedure dan function bisa di-expand ke parameternya.
+- **SQL Server Object Explorer** seperti ekstensi mssql: Databases / System Databases, Security, Server Objects, SQL Server Agent (job dengan **Start Job** / **Stop Job**); per database Tables, Views, Synonyms, Programmability dan Security; per table Columns, Keys, Constraints, Triggers, Indexes dan Statistics. **Script as…** CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE, **Activity Monitor**, **Kill Session…**, **Server Info**, **Database Info**, **Backup / Restore Database (script)…**.
+- **Live Monitor (charts)** untuk SQL Server, MySQL / MariaDB dan PostgreSQL: grafik live untuk seluruh server atau satu database, dengan tab Running queries, Sessions / Blocking, waits dan Expensive queries, serta **Kill** dengan konfirmasi.
 - **Form koneksi** dengan sidebar: **Connection**, **SSL / TLS**, **Timeouts**, **Permissions** (read only) dan **Driver settings**, masing-masing dengan ringkasan singkat. **Import connection string** mengisi form dari string SQL Server `Server=...;Database=...` atau URL `mysql://`, `mariadb://`, `postgres://` atau `mongodb://`.
 - **Import Connections from DBCode…**: menyalin koneksi dari setting DBCode `dbcode.connections` (tanpa password).
 - **Group dan warna koneksi**: kelompokkan koneksi ke folder group (mis. `prod`, `non-prod`) dan beri warna; koneksi berwarna juga ditandai di editor `.sql`, membantu mengenali koneksi production.
 - **Koneksi dan database per file**, tampil dan bisa diganti lewat CodeLens.
 - **Run**: selection, atau statement di posisi kursor. CodeLens di atas setiap statement: **Execute**, **Explain**, **Analyze** (hanya SELECT), koneksi, database dan mode transaksi. Beberapa SELECT yang dipilih bersamaan berjalan paralel. Query yang sedang berjalan bisa di-cancel di server.
 - **Auto limit** untuk satu SELECT, lalu **Load more (+1000)** sampai 50.000 baris di grid.
-- **Mode transaksi manual** per file dengan lens **Commit** / **Rollback**; di SQL Server statusnya dibaca dari server (`@@TRANCOUNT`) dan `COMMIT` / `ROLLBACK` / `BEGIN TRAN` boleh ada di dalam script.
+- **Mode transaksi manual** per file dengan lens **Commit** / **Rollback**; di SQL Server, MySQL / MariaDB dan PostgreSQL statusnya dibaca dari server dan `COMMIT` / `ROLLBACK` boleh ada di dalam script.
+- **Konfirmasi Auto-commit**: statement yang mengubah data di mode Auto-commit minta konfirmasi dulu (aktif secara default; bisa dimatikan per group atau koneksi).
 - **Grid hasil**: tag tipe kolom, toolbar WHERE yang menjalankan ulang query di server, filter / sort / hide per kolom pada baris yang sudah dimuat, urutan kolom bisa diubah, panel samping **Columns** / **Inspector**, pilih baris lalu Ctrl+C (tersalin sebagai TSV), virtual scroll untuk hasil besar. Hasil UPDATE / INSERT / DELETE menampilkan `n row(s) affected` di bawah judul **Statement n**, juga di samping hasil SELECT.
 - **Export** semua data atau baris terpilih ke CSV, TSV, JSON, JSON (pretty), Markdown, HTML atau Excel (.xlsx), atau salin ke clipboard.
 - **Pin results** supaya hasil tetap di tab sendiri, berdampingan.
@@ -85,7 +89,7 @@ Form punya sidebar di kiri; tiap item membuka bagiannya sendiri dan menampilkan 
 
 **Import Connections from DBCode…** (menu **⋯** view **Connections**) membaca koneksi extension DBCode dari setting `dbcode.connections` dan menampilkannya di quick pick multi-pilih: nama, tipe, host, port, instance, user, database, group, SSL, connection timeout dan read only ikut disalin. Koneksi yang namanya sudah dipakai, atau tipenya tidak didukung, dilewati (pesannya menyebutkan daftarnya). Password tidak ikut diimport: password ditanya sekali saat koneksi pertama kali dipakai, lalu disimpan di Secret Storage VS Code.
 
-**Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan folder group untuk **Rename Group…**. Di quick pick koneksi, group ditampilkan sebagai `[group]`.
+**Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan folder group untuk **Rename Group…** dan **Auto-commit Confirmation…** (lihat [Transaksi](#7-transaksi)). Di quick pick koneksi, group ditampilkan sebagai `[group]`.
 
 **Color** (swatch: None atau salah satu dari 15 warna: Red, Coral, Orange, Yellow, Gold, Lime, Green, Teal, Cyan, Sky, Blue, Purple, Magenta, Pink, Gray) menandai koneksi. Warnanya diambil dari tema VS Code (`charts.*` dan `terminal.ansi*`), jadi mengikuti tema terang maupun gelap:
 
@@ -101,9 +105,11 @@ Klik kanan koneksi di **Connections** untuk:
 - **Rename…**: nama baru yang unik; password tersimpan dan file `.sql` yang terikat ke koneksi ikut pindah ke nama baru;
 - **Change Color…**: quick pick dengan bulatan berwarna, atau *No color*;
 - **Move to Group…**;
+- **Auto-commit Confirmation…**: *On*, *Off* atau *Same as group* (lihat [Transaksi](#7-transaksi));
+- **Live Monitor (charts)** (SQL Server, MySQL / MariaDB, PostgreSQL): lihat [Live Monitor](#12-live-monitor);
 - **Delete Connection**: minta konfirmasi; password tersimpan ikut dihapus, dan file yang terikat kembali memakai koneksi aktif.
 
-Expand koneksi untuk melihat database, table, view, procedure dan kolom. Pakai ikon play pada table atau view untuk **Select Top 100**, atau ikon file baru pada database untuk **New SQL File** yang langsung terikat ke database itu.
+Expand koneksi untuk melihat database, table, view, procedure dan kolom (koneksi SQL Server menampilkan Object Explorer lengkap, lihat [SQL Server Object Explorer](#11-sql-server-object-explorer)). Pakai ikon play pada table atau view untuk **Select Top 100**, atau ikon file baru pada database untuk **New SQL File** yang langsung terikat ke database itu.
 
 ### 2. Menjalankan query
 
@@ -161,12 +167,16 @@ Double-click cell di hasil pertama untuk mengeditnya. Jumlah cell yang diubah ta
 
 Default-nya setiap statement auto-commit. Ganti file ke mode manual dengan **Toggle Transaction Mode** (atau CodeLens / status bar): statement lalu berjalan di transaksi yang terbuka sampai Anda klik **Commit** atau **Rollback**. Default untuk file baru diatur lewat `moonageDaydream.transaction.mode`.
 
-Di SQL Server transaksi manual berjalan di koneksi tersendiri untuk file itu:
+**Konfirmasi Auto-commit**: di mode Auto-commit, run yang berisi statement pengubah data (UPDATE, INSERT, DELETE, MERGE, `SELECT ... INTO`, DDL, EXEC; untuk MongoDB method tulis) lebih dulu menampilkan *You are running in Auto-commit mode. Data changes are saved permanently and cannot be rolled back.*, beserta koneksi dan statement-nya, dengan **Confirm** / **Cancel**. SELECT dan file di mode Manual commit tidak ditanya. Aktif secara default; klik kanan folder group untuk **Auto-commit Confirmation…** (*On* / *Off*), atau koneksi (*On* / *Off* / *Same as group*). Group dan koneksi yang konfirmasinya mati menampilkan `no commit confirm` di **Connections**.
 
-- status transaksi diambil dari server (`@@TRANCOUNT`), bukan ditebak di client;
-- script dikirim sebagai SQL batch (seperti SSMS), jadi `COMMIT`, `ROLLBACK` dan `BEGIN TRAN` di dalam script berjalan tanpa error 266, dan opsi `SET` serta tabel `#temp` tetap ada di run berikutnya;
-- SELECT biasa tidak membuka transaksi bila belum ada yang terbuka; UPDATE, INSERT, DELETE, EXEC, `SELECT ... INTO` dan lock hint seperti `UPDLOCK` / `HOLDLOCK` membukanya;
-- **Commit** meng-commit semua level nested (`BEGIN TRAN` dua kali di-commit seluruhnya);
+Di SQL Server, MySQL / MariaDB dan PostgreSQL transaksi manual berjalan di koneksi tersendiri untuk file itu:
+
+- status transaksi diambil dari server (SQL Server `@@TRANCOUNT`, MySQL / MariaDB dan PostgreSQL dari protokol), bukan ditebak di client;
+- `COMMIT` dan `ROLLBACK` di dalam script dilaporkan sebagai *Transaction committed.* / *Transaction rolled back.*; di MySQL / MariaDB statement DDL (CREATE, ALTER, DROP, TRUNCATE, …) yang melakukan implicit commit juga dilaporkan;
+- di SQL Server script dikirim sebagai SQL batch (seperti SSMS), jadi `COMMIT`, `ROLLBACK` dan `BEGIN TRAN` di dalam script berjalan tanpa error 266, dan opsi `SET` serta tabel `#temp` tetap ada di run berikutnya;
+- SELECT biasa tidak membuka transaksi bila belum ada yang terbuka; UPDATE, INSERT, DELETE, EXEC, `SELECT ... INTO` dan (SQL Server) lock hint seperti `UPDLOCK` / `HOLDLOCK` membukanya;
+- **Commit** meng-commit semua level nested di SQL Server (`BEGIN TRAN` dua kali di-commit seluruhnya);
+- PostgreSQL: setelah error transaksi menjadi aborted; lens menampilkan **TX aborted (rollback needed)**, muncul tawaran **Rollback**, dan **Commit** ditolak (tidak ada yang bisa di-commit);
 - koneksi yang putus dilaporkan (server sudah me-rollback transaksinya) dan tidak ada yang dijalankan;
 - **Load more** dan **Export → All Data** memakai koneksi transaksi yang terbuka, jadi melihat perubahan yang belum di-commit dan tidak menunggu lock-nya;
 - **Analyze** ditolak selama transaksi terbuka (Analyze berjalan di koneksi lain dan akan menunggu lock); **Explain** tetap bisa.
@@ -194,6 +204,46 @@ Untuk koneksi MongoDB autocomplete mengikuti sintaks shell:
 **Move Results To…** (judul view Results) memindahkan hasil ke panel bawah, atau ke kanan atau kiri editor.
 
 Error ditulis ke output channel **Moonage Daydream** (**View → Output**).
+
+### 10. Procedure, function dan view
+
+Di SQL Server, MySQL / MariaDB dan PostgreSQL, klik kanan view, procedure atau function di **Connections** (di SQL Server juga trigger):
+
+- **Show Definition**: definisinya (`CREATE ...`) di tab baru;
+- **Edit**: script untuk mengubahnya, di tab baru: SQL Server `CREATE OR ALTER`; MySQL / MariaDB `CREATE OR REPLACE VIEW`, dan `DROP ... IF EXISTS` + `CREATE` untuk procedure dan function (jalankan seluruh script); PostgreSQL `CREATE OR REPLACE`;
+- **Run Procedure…** (procedure dan function): script yang memanggilnya dengan semua argumen (procedure: SQL Server `EXEC`, MySQL / MariaDB dan PostgreSQL `CALL`; function: `SELECT`, di PostgreSQL `SELECT * FROM`). Setiap argumen diawali `NULL` dengan nama dan tipenya sebagai komentar. Di SQL Server dan MySQL / MariaDB, argumen OUT / INOUT dideklarasikan sebagai variabel lalu di-SELECT; di PostgreSQL argumen OUT pada function tidak ikut (menjadi kolom hasil) dan pada procedure diisi `NULL`. Argumen yang punya default dikirim sebagai `DEFAULT` di SQL Server dan dikomentari di PostgreSQL. Routine tanpa argumen langsung dijalankan.
+
+Node procedure dan function bisa di-expand ke parameternya. Saat script dipecah menjadi statement, body routine tetap utuh: sampai `GO` di SQL Server, `BEGIN … END` di MySQL / MariaDB dan `$$ … $$` di PostgreSQL.
+
+### 11. SQL Server Object Explorer
+
+Koneksi SQL Server ditampilkan seperti Object Explorer di ekstensi mssql:
+
+- koneksi → **Databases** (dengan **System Databases** terpisah), **Security** (Logins, Server Roles beserta member-nya, Credentials, Cryptographic Providers, Audits, Server Audit Specifications), **Server Objects** (Endpoints, Linked Servers, Triggers) dan **SQL Server Agent** (status service dan Jobs; klik kanan job untuk **Start Job** / **Stop Job**, keduanya minta konfirmasi);
+- database → **Tables** / System Tables dan **Views** / System Views (dikelompokkan per schema), **Synonyms**, **Programmability** (Stored Procedures, Table-valued / Scalar-valued / Aggregate Functions, Database Triggers, Types, Sequences) dan **Security** (Users, Roles, Schemas);
+- table → **Columns**, **Keys**, **Constraints**, **Triggers**, **Indexes** dan **Statistics**.
+
+**Script as…** pada table, view, procedure, function atau trigger membuka script di tab baru: CREATE, ALTER (bukan untuk table), DROP, dan untuk table dan view SELECT (table juga INSERT, UPDATE, DELETE). CREATE TABLE lengkap: identity, computed column, default, collation, key, check, foreign key dan index. INSERT dan UPDATE melewati kolom identity, computed dan rowversion. Function dan trigger juga punya **Show Definition** / **Edit**, function juga **Run**.
+
+Klik kanan koneksi SQL Server untuk **Activity Monitor (sessions / blocking)**, **Kill Session…** (minta konfirmasi; transaksi terbuka sesi itu di-rollback) dan **Server Info**; klik kanan database untuk **Database Info**, **Backup Database (script)…** dan **Restore Database (script)…**. Backup dan restore hanya membuka script; tidak pernah dijalankan otomatis.
+
+Bila login tidak punya suatu permission, folder menampilkan petunjuk yang menyebut permission-nya (misalnya *needs VIEW SERVER STATE*), bukan error.
+
+### 12. Live Monitor
+
+Klik kanan koneksi SQL Server, MySQL / MariaDB atau PostgreSQL (seluruh server) atau sebuah database (hanya database itu) untuk **Live Monitor (charts)**. Pilih **Refresh** (1, 2, 5, 10, 30 atau 60 detik) dan **Window** (1, 5 atau 15 menit), atau **Pause**.
+
+![Live Monitor untuk SQL Server: grafik CPU %, Batch requests/sec, Waiting tasks, Database I/O MB/s, User connections dan Transactions/sec, serta tab Running queries dengan SELECT yang terblokir ditandai merah](images/screenshots/monitor.png)
+
+Grafiknya tergantung database:
+
+- SQL Server: CPU %, Batch requests/sec, Waiting tasks, Database I/O MB/s (read / write), User connections, Transactions/sec;
+- MySQL / MariaDB: Queries/sec, Transactions/sec, Threads connected, Threads running, Network MB/s, InnoDB I/O MB/s, Row lock waits;
+- PostgreSQL: Transactions/sec, Rows read / written per sec, Disk blocks read/sec, Cache hit %, Connections, Active / waiting.
+
+Di bawah grafik, tab menampilkan **Running queries** (dengan statement yang sedang berjalan), **Sessions / Blocking** (SQL Server, PostgreSQL) atau **Sessions** dan **Blocking** (MySQL / MariaDB), **Top waits** dan **File I/O** (SQL Server), serta **Expensive queries** (di MySQL / MariaDB butuh `performance_schema`, di PostgreSQL ekstensi `pg_stat_statements`; bila tidak ada, tab menyebutkannya). Sesi yang terblokir dan yang memblokir ditandai merah. **Kill** (atau **Kill blocker** di tab Blocking) minta konfirmasi; **Open as query** membuka query tab itu di file `.sql`, jadi barisnya bisa difilter dan diekspor di grid.
+
+Monitor tidak menghitung query-nya sendiri. Saat memonitor satu database, nilai yang hanya ada untuk seluruh server diberi label *(server)*. Polling berhenti selama tab monitor tersembunyi atau di-pause. Di SQL Server login butuh VIEW SERVER STATE.
 
 ## Settings
 
@@ -228,6 +278,14 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | `Moonage Daydream: Rename…` / `Change Color…` | Ganti nama atau warna koneksi (view Connections) |
 | `Moonage Daydream: Select Connection` | Pilih koneksi aktif |
 | `Moonage Daydream: Move to Group…` / `Rename Group…` | Group koneksi (view Connections) |
+| `Moonage Daydream: Auto-commit Confirmation…` | Tanya sebelum perubahan data di mode Auto-commit: On / Off per group, On / Off / Same as group per koneksi |
+| `Moonage Daydream: Show Definition` / `Edit (CREATE OR ALTER script)` / `Run Procedure…` | View, procedure, function (dan trigger SQL Server) di Connections |
+| `Moonage Daydream: Script as…` | SQL Server: script CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE |
+| `Moonage Daydream: Start Job` / `Stop Job` | Job SQL Server Agent (minta konfirmasi) |
+| `Moonage Daydream: Live Monitor (charts)` | Grafik live dan sesi untuk koneksi atau database (SQL Server, MySQL / MariaDB, PostgreSQL) |
+| `Moonage Daydream: Activity Monitor (sessions / blocking)` / `Kill Session…` | Sesi dan blocking SQL Server |
+| `Moonage Daydream: Server Info` / `Database Info` | Detail koneksi atau database SQL Server |
+| `Moonage Daydream: Backup Database (script)…` / `Restore Database (script)…` | Script BACKUP / RESTORE SQL Server (tidak pernah dijalankan otomatis) |
 | `Moonage Daydream: Change Connection for This File` / `Change Database for This File` | Koneksi dan database per file |
 | `Moonage Daydream: Run Query (selection or statement at cursor)` | Jalankan selection atau statement di posisi kursor |
 | `Moonage Daydream: Explain (estimated plan)` / `Analyze (actual plan, SELECT only)` | Execution plan |
@@ -250,6 +308,9 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 - Import connection string: URL `mongodb://` dengan beberapa host (replica set) belum didukung; pakai `mongodb+srv://` atau satu host.
 - Grid menampung maksimal 50.000 baris (Load more berhenti di situ); pakai Export untuk semua data.
 - SQLite tidak punya Analyze (hanya `EXPLAIN QUERY PLAN`).
+- Script as CREATE TABLE (SQL Server) tidak mencakup opsi partitioning, compression, filegroup, columnstore, temporal atau memory-optimized.
+- Live Monitor: MySQL / MariaDB tidak punya grafik CPU %; statistik PostgreSQL di-flush dengan jeda sekitar 1 detik; Expensive queries butuh `performance_schema` (MySQL / MariaDB) atau `pg_stat_statements` (PostgreSQL).
+- Konfirmasi Auto-commit: EXEC / CALL selalu ditanya, karena body procedure tidak diperiksa.
 
 ## Development
 

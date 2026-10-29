@@ -14,13 +14,17 @@ A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite an
   - **SQLite** (sql.js, WebAssembly): the database file is read for each query and written back after statements that change data.
   - **MongoDB**: mongosh-style queries such as `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` and `db.runCommand(...)`. Documents are shown as grid columns. The host may be a `mongodb://` or `mongodb+srv://` connection string.
 - **Connections view**: connection → database → Tables / Views / Procedures → columns, with a logo per database type. **Select Top 100** on a table or view, **New SQL File** on a database. Passwords are stored in VS Code SecretStorage.
+- **Views, procedures and functions** (SQL Server, MySQL / MariaDB, PostgreSQL): right-click for **Show Definition**, **Edit** (a `CREATE OR ALTER` / `CREATE OR REPLACE` script) and **Run Procedure…** (an EXEC / CALL / SELECT script with every argument); procedures and functions expand to their parameters.
+- **SQL Server Object Explorer** like the mssql extension: Databases / System Databases, Security, Server Objects, SQL Server Agent (jobs with **Start Job** / **Stop Job**); per database Tables, Views, Synonyms, Programmability and Security; per table Columns, Keys, Constraints, Triggers, Indexes and Statistics. **Script as…** CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE, **Activity Monitor**, **Kill Session…**, **Server Info**, **Database Info**, **Backup / Restore Database (script)…**.
+- **Live Monitor (charts)** for SQL Server, MySQL / MariaDB and PostgreSQL: live charts for a whole server or one database, with Running queries, Sessions / Blocking, waits and Expensive queries tabs, and **Kill** with confirmation.
 - **Connection form** with a sidebar: **Connection**, **SSL / TLS**, **Timeouts**, **Permissions** (read only) and **Driver settings**, each with a short summary. **Import connection string** fills the form from a SQL Server `Server=...;Database=...` string or a `mysql://`, `mariadb://`, `postgres://` or `mongodb://` URL.
 - **Import Connections from DBCode…**: copies the connections from the DBCode setting `dbcode.connections` (without passwords).
 - **Connection groups and colors**: put connections in group folders (e.g. `prod`, `non-prod`) and give them a color; a colored connection is also marked in the `.sql` editor, which helps to recognize production connections.
 - **Connection and database per file**, shown and changed via CodeLens.
 - **Run**: the selection, or the statement under the cursor. CodeLens above every statement: **Execute**, **Explain**, **Analyze** (SELECT only), connection, database and transaction mode. Several SELECTs selected together run in parallel. Running queries can be cancelled on the server.
 - **Auto limit** for a single SELECT, then **Load more (+1000)** up to 50,000 rows in the grid.
-- **Manual transaction mode** per file with **Commit** / **Rollback** lenses; on SQL Server the state is read from the server (`@@TRANCOUNT`) and `COMMIT` / `ROLLBACK` / `BEGIN TRAN` may be part of the script.
+- **Manual transaction mode** per file with **Commit** / **Rollback** lenses; on SQL Server, MySQL / MariaDB and PostgreSQL the state is read from the server and `COMMIT` / `ROLLBACK` may be part of the script.
+- **Auto-commit confirmation**: statements that change data in Auto-commit mode ask first (on by default; can be turned off per group or connection).
 - **Results grid**: column type tags, a WHERE toolbar that re-runs the query on the server, per-column filter / sort / hide on the loaded rows, column reorder, **Columns** / **Inspector** side panels, row selection with Ctrl+C (copied as TSV), virtual scrolling for large results. UPDATE / INSERT / DELETE results show their `n row(s) affected` under a **Statement n** title, also next to SELECT results.
 - **Export** all data or the selected rows to CSV, TSV, JSON, JSON (pretty), Markdown, HTML or Excel (.xlsx), or copy to the clipboard.
 - **Pin results** to keep them in their own tab, side by side.
@@ -85,7 +89,7 @@ The form has a sidebar on the left; each item opens its own section and shows a 
 
 **Import Connections from DBCode…** (the **⋯** menu of the **Connections** view) reads the connections of the DBCode extension from the setting `dbcode.connections` and shows them in a multi-select quick pick: name, type, host, port, instance, user, database, group, SSL, connection timeout and read only are copied. Connections whose name is already used, or whose type is not supported, are skipped (the message lists them). Passwords are not imported: the password is asked once when the connection is first used, then saved in VS Code Secret Storage.
 
-**Group** puts the connection in a folder in **Connections**: choose *No group*, an existing group, or *New group…* to type a new name. Each group folder shows the number of connections in it; **+** (**Add Connection**) on a group folder preselects that group. Right-click a group folder for **Rename Group…**. In the connection quick pick the group is shown as `[group]`.
+**Group** puts the connection in a folder in **Connections**: choose *No group*, an existing group, or *New group…* to type a new name. Each group folder shows the number of connections in it; **+** (**Add Connection**) on a group folder preselects that group. Right-click a group folder for **Rename Group…** and **Auto-commit Confirmation…** (see [Transactions](#7-transactions)). In the connection quick pick the group is shown as `[group]`.
 
 **Color** (a swatch: None or one of 15 colors: Red, Coral, Orange, Yellow, Gold, Lime, Green, Teal, Cyan, Sky, Blue, Purple, Magenta, Pink, Gray) marks the connection. The colors come from the VS Code theme (`charts.*` and `terminal.ansi*`), so they follow light and dark themes:
 
@@ -101,9 +105,11 @@ Right-click a connection in **Connections** for:
 - **Rename…**: a new, unique name; the saved password and the `.sql` files bound to the connection follow the new name;
 - **Change Color…**: a quick pick with colored circles, or *No color*;
 - **Move to Group…**;
+- **Auto-commit Confirmation…**: *On*, *Off* or *Same as group* (see [Transactions](#7-transactions));
+- **Live Monitor (charts)** (SQL Server, MySQL / MariaDB, PostgreSQL): see [Live Monitor](#12-live-monitor);
 - **Delete Connection**: asks to confirm; the saved password is removed too, and files bound to it fall back to the active connection.
 
-Expand a connection to browse databases, tables, views, procedures and columns. Use the play icon on a table or view for **Select Top 100**, or the new-file icon on a database for **New SQL File** bound to that database.
+Expand a connection to browse databases, tables, views, procedures and columns (SQL Server connections show a full Object Explorer, see [SQL Server Object Explorer](#11-sql-server-object-explorer)). Use the play icon on a table or view for **Select Top 100**, or the new-file icon on a database for **New SQL File** bound to that database.
 
 ### 2. Run queries
 
@@ -161,12 +167,16 @@ Double-click a cell in the first result to edit it. Edited cells are counted in 
 
 By default every statement auto-commits. Switch a file to manual mode with **Toggle Transaction Mode** (or the CodeLens / status bar): statements then run in an open transaction until you click **Commit** or **Rollback**. The default for new files is set by `moonageDaydream.transaction.mode`.
 
-On SQL Server the manual transaction runs on its own connection for the file:
+**Auto-commit confirmation**: in Auto-commit mode, a run that contains a statement that changes data (UPDATE, INSERT, DELETE, MERGE, `SELECT ... INTO`, DDL, EXEC; for MongoDB the write methods) first asks *You are running in Auto-commit mode. Data changes are saved permanently and cannot be rolled back.*, with the connection and the statement, and **Confirm** / **Cancel**. SELECT and files in Manual commit are not asked. It is on by default; right-click a group folder for **Auto-commit Confirmation…** (*On* / *Off*), or a connection (*On* / *Off* / *Same as group*). Groups and connections with the confirmation off show `no commit confirm` in **Connections**.
 
-- the transaction state comes from the server (`@@TRANCOUNT`), not from a guess in the client;
-- the script is sent as a SQL batch (like SSMS), so `COMMIT`, `ROLLBACK` and `BEGIN TRAN` inside the script work without error 266, and `SET` options and `#temp` tables stay for the next run;
-- a plain SELECT does not open a transaction when none is open; UPDATE, INSERT, DELETE, EXEC, `SELECT ... INTO` and lock hints such as `UPDLOCK` / `HOLDLOCK` do;
-- **Commit** commits every nested level (`BEGIN TRAN` twice is committed completely);
+On SQL Server, MySQL / MariaDB and PostgreSQL the manual transaction runs on its own connection for the file:
+
+- the transaction state comes from the server (SQL Server `@@TRANCOUNT`, MySQL / MariaDB and PostgreSQL from the protocol), not from a guess in the client;
+- `COMMIT` and `ROLLBACK` inside the script are reported as *Transaction committed.* / *Transaction rolled back.*; on MySQL / MariaDB a DDL statement (CREATE, ALTER, DROP, TRUNCATE, …) that commits implicitly is reported too;
+- on SQL Server the script is sent as a SQL batch (like SSMS), so `COMMIT`, `ROLLBACK` and `BEGIN TRAN` inside the script work without error 266, and `SET` options and `#temp` tables stay for the next run;
+- a plain SELECT does not open a transaction when none is open; UPDATE, INSERT, DELETE, EXEC, `SELECT ... INTO` and (SQL Server) lock hints such as `UPDLOCK` / `HOLDLOCK` do;
+- **Commit** commits every nested level on SQL Server (`BEGIN TRAN` twice is committed completely);
+- PostgreSQL: after an error the transaction is aborted; the lens shows **TX aborted (rollback needed)**, a prompt offers **Rollback**, and **Commit** is refused (nothing can be committed);
 - a lost connection is reported (the server has rolled back the transaction) and nothing is run;
 - **Load more** and **Export → All Data** use the connection of the open transaction, so they see its uncommitted changes and do not wait for its locks;
 - **Analyze** is refused while a transaction is open (it runs on another connection and would wait for the locks); **Explain** still works.
@@ -194,6 +204,46 @@ For MongoDB connections autocomplete follows the shell syntax:
 **Move Results To…** (Results view title) puts the results in the bottom panel, or to the right or left of the editor.
 
 Errors are written to the **Moonage Daydream** output channel (**View → Output**).
+
+### 10. Procedures, functions and views
+
+On SQL Server, MySQL / MariaDB and PostgreSQL, right-click a view, procedure or function in **Connections** (on SQL Server also a trigger):
+
+- **Show Definition**: the definition (`CREATE ...`) in a new tab;
+- **Edit**: a script to change it, in a new tab: SQL Server `CREATE OR ALTER`; MySQL / MariaDB `CREATE OR REPLACE VIEW`, and `DROP ... IF EXISTS` + `CREATE` for procedures and functions (run the whole script); PostgreSQL `CREATE OR REPLACE`;
+- **Run Procedure…** (procedures and functions): a script that calls it with every argument (procedures: SQL Server `EXEC`, MySQL / MariaDB and PostgreSQL `CALL`; functions: `SELECT`, on PostgreSQL `SELECT * FROM`). Each argument starts as `NULL` with its name and type as a comment. On SQL Server and MySQL / MariaDB, OUT / INOUT arguments are declared as variables and selected afterwards; on PostgreSQL the OUT arguments of a function are left out (they are result columns) and those of a procedure are `NULL`. Arguments with a default are passed as `DEFAULT` on SQL Server and commented out on PostgreSQL. A routine without arguments runs at once.
+
+Procedure and function nodes expand to their parameters. When a script is split into statements, routine bodies stay whole: up to `GO` on SQL Server, `BEGIN … END` on MySQL / MariaDB and `$$ … $$` on PostgreSQL.
+
+### 11. SQL Server Object Explorer
+
+A SQL Server connection is shown like the Object Explorer of the mssql extension:
+
+- connection → **Databases** (with **System Databases** apart), **Security** (Logins, Server Roles with their members, Credentials, Cryptographic Providers, Audits, Server Audit Specifications), **Server Objects** (Endpoints, Linked Servers, Triggers) and **SQL Server Agent** (service status and Jobs; right-click a job for **Start Job** / **Stop Job**, both ask to confirm);
+- database → **Tables** / System Tables and **Views** / System Views (grouped by schema), **Synonyms**, **Programmability** (Stored Procedures, Table-valued / Scalar-valued / Aggregate Functions, Database Triggers, Types, Sequences) and **Security** (Users, Roles, Schemas);
+- table → **Columns**, **Keys**, **Constraints**, **Triggers**, **Indexes** and **Statistics**.
+
+**Script as…** on a table, view, procedure, function or trigger opens a script in a new tab: CREATE, ALTER (not for tables), DROP, and for tables and views SELECT (tables also INSERT, UPDATE, DELETE). CREATE TABLE is complete: identity, computed columns, defaults, collation, keys, checks, foreign keys and indexes. INSERT and UPDATE skip identity, computed and rowversion columns. Functions and triggers also have **Show Definition** / **Edit**, functions **Run**.
+
+Right-click a SQL Server connection for **Activity Monitor (sessions / blocking)**, **Kill Session…** (asks to confirm; the open transaction of that session is rolled back) and **Server Info**; right-click a database for **Database Info**, **Backup Database (script)…** and **Restore Database (script)…**. Backup and restore only open a script; it is never run automatically.
+
+When the login lacks a permission, the folder shows a hint that names it (for example *needs VIEW SERVER STATE*) instead of an error.
+
+### 12. Live Monitor
+
+Right-click a SQL Server, MySQL / MariaDB or PostgreSQL connection (the whole server) or a database (that database only) for **Live Monitor (charts)**. Choose **Refresh** (1, 2, 5, 10, 30 or 60 s) and **Window** (1, 5 or 15 min), or **Pause**.
+
+![Live Monitor for SQL Server: charts for CPU %, Batch requests/sec, Waiting tasks, Database I/O MB/s, User connections and Transactions/sec, and the Running queries tab with a blocked SELECT shown in red](images/screenshots/monitor.png)
+
+The charts depend on the database:
+
+- SQL Server: CPU %, Batch requests/sec, Waiting tasks, Database I/O MB/s (read / write), User connections, Transactions/sec;
+- MySQL / MariaDB: Queries/sec, Transactions/sec, Threads connected, Threads running, Network MB/s, InnoDB I/O MB/s, Row lock waits;
+- PostgreSQL: Transactions/sec, Rows read / written per sec, Disk blocks read/sec, Cache hit %, Connections, Active / waiting.
+
+Under the charts, tabs show **Running queries** (with the current statement), **Sessions / Blocking** (SQL Server, PostgreSQL) or **Sessions** and **Blocking** (MySQL / MariaDB), **Top waits** and **File I/O** (SQL Server), and **Expensive queries** (on MySQL / MariaDB it needs `performance_schema`, on PostgreSQL the `pg_stat_statements` extension; otherwise the tab says so). Blocked and blocking sessions are shown in red. **Kill** (or **Kill blocker** in the Blocking tab) asks to confirm; **Open as query** opens the tab's query in a `.sql` file, so the rows can be filtered and exported in the grid.
+
+The monitor does not count its own queries. When monitoring one database, values that only exist for the whole server are labelled *(server)*. Polling stops while the monitor tab is hidden or paused. On SQL Server the login needs VIEW SERVER STATE.
 
 ## Settings
 
@@ -228,6 +278,14 @@ The extension also sets itself as the default formatter for `[sql]`.
 | `Moonage Daydream: Rename…` / `Change Color…` | Rename a connection or change its color (Connections view) |
 | `Moonage Daydream: Select Connection` | Choose the active connection |
 | `Moonage Daydream: Move to Group…` / `Rename Group…` | Connection groups (Connections view) |
+| `Moonage Daydream: Auto-commit Confirmation…` | Ask before data changes in Auto-commit mode: On / Off per group, On / Off / Same as group per connection |
+| `Moonage Daydream: Show Definition` / `Edit (CREATE OR ALTER script)` / `Run Procedure…` | View, procedure, function (and SQL Server trigger) in Connections |
+| `Moonage Daydream: Script as…` | SQL Server: CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE script |
+| `Moonage Daydream: Start Job` / `Stop Job` | SQL Server Agent job (asks to confirm) |
+| `Moonage Daydream: Live Monitor (charts)` | Live charts and sessions for a connection or database (SQL Server, MySQL / MariaDB, PostgreSQL) |
+| `Moonage Daydream: Activity Monitor (sessions / blocking)` / `Kill Session…` | SQL Server sessions and blocking |
+| `Moonage Daydream: Server Info` / `Database Info` | SQL Server connection or database details |
+| `Moonage Daydream: Backup Database (script)…` / `Restore Database (script)…` | SQL Server BACKUP / RESTORE script (never run automatically) |
 | `Moonage Daydream: Change Connection for This File` / `Change Database for This File` | Per-file connection and database |
 | `Moonage Daydream: Run Query (selection or statement at cursor)` | Run the selection or the statement under the cursor |
 | `Moonage Daydream: Explain (estimated plan)` / `Analyze (actual plan, SELECT only)` | Execution plans |
@@ -250,6 +308,9 @@ The extension also sets itself as the default formatter for `[sql]`.
 - Import connection string: a `mongodb://` URL with several hosts (replica set) is not supported; use `mongodb+srv://` or one host.
 - The grid holds at most 50,000 rows (Load more stops there); use Export for all data.
 - SQLite has no Analyze (only `EXPLAIN QUERY PLAN`).
+- Script as CREATE TABLE (SQL Server) has no partitioning, compression, filegroups, columnstore, temporal or memory-optimized options.
+- Live Monitor: MySQL / MariaDB has no CPU % chart; PostgreSQL statistics are flushed with about 1 s delay; Expensive queries need `performance_schema` (MySQL / MariaDB) or `pg_stat_statements` (PostgreSQL).
+- Auto-commit confirmation: EXEC / CALL always asks, since the procedure body is not inspected.
 
 ## Development
 

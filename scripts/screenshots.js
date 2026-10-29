@@ -9,6 +9,7 @@ const outDir = path.join(root, 'images', 'screenshots');
 const { render } = require(path.join(root, 'out', 'resultsHtml'));
 const { formHtml } = require(path.join(root, 'out', 'connectionFormHtml'));
 const { parsePlan } = require(path.join(root, 'out', 'plan'));
+const { monitorHtml } = require(path.join(root, 'out', 'monitorHtml'));
 
 function findPlaywright() {
   if (process.env.PW) return process.env.PW;
@@ -160,6 +161,32 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
     p = await page(formHtml('csp', shopPg, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 420 });
     await p.click('.nav button[data-sec="driver"]');
     await shot(p, 'connection-driver.png');
+
+    // 8. Live Monitor SQL Server: ~30 sampel sintetis selama 5 menit terakhir + tab Running queries (sebagian kolom, supaya statement terlihat)
+    p = await page(monitorHtml('csp', 'shop-db', false), { h: 500 });
+    const now = Date.now();
+    const wave = (i, base, amp, k = 0) => Math.round((base + amp * Math.sin(i / 3 + k) + amp * 0.4 * Math.sin(i * 1.7 + k)) * 10) / 10;
+    const runCols = ['session_id', 'login_name', 'host_name', 'database', 'status', 'command', 'blocked_by', 'wait_type', 'wait_ms', 'elapsed_ms', 'statement'];
+    const running = { columns: runCols, rows: [
+      [61, 'app', 'web-01', 'shop', 'running', 'UPDATE', null, null, 0, 1840, "UPDATE sales.orders SET status = 'shipped' WHERE order_id = 10021"],
+      [74, 'app', 'web-02', 'shop', 'suspended', 'SELECT', 61, 'LCK_M_S', 1620, 1650, 'SELECT order_id, status, total FROM sales.orders WHERE customer_id = 3107'],
+      [88, 'report', 'bi-01', 'shop', 'running', 'SELECT', null, 'CXPACKET', 120, 920, 'SELECT c.city, SUM(o.total) AS revenue FROM sales.orders o JOIN sales.customers c ON c.id = o.customer_id GROUP BY c.city'],
+      [93, 'app', 'web-01', 'shop', 'running', 'INSERT', null, null, 0, 35, 'INSERT INTO sales.order_items (order_id, product_id, qty) VALUES (10044, 512, 2)'],
+    ] };
+    const tables = {
+      running,
+      sessions: { columns: ['session_id', 'login_name', 'host_name', 'database', 'status', 'blocked_by'], rows: [[61, 'app', 'web-01', 'shop', 'running', null], [74, 'app', 'web-02', 'shop', 'suspended', 61]] },
+      waits: { columns: ['wait_type', 'wait_ms', 'tasks'], rows: [['LCK_M_S', 1620, 1], ['CXPACKET', 840, 6], ['PAGEIOLATCH_SH', 210, 3]] },
+      expensive: { columns: ['query', 'database', 'executions', 'cpu_ms'], rows: [['SELECT c.city, SUM(o.total) FROM sales.orders o JOIN sales.customers c ...', 'shop', 412, 98100]] },
+      files: { columns: ['database', 'file', 'type', 'num_of_reads', 'num_of_writes'], rows: [['shop', 'shop', 'ROWS', 182340, 40211], ['shop', 'shop_log', 'LOG', 210, 98112]] },
+    };
+    for (let i = 0; i < 30; i++) {
+      const point = { t: now - (29 - i) * 10000, values: {
+        cpu: [wave(i, 38, 14)], batch: [wave(i, 420, 120, 1)], waiting: [Math.max(0, Math.round(wave(i, 3, 2.5, 2)))],
+        io: [wave(i, 6.5, 2.5, 0.5), wave(i, 2.2, 1.1, 2.5)], conn: [Math.round(wave(i, 64, 6, 1.5))], tran: [wave(i, 180, 55, 3)] } };
+      await p.evaluate((data) => window.dispatchEvent(new MessageEvent('message', { data })), { type: 'sample', point, tables });
+    }
+    await shot(p, 'monitor.png');
 
     // icon 128x128 dari SVG
     const icon = await browser.newPage({ viewport: { width: 128, height: 128 } });

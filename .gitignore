@@ -4,3 +4,4 @@ out/
 .vscode-test/
 test-extention/local/
 test-extention/result.*
+deployment/vsx/

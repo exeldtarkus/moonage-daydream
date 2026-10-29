@@ -81,7 +81,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         const routine = n.objKind === 'procedure' || n.objKind === 'function';
         const open = n.objKind === 'trigger' || (routine && !d.parameters) ? vscode.TreeItemCollapsibleState.None : C;
         return Object.assign(new vscode.TreeItem(n.obj.schema ? `${n.obj.schema}.${n.obj.name}` : n.obj.name, open),
-          { iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: `${n.objKind}${d.definition ? '.def' : ''}` });
+          { iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: `${n.objKind}${d.definition ? '.def' : ''}${isMs(n.c) ? '.ms' : ''}` }); // .ms: menu khusus SQL Server (Script as)
       }
       case 'col':
         return Object.assign(new vscode.TreeItem(n.label), { description: n.description, iconPath: new vscode.ThemeIcon('symbol-field') });
