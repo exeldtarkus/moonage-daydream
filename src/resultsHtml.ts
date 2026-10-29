@@ -1,4 +1,7 @@
 import { GRID_MAX_ROWS, PAGE_ROWS, QueryResult } from './db';
+
+/** lebih dari sekian baris: baris disimpan di <template> (tidak di-layout) dan hanya yang dekat viewport dipasang di tabel */
+export const VIRTUAL_ROWS = 300;
 import { preview } from './sqlContext';
 import { FORMATS } from './exporter';
 import type { PlanStatement } from './plan';
@@ -53,13 +56,14 @@ const spinner = (label: string) =>
 
 /** ikon jam footer (SVG inline: karakter ⏱ tidak ada di semua font) */
 const CLOCK = '<svg class="clock" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 5.5V9l2.2 1.4M6.5 1.5h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
-const NUMERIC = /^(tinyint|smallint|int|bigint|decimal|numeric|float|real|money|smallmoney)$/;
+/** tipe angka semua driver: decimal(12,2), int unsigned, int4, float8, double, long */
+export const NUMERIC = /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|money|smallmoney|int2|int4|int8|float4|float8|long)\b/;
 /** ikon tipe di header kolom (gaya DBCode): # angka, abc teks, dt tanggal, 0x biner, bit */
 function typeTag(type: string): string {
   if (NUMERIC.test(type)) return '#';
   if (/date|time/.test(type)) return 'dt';
-  if (/binary|image|timestamp|rowversion/.test(type)) return '0x';
-  if (type === 'bit') return 'bit';
+  if (/binary|image|rowversion|bytea|blob|binData/.test(type)) return '0x';
+  if (/^(bit|bool|boolean)$/.test(type)) return 'bit';
   return type ? 'abc' : '';
 }
 
@@ -83,14 +87,15 @@ function resultHtml(r: QueryResult, canMore = false): string {
     const num = s.columns.map((_, c) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number'));
     const rows = s.rows
       .map((row, n) => `<tr><td class="n">${n + 1}</td>${row.map((v, c) => `<td${num[c] ? ' class="num"' : ''}>${cell(v)}</td>`).join('')}</tr>`).join('');
-    const more = s.limited ? ` · auto limit ${s.limited}, add TOP n for more` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
+    const more = s.limited ? ` · auto limit ${s.limited}` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
     const head = s.columns.map((c, k) => {
       const t = s.types?.[k] ?? '';
       return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
     return `<h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
-<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 ? ' data-edit="1" title="Double-click a cell to edit (generates an UPDATE script)"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 ? ' data-edit="1" title="Double-click a cell to edit (generates an UPDATE script)"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead>${s.rows.length > VIRTUAL_ROWS
+      ? `<tbody></tbody></table><template class="vrows">${rows}</template>` : `<tbody>${rows}</tbody></table>`}</div>
 <div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0
       ? '<span class="editbar" hidden><b class="ecount"></b> change(s)<button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
       ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div>`;
@@ -219,6 +224,7 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .foot .xbtn svg { width: 12px; height: 12px; }
   tbody tr.sel td { background: var(--vscode-list-activeSelectionBackground, #094771) !important; color: var(--vscode-list-activeSelectionForeground, inherit); }
   tbody td { cursor: default; }
+  tbody tr.vpad td { padding: 0; height: auto; border: 0; background: none !important; pointer-events: none; }
   .menu.export { padding: 10px 12px; min-width: 230px; }
   .menu.export label { display: block; margin: 6px 0 4px; font-weight: 600; }
   .menu select { width: 100%; padding: 4px; font: inherit; color: var(--vscode-dropdown-foreground, inherit);
@@ -320,9 +326,47 @@ const GRID_SCRIPT = `(() => {
   const menu = document.getElementById('menu');
   const state = new Map();
   const st = (t) => {
-    if (!state.has(t)) state.set(t, { rows: [...t.tBodies[0].rows], filters: {}, sort: null, hidden: new Set(), sel: new Set(), anchor: null });
+    if (!state.has(t)) {
+      const tpl = t.nextElementSibling?.matches('template.vrows') ? t.nextElementSibling : null;
+      const rows = tpl ? [...tpl.content.querySelectorAll('tr')] : [...t.tBodies[0].rows];
+      state.set(t, { rows, view: rows, virtual: !!tpl, filters: {}, sort: null, hidden: new Set(), sel: new Set(), anchor: null });
+    }
     return state.get(t);
   };
+  /**
+   * virtual scroll: hanya baris view (hasil filter / sort) di sekitar viewport yang dipasang di tbody, sisanya diganti spacer setinggi barisnya.
+   * Baris lain tetap ada sebagai elemen terlepas (filter / sort / seleksi / edit / export tetap atas semua baris).
+   */
+  function render(t) {
+    const s = st(t), body = t.tBodies[0];
+    if (!s.virtual) { s.view.forEach((r) => body.appendChild(r)); return; }
+    if (!s.top) {
+      s.top = document.createElement('tr');
+      s.top.className = 'vpad';
+      s.top.innerHTML = '<td colspan="9999"></td>';
+      s.bot = s.top.cloneNode(true);
+    }
+    const grid = t.closest('.grid'), h = s.rowH || 31;
+    let from = Math.max(0, Math.floor((grid.scrollTop - t.tHead.offsetHeight) / h) - 40);
+    from -= from % 2; // zebra (nth-child) tidak berganti saat scroll
+    const to = Math.min(s.view.length, from + Math.ceil((grid.clientHeight || innerHeight) / h) + 80);
+    s.top.firstChild.style.height = from * h + 'px';
+    s.bot.firstChild.style.height = (s.view.length - to) * h + 'px';
+    body.replaceChildren(s.top, ...s.view.slice(from, to), s.bot);
+    if (!s.rowH && to > from) {
+      s.rowH = s.view[from].getBoundingClientRect().height || h;
+      if (s.rowH !== h) render(t);
+    }
+  }
+  let scrolling = false;
+  // scroll tidak bubble: tangkap di document lalu render tabel di .grid yang di-scroll (sekali per frame)
+  document.addEventListener('scroll', (e) => {
+    const t = e.target.classList?.contains('grid') && e.target.querySelector('table.rs');
+    if (!t || !st(t).virtual || scrolling) return;
+    scrolling = true;
+    requestAnimationFrame(() => { scrolling = false; render(t); });
+  }, true);
+  document.querySelectorAll('table.rs').forEach((t) => st(t).virtual && render(t));
   const saved = vscode.getState() || {};
   /** baris terpilih (index asli) dalam urutan tampil sekarang */
   const selected = (t) => { const s = st(t); return s.rows.filter((r) => !r.hidden && s.sel.has(s.rows.indexOf(r))).map((r) => s.rows.indexOf(r)); };
@@ -370,9 +414,10 @@ const GRID_SCRIPT = `(() => {
         return dir * (num ? Number(x) - Number(y) : x.localeCompare(y, undefined, { numeric: true }));
       });
     }
-    const body = t.tBodies[0];
     s.rows.forEach((r) => (r.hidden = true));
-    rows.forEach((r, i) => { r.hidden = false; r.cells[0].textContent = String(i + 1); body.appendChild(r); });
+    rows.forEach((r, i) => { r.hidden = false; r.cells[0].textContent = String(i + 1); });
+    s.view = rows;
+    render(t);
     const ord = order(t);
     for (const r of [t.tHead.rows[0], ...s.rows]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(ord[i - 1])));
     t.tHead.querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('on', b.dataset.c in s.filters));
@@ -395,6 +440,8 @@ const GRID_SCRIPT = `(() => {
     const top = r.bottom + 2 + h <= innerHeight ? r.bottom + 2 : r.top - h - 2;
     menu.style.top = Math.max(4, Math.min(top, innerHeight - h - 4)) + 'px';
   }
+  // Shift+klik memperluas seleksi baris, bukan blok teks
+  document.addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('tbody td')) e.preventDefault(); });
   document.addEventListener('click', (e) => {
     const tb = e.target.closest('table.rs');
     if (tb) active = tb;
@@ -449,7 +496,7 @@ const GRID_SCRIPT = `(() => {
         const part = t.closest('section')?.dataset.part;
         vscode.postMessage({ type: 'edits', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits });
       } else {
-        t.querySelectorAll('td.edited').forEach((td) => { showCell(td, JSON.parse(td.dataset.orig)); td.classList.remove('edited'); });
+        st(t).rows.flatMap((r) => [...r.querySelectorAll('td.edited')]).forEach((td) => { showCell(td, JSON.parse(td.dataset.orig)); td.classList.remove('edited'); });
         s.edits.clear();
         syncEdits(t);
       }

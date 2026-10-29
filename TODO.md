@@ -43,7 +43,7 @@
 - [x] Transaction strategy: mode Auto-commit / Manual per file (Manual = BEGIN TRAN otomatis, tombol Commit / Rollback, status transaksi di status bar, peringatan bila transaksi masih terbuka saat file / koneksi ditutup)
 - [x] Edit data di grid: double-click sel -> script UPDATE (BEGIN TRAN, WHERE primary key) di tab baru, tidak dijalankan otomatis
 - [x] Paging: tombol Load more (+1000 baris, maks 50.000 di grid)
-- [ ] Virtual scroll di grid (render hanya baris yang terlihat untuk ribuan baris)
+- [x] Virtual scroll di grid (>300 baris: baris di <template>, hanya sekitar viewport yang dipasang; filter / sort / seleksi / edit tetap atas semua baris)
 
 ## Database lain (lewat `src/db.ts` → `drivers`)
 - [ ] MySQL / MariaDB
