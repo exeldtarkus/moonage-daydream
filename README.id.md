@@ -13,7 +13,8 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
   - **MySQL / MariaDB** (mysql2) dan **PostgreSQL** (pg).
   - **SQLite** (sql.js, WebAssembly): file database dibaca setiap query dan ditulis balik setelah statement yang mengubah data.
   - **MongoDB**: query gaya mongosh seperti `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` dan `db.runCommand(...)`. Dokumen ditampilkan sebagai kolom grid. Host boleh berupa connection string `mongodb://` atau `mongodb+srv://`.
-- **View Connections**: koneksi → database → Tables / Views / Procedures → kolom. **Select Top 100** pada table atau view, **New SQL File** pada database. Password disimpan di SecretStorage VS Code.
+- **View Connections**: koneksi → database → Tables / Views / Procedures → kolom, dengan logo per jenis database. **Select Top 100** pada table atau view, **New SQL File** pada database. Password disimpan di SecretStorage VS Code.
+- **Group dan warna koneksi**: kelompokkan koneksi ke folder group (mis. `prod`, `non-prod`) dan beri warna; koneksi berwarna juga ditandai di editor `.sql`, membantu mengenali koneksi production.
 - **Koneksi dan database per file**, tampil dan bisa diganti lewat CodeLens di atas file.
 - **Run**: selection, atau statement di posisi kursor. CodeLens per statement: **Execute**, **Explain**, **Analyze** (hanya SELECT). Beberapa SELECT yang dipilih bersamaan berjalan paralel. Query yang sedang berjalan bisa di-cancel di server.
 - **Auto limit** untuk satu SELECT, lalu **Load more (+1000)** sampai 50.000 baris di grid.
@@ -23,8 +24,8 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
 - **Pin results** supaya hasil tetap di tab sendiri, berdampingan.
 - **Edit cell**: perubahan menghasilkan script UPDATE berdasarkan primary key di tab baru. Script tidak pernah dijalankan otomatis.
 - **Execution plan**: plan grafis dengan bar cost untuk SQL Server; output `EXPLAIN` sebagai grid untuk database lain.
-- **Dukungan editor**: autocomplete (database, schema, table, kolom termasuk alias, keyword dan function), formatter (dialect mengikuti koneksi), lint untuk statement tanpa `;` dengan Quick Fix.
-- **View samping**: **SQL Files** (folder atau daftar rata), **Running Queries**, **Query History**.
+- **Dukungan editor**: autocomplete (database, schema, table, kolom termasuk alias, keyword dan function; untuk MongoDB collection, method, nama field dan operator `$`), formatter (dialect mengikuti koneksi), lint untuk statement tanpa `;` dengan Quick Fix.
+- **View samping**: **SQL Files** (folder atau daftar rata, dengan rename, duplicate, delete dan drag & drop), **Running Queries**, **Query History**.
 
 ## Instalasi
 
@@ -50,9 +51,18 @@ code --install-extension moonage-daydream-<version>.vsix
 
 Buka view **Moonage Daydream** di Activity Bar lalu klik **+** (**Add Connection**) di view **Connections**. Pilih **Database type**, lalu isi nama, host, port, username, password dan (opsional) database default. **Test** mengecek koneksi sebelum disimpan.
 
-![Form koneksi untuk koneksi PostgreSQL](images/screenshots/connection.png)
+![Form koneksi untuk koneksi PostgreSQL dengan Group prod dan Color Red](images/screenshots/connection.png)
 
 Untuk SQL Server form juga punya Windows authentication (domain), instance name dan *trust server certificate*. Untuk MongoDB host boleh berupa connection string lengkap `mongodb://` atau `mongodb+srv://`. Untuk SQLite, isi path file database.
+
+**Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan koneksi untuk **Move to Group…**, atau folder group untuk **Rename Group…**. Di quick pick koneksi, group ditampilkan sebagai `[group]`.
+
+**Color** (None, Red, Orange, Yellow, Green, Blue, Purple; warna chart dari tema VS Code) menandai koneksi:
+
+- di **Connections** nama koneksi tampil dengan warna itu dan badge ●;
+- di editor `.sql` yang terikat ke koneksi itu, ada bar berwarna di kiri semua baris, dan label `you are using connection <group> - <nama>` (tanpa group: `you are using connection <nama>`) tampil di akhir baris teratas yang terlihat, jadi tetap terlihat saat scroll.
+
+Pakai misalnya Red untuk koneksi production.
 
 Expand koneksi untuk melihat database, table, view, procedure dan kolom. Pakai ikon play pada table atau view untuk **Select Top 100**, atau ikon file baru pada database untuk **New SQL File** yang langsung terikat ke database itu.
 
@@ -108,13 +118,21 @@ Double-click cell di hasil pertama untuk mengeditnya. Jumlah cell yang diubah ta
 
 Default-nya setiap statement auto-commit. Ganti file ke mode manual dengan **Toggle Transaction Mode** (atau CodeLens / status bar): statement lalu berjalan di transaksi yang terbuka sampai Anda klik **Commit** atau **Rollback**. Default untuk file baru diatur lewat `moonageDaydream.transaction.mode`.
 
-### 8. Formatter dan lint
+### 8. Autocomplete, formatter dan lint
 
 **Format SQL** (Ctrl+Alt+F, atau Format Document) memakai dialect SQL dari koneksi file tersebut. Huruf keyword, koma di depan dan titik koma di baris sendiri bisa diatur. Statement tanpa `;` penutup ditandai, dengan Quick Fix untuk menambahkannya.
 
+Untuk koneksi MongoDB autocomplete mengikuti sintaks shell:
+
+- setelah `db.`: nama collection dan method db (`getCollection`, `runCommand`, `stats`, …);
+- di dalam `db.getCollection("`: nama collection;
+- setelah `db.orders.` atau `db.getCollection("orders").`: method collection (`find`, `findOne`, `aggregate`, `countDocuments`, `updateOne`, `deleteMany`, …), disisipkan sebagai snippet;
+- setelah `).`: method cursor (`sort`, `limit`, `skip`, `project`, `hint`, `explain`, …);
+- di dalam `{ }` sebuah `find`, `sort` dan sejenisnya: nama field (diambil dari satu dokumen collection itu) dan operator `$`.
+
 ### 9. View
 
-- **SQL Files**: semua file `.sql` di workspace, sebagai folder atau daftar rata, dengan **New SQL File**.
+- **SQL Files**: semua file `.sql` di workspace, sebagai folder (default) atau daftar rata; pilihannya diingat. **New SQL File** pada folder. Klik kanan file atau folder untuk **Rename…** (F2), **Duplicate…**, **Delete** (tombol Delete), **Copy Path**, **Copy Relative Path**, **Open to the Side** dan **Reveal in Explorer View**. **Delete** memindahkan item ke Recycle Bin / Trash; di jendela remote (WSL, SSH) tidak ada Trash, jadi diminta konfirmasi untuk hapus permanen. Drag file atau folder ke sebuah folder untuk memindahkannya; drag file ke editor untuk membukanya (drop di tepi editor untuk membukanya di split). Koneksi dan database yang terikat ke file ikut pindah saat rename atau move, dan ikut disalin oleh **Duplicate**.
 - **Running Queries**: query yang sedang berjalan beserta lama berjalannya, cancel satu atau semua.
 - **Query History**: jalankan lagi, salin SQL, buka di editor, hapus, kosongkan.
 
@@ -143,6 +161,8 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | Ctrl+Enter (Cmd+Enter) | Run Query, hanya bila extension DBCode tidak terpasang |
 | Ctrl+Alt+F (Cmd+Alt+F) | Format SQL |
 | Shift+Alt+F | Format SQL, bila Moonage Daydream adalah formatter SQL |
+| F2 (Enter) | Rename… di view SQL Files |
+| Delete (Cmd+Backspace) | Delete di view SQL Files |
 
 ## Command
 
@@ -150,6 +170,7 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | --- | --- |
 | `Moonage Daydream: Add Connection` / `Edit Connection` / `Remove Connection` | Kelola koneksi |
 | `Moonage Daydream: Select Connection` | Pilih koneksi aktif |
+| `Moonage Daydream: Move to Group…` / `Rename Group…` | Group koneksi (view Connections) |
 | `Moonage Daydream: Change Connection for This File` / `Change Database for This File` | Koneksi dan database per file |
 | `Moonage Daydream: Run Query (selection or statement at cursor)` | Jalankan selection atau statement di posisi kursor |
 | `Moonage Daydream: Explain (estimated plan)` / `Analyze (actual plan, SELECT only)` | Execution plan |
@@ -160,6 +181,9 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | `Moonage Daydream: Move Results To…` | Panel, kanan atau kiri editor |
 | `Moonage Daydream: Format SQL (Moonage)` | Format dokumen atau selection |
 | `Moonage Daydream: New SQL File` | Buat file `.sql` |
+| `Moonage Daydream: Rename…` / `Duplicate…` / `Delete` | Kelola file atau folder (view SQL Files) |
+| `Moonage Daydream: Copy Path` / `Copy Relative Path` / `Open to the Side` / `Reveal in Explorer View` | View SQL Files |
+| `Moonage Daydream: Show SQL Files as List` / `Show SQL Files as Folders` | Tampilan view SQL Files |
 | `Moonage Daydream: Clear History` | Kosongkan query history |
 
 ## Batasan
@@ -187,8 +211,14 @@ node scripts/screenshots.js   # buat ulang gambar README (setelah npm run compil
 
 `npm run test:servers-ui` menjalankan container Docker yang sama (MySQL, MariaDB, PostgreSQL, MongoDB) lalu menjalankan test di Extension Development Host (`scripts/real-test.sh servers`, `serversUiTest` di `src/test/real/index.ts`). Test ini menambahkan koneksi sementara bernama `__moonage_it_*` ke profil VS Code (plus file SQLite sementara), mencoba run / CodeLens / Load more / export / script UPDATE / Explain / transaksi manual / explorer / completion / format, lalu menghapus koneksi sementara beserta password-nya dan mengembalikan daftar koneksi persis seperti semula (backup daftar, tanpa password, ditulis ke `docs/main/backup/`). Container dan image dihapus setelah selesai kecuali `KEEP_IMAGES=1`.
 
-`npm run test:real` dan `npm run test:servers-ui` membuka URI `vscode://` lewat `powershell.exe`, jadi bisa dijalankan dari WSL dengan VS Code di Windows.
+`npm run test:real` dan `npm run test:servers-ui` membuka Extension Development Host lalu memulai test dengan menulis file pemicu (`docs/main/temp/real-test.trigger`) yang dipantau jendela development. Hanya bila belum ada laporan setelah sekitar 30 detik, URI `vscode://` dibuka lewat `powershell.exe` sebagai cadangan, jadi tetap bisa dijalankan dari WSL dengan VS Code di Windows.
+
+`scripts/real-test.sh <nama>` menjalankan satu kelompok test: `files` (view SQL Files), `groups` (group koneksi), `servers` (test `test:servers-ui`, butuh container-nya) atau `big` (hasil besar dan cancel); tanpa nama, seluruh suite `test:real` dijalankan.
 
 ## Lisensi
 
 MIT, lihat [LICENSE](LICENSE).
+
+### Kredit
+
+Logo database di view Connections (`media/db/*.svg`) berasal dari [devicon](https://github.com/devicons/devicon) 2.18.0 (MIT License). Logo-logo tersebut adalah merek dagang pemiliknya dan hanya dipakai untuk menandai jenis database sebuah koneksi; lihat [media/db/NOTICE.md](media/db/NOTICE.md).
