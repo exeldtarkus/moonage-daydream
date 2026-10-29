@@ -275,7 +275,11 @@ node scripts/screenshots.js   # regenerate the README images (after npm run comp
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+Copyright (C) 2026 Exel Tarkus.
+
+Moonage Daydream is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version (GPL-3.0-or-later).
+
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE](LICENSE) for the full text.
 
 ### Credits
 
