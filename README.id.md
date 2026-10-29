@@ -2,18 +2,20 @@
 
 [English](README.md) | Bahasa Indonesia
 
-Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite dan MongoDB. Tulis query di file `.sql`, jalankan dengan shortcut atau CodeLens, lalu lihat, filter, edit dan export hasilnya di grid.
+Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite dan MongoDB, plus Consul (KV store dan dashboard cluster). Tulis query di file `.sql`, jalankan dengan shortcut atau CodeLens, lalu lihat, filter, edit dan export hasilnya di grid.
 
 ![Grid hasil dengan tag tipe kolom, baris terpilih, toolbar WHERE dan Load more](images/screenshots/results.png)
 
 ## Fitur
 
-- **Lima jenis database**:
+- **Enam jenis koneksi**:
   - **SQL Server**: SQL login atau Windows authentication (NTLM dengan domain), named instance lewat SQL Server Browser, SSL / TLS (encrypt) dengan opsi *trust server certificate*, pemisah batch `GO`.
   - **MySQL / MariaDB** (mysql2) dan **PostgreSQL** (pg).
   - **SQLite** (sql.js, WebAssembly): file database dibaca setiap query dan ditulis balik setelah statement yang mengubah data.
   - **MongoDB**: query gaya mongosh seperti `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` dan `db.runCommand(...)`. Dokumen ditampilkan sebagai kolom grid. Host boleh berupa connection string `mongodb://` atau `mongodb+srv://`.
+  - **Consul** (HTTP API): telusuri dan edit key KV (JSON / YAML / teks) dengan backup sebelum setiap perubahan, dan dashboard untuk leader, node, service dan health check. ACL token disimpan di SecretStorage VS Code.
 - **View Connections**: koneksi → database → Tables / Views / Procedures → kolom, dengan logo per jenis database. **Select Top 100** pada table atau view, **New SQL File** pada database. Password disimpan di SecretStorage VS Code.
+- **Connect / Disconnect** per koneksi, dengan status `● connected` di **Connections**; Disconnect menanyakan commit atau rollback transaksi manual yang masih terbuka dulu. Opsional auto disconnect koneksi yang idle.
 - **View, procedure dan function** (SQL Server, MySQL / MariaDB, PostgreSQL): klik kanan untuk **Show Definition**, **Edit** (script `CREATE OR ALTER` / `CREATE OR REPLACE`) dan **Run Procedure…** (script EXEC / CALL / SELECT dengan semua argumen); procedure dan function bisa di-expand ke parameternya.
 - **SQL Server Object Explorer** seperti ekstensi mssql: Databases / System Databases, Security, Server Objects, SQL Server Agent (job dengan **Start Job** / **Stop Job**); per database Tables, Views, Synonyms, Programmability dan Security; per table Columns, Keys, Constraints, Triggers, Indexes dan Statistics. **Script as…** CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE, **Activity Monitor**, **Kill Session…**, **Server Info**, **Database Info**, **Backup / Restore Database (script)…**.
 - **Live Monitor (charts)** untuk SQL Server, MySQL / MariaDB dan PostgreSQL: grafik live untuk seluruh server atau satu database, dengan tab Running queries, Sessions / Blocking, waits dan Expensive queries, serta **Kill** dengan konfirmasi.
@@ -57,7 +59,7 @@ code --install-extension moonage-daydream-<version>.vsix
 
 Buka view **Moonage Daydream** di Activity Bar lalu klik **+** (**Add Connection**) di view **Connections**. Koneksi baru dibuat dalam dua langkah:
 
-1. **Pilih database**: di bawah header **New connection**, kartu berwarna khas tiap database, dengan logo, untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB. Kartu muncul dengan animasi singkat dan menampilkan **Connect →** saat di-hover (gerakan dikurangi bila OS meminta reduced motion). Kartu itu mengisi port default dan contoh username untuk tipe tersebut.
+1. **Pilih database**: di bawah header **New connection**, kartu berwarna khas tiap database, dengan logo, untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite, MongoDB dan Consul. Kartu muncul dengan animasi singkat dan menampilkan **Connect →** saat di-hover (gerakan dikurangi bila OS meminta reduced motion). Kartu itu mengisi port default dan contoh username untuk tipe tersebut.
 2. **Isi form** untuk tipe itu. **Change database** (kanan atas) kembali ke langkah 1.
 
 **Search databases** (kanan atas langkah 1) menyaring kartu.
@@ -85,7 +87,9 @@ Form punya sidebar di kiri; tiap item membuka bagiannya sendiri dan menampilkan 
 
 ![Bagian Driver settings dengan tiga baris key / value (application_name, statement_timeout, keepAlive) dan + Add setting; ringkasan di sidebar menampilkan 3 setting(s)](images/screenshots/connection-driver.png)
 
-**Test connection** mengecek koneksi sebelum **Save connection**; hasilnya tampil di footer di samping tombol. **Edit Connection** langsung membuka form (langkah 2).
+Untuk **Consul** form berisi host dan port (default 8500), **Enable SSL / TLS** untuk HTTPS, **ACL token** (di field password, disimpan di Secret Storage; kosong = tanpa token) dan **Datacenter** (di field database; kosong = datacenter milik agent). Tidak ada username. Lihat [Consul](#13-consul).
+
+**Test connection** mengecek koneksi sebelum **Save connection** (untuk Consul menampilkan leader cluster); hasilnya tampil di footer di samping tombol. **Edit Connection** langsung membuka form (langkah 2).
 
 **Import Connections from DBCode…** (menu **⋯** view **Connections**) membaca koneksi extension DBCode dari setting `dbcode.connections` dan menampilkannya di quick pick multi-pilih: nama, tipe, host, port, instance, user, database, group, SSL, connection timeout dan read only ikut disalin. Koneksi yang namanya sudah dipakai, atau tipenya tidak didukung, dilewati (pesannya menyebutkan daftarnya). Password tidak ikut diimport: password ditanya sekali saat koneksi pertama kali dipakai, lalu disimpan di Secret Storage VS Code.
 
@@ -101,6 +105,7 @@ Pakai misalnya Red untuk koneksi production.
 Klik kanan koneksi di **Connections** untuk:
 
 - **Select Connection**: jadikan koneksi aktif;
+- **Connect** / **Disconnect**: lihat di bawah;
 - **Edit Connection…** (juga tombol pensil di baris koneksi): buka form;
 - **Rename…**: nama baru yang unik; password tersimpan dan file `.sql` yang terikat ke koneksi ikut pindah ke nama baru;
 - **Change Color…**: quick pick dengan bulatan berwarna, atau *No color*;
@@ -108,6 +113,15 @@ Klik kanan koneksi di **Connections** untuk:
 - **Auto-commit Confirmation…**: *On*, *Off* atau *Same as group* (lihat [Transaksi](#7-transaksi));
 - **Live Monitor (charts)** (SQL Server, MySQL / MariaDB, PostgreSQL): lihat [Live Monitor](#12-live-monitor);
 - **Delete Connection**: minta konfirmasi; password tersimpan ikut dihapus, dan file yang terikat kembali memakai koneksi aktif.
+
+**Connect** membuka koneksi dan mengecek login (untuk Consul: membaca leader cluster); status bar menampilkan hasil dan lama prosesnya. **Disconnect** menutupnya:
+
+- transaksi Manual commit yang masih terbuka ditanya dulu **Commit** atau **Rollback** (Cancel = koneksi tetap terbuka);
+- query yang sedang berjalan di koneksi itu di-cancel;
+- panel Live Monitor dan Consul Dashboard-nya ditutup;
+- connection pool ditutup.
+
+Selama pool, transaksi atau panel monitor terbuka, koneksi menampilkan `● connected` di **Connections**. Dengan `moonageDaydream.connection.idleDisconnectMinutes` (default `0` = mati) koneksi yang tidak dipakai selama sekian menit di-disconnect otomatis, tidak pernah saat query berjalan, transaksi terbuka atau monitor tampil.
 
 Expand koneksi untuk melihat database, table, view, procedure dan kolom (koneksi SQL Server menampilkan Object Explorer lengkap, lihat [SQL Server Object Explorer](#11-sql-server-object-explorer)). Pakai ikon play pada table atau view untuk **Select Top 100**, atau ikon file baru pada database untuk **New SQL File** yang langsung terikat ke database itu.
 
@@ -245,6 +259,25 @@ Di bawah grafik, tab menampilkan **Running queries** (dengan statement yang seda
 
 Monitor tidak menghitung query-nya sendiri. Saat memonitor satu database, nilai yang hanya ada untuk seluruh server diberi label *(server)*. Polling berhenti selama tab monitor tersembunyi atau di-pause. Di SQL Server login butuh VIEW SERVER STATE.
 
+### 13. Consul
+
+Expand koneksi Consul di **Connections** untuk node **Dashboard** dan key KV, ditampilkan sebagai folder yang dipisah per `/` (tiap folder dimuat saat di-expand).
+
+Klik sebuah key (atau **Open Key**) untuk membuka value-nya di editor (dokumen `moonage-consul://`); bahasanya dideteksi dari isinya: JSON, YAML atau teks biasa. Edit lalu tekan **Ctrl+S**:
+
+- konfirmasi menampilkan koneksi dan datacenter (Consul tidak punya transaksi, perubahan langsung berlaku);
+- value JSON harus tetap JSON yang valid;
+- value saat ini di-backup;
+- value ditulis dengan `PUT ?cas=<ModifyIndex>`, jadi penyimpanan ditolak bila key sudah diubah orang lain sejak dibuka (buka ulang lalu edit lagi).
+
+**New Key…** pada koneksi atau folder menanyakan nama key (relatif terhadap folder, `/` membuat folder, mis. `shop/config/app.json`) lalu membuka editor kosong; key dibuat di Consul saat disimpan. **Delete Key…** pada key atau folder menampilkan jumlah key yang terhapus, minta konfirmasi dan mem-backup semuanya dulu.
+
+Backup ditulis dalam format `consul kv export` ke storage extension (`backups/consul/<koneksi>/`); pesan setelah simpan atau hapus menampilkan file-nya. Restore dengan `consul kv import @<file>`.
+
+**Consul Dashboard** (node **Dashboard**, atau klik kanan koneksi) menampilkan leader, raft peers, node, service dengan health-nya (passing / warning / critical), check yang gagal dan member. Refresh tiap 5, 10, 30 atau 60 detik, atau **Pause**; polling berhenti selama tab tersembunyi.
+
+Koneksi read-only tidak bisa menyimpan atau menghapus key. Bila ACL token tidak punya izin (HTTP 403) pesannya menyebut izin yang dibutuhkan (`key:read`, `key:write`, atau operator / node / service read untuk dashboard).
+
 ## Settings
 
 | Setting | Default | Keterangan |
@@ -255,6 +288,7 @@ Monitor tidak menghitung query-nya sendiri. Saat memonitor satu database, nilai 
 | `moonageDaydream.format.leadingComma` | `true` | Koma di awal baris (`    , column`) |
 | `moonageDaydream.format.semicolonNewline` | `true` | Titik koma penutup statement di baris sendiri |
 | `moonageDaydream.lint.semicolon` | `error` | Tandai statement tanpa `;`: `error`, `warning`, `off` |
+| `moonageDaydream.connection.idleDisconnectMinutes` | `0` | Disconnect koneksi yang tidak dipakai selama sekian menit (tanpa query berjalan, transaksi terbuka atau monitor). `0` = tidak pernah |
 
 Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 
@@ -277,6 +311,9 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | `Moonage Daydream: Import Connections from DBCode…` | Salin koneksi dari `dbcode.connections` (tanpa password; menu **⋯** view Connections) |
 | `Moonage Daydream: Rename…` / `Change Color…` | Ganti nama atau warna koneksi (view Connections) |
 | `Moonage Daydream: Select Connection` | Pilih koneksi aktif |
+| `Moonage Daydream: Connect` / `Disconnect` | Buka atau tutup koneksi (view Connections) |
+| `Moonage Daydream: Open Key` / `New Key…` / `Delete Key…` | Key KV Consul (view Connections) |
+| `Moonage Daydream: Consul Dashboard` | Leader, node, service dan health check koneksi Consul |
 | `Moonage Daydream: Move to Group…` / `Rename Group…` | Group koneksi (view Connections) |
 | `Moonage Daydream: Auto-commit Confirmation…` | Tanya sebelum perubahan data di mode Auto-commit: On / Off per group, On / Off / Same as group per koneksi |
 | `Moonage Daydream: Show Definition` / `Edit (CREATE OR ALTER script)` / `Run Procedure…` | View, procedure, function (dan trigger SQL Server) di Connections |
@@ -311,6 +348,8 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 - Script as CREATE TABLE (SQL Server) tidak mencakup opsi partitioning, compression, filegroup, columnstore, temporal atau memory-optimized.
 - Live Monitor: MySQL / MariaDB tidak punya grafik CPU %; statistik PostgreSQL di-flush dengan jeda sekitar 1 detik; Expensive queries butuh `performance_schema` (MySQL / MariaDB) atau `pg_stat_statements` (PostgreSQL).
 - Konfirmasi Auto-commit: EXEC / CALL selalu ditanya, karena body procedure tidak diperiksa.
+- Consul lewat HTTPS dengan sertifikat self-signed belum didukung (Trust server certificate tidak berlaku).
+- Consul: value YAML tidak divalidasi sebelum disimpan (JSON divalidasi).
 
 ## Development
 

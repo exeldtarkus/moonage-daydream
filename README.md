@@ -2,18 +2,20 @@
 
 English | [Bahasa Indonesia](README.id.md)
 
-A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite and MongoDB. Write queries in `.sql` files, run them with a shortcut or CodeLens, and view, filter, edit and export the results in a grid.
+A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite and MongoDB, plus Consul (KV store and cluster dashboard). Write queries in `.sql` files, run them with a shortcut or CodeLens, and view, filter, edit and export the results in a grid.
 
 ![Results grid with column type tags, selected rows, WHERE toolbar and Load more](images/screenshots/results.png)
 
 ## Features
 
-- **Five database types**:
+- **Six connection types**:
   - **SQL Server**: SQL login or Windows authentication (NTLM with domain), named instances via SQL Server Browser, SSL / TLS (encrypt) with optional *trust server certificate*, `GO` batch separators.
   - **MySQL / MariaDB** (mysql2) and **PostgreSQL** (pg).
   - **SQLite** (sql.js, WebAssembly): the database file is read for each query and written back after statements that change data.
   - **MongoDB**: mongosh-style queries such as `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` and `db.runCommand(...)`. Documents are shown as grid columns. The host may be a `mongodb://` or `mongodb+srv://` connection string.
+  - **Consul** (HTTP API): browse and edit KV keys (JSON / YAML / text) with a backup before every change, and a dashboard for leader, nodes, services and health checks. The ACL token is stored in VS Code SecretStorage.
 - **Connections view**: connection → database → Tables / Views / Procedures → columns, with a logo per database type. **Select Top 100** on a table or view, **New SQL File** on a database. Passwords are stored in VS Code SecretStorage.
+- **Connect / Disconnect** per connection, with a `● connected` status in **Connections**; Disconnect asks to commit or roll back open manual transactions first. Optional auto disconnect of idle connections.
 - **Views, procedures and functions** (SQL Server, MySQL / MariaDB, PostgreSQL): right-click for **Show Definition**, **Edit** (a `CREATE OR ALTER` / `CREATE OR REPLACE` script) and **Run Procedure…** (an EXEC / CALL / SELECT script with every argument); procedures and functions expand to their parameters.
 - **SQL Server Object Explorer** like the mssql extension: Databases / System Databases, Security, Server Objects, SQL Server Agent (jobs with **Start Job** / **Stop Job**); per database Tables, Views, Synonyms, Programmability and Security; per table Columns, Keys, Constraints, Triggers, Indexes and Statistics. **Script as…** CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE, **Activity Monitor**, **Kill Session…**, **Server Info**, **Database Info**, **Backup / Restore Database (script)…**.
 - **Live Monitor (charts)** for SQL Server, MySQL / MariaDB and PostgreSQL: live charts for a whole server or one database, with Running queries, Sessions / Blocking, waits and Expensive queries tabs, and **Kill** with confirmation.
@@ -57,7 +59,7 @@ code --install-extension moonage-daydream-<version>.vsix
 
 Open the **Moonage Daydream** view in the Activity Bar and click **+** (**Add Connection**) in the **Connections** view. A new connection takes two steps:
 
-1. **Choose the database**: under a **New connection** header, a card in the brand color of each database, with a logo, for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite and MongoDB. The cards appear with a short animation and show **Connect →** on hover (the motion is reduced when the OS asks for reduced motion). The card sets the default port and an example username for that type.
+1. **Choose the database**: under a **New connection** header, a card in the brand color of each database, with a logo, for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite, MongoDB and Consul. The cards appear with a short animation and show **Connect →** on hover (the motion is reduced when the OS asks for reduced motion). The card sets the default port and an example username for that type.
 2. **Fill in the form** for that type. **Change database** (top right) goes back to step 1.
 
 **Search databases** (top right of step 1) filters the cards.
@@ -85,7 +87,9 @@ The form has a sidebar on the left; each item opens its own section and shows a 
 
 ![The Driver settings section with three key / value rows (application_name, statement_timeout, keepAlive) and + Add setting; the sidebar summary shows 3 setting(s)](images/screenshots/connection-driver.png)
 
-**Test connection** checks the connection before **Save connection**; the result is shown in the footer next to the buttons. **Edit Connection** opens the form (step 2) directly.
+For **Consul** the form has host and port (default 8500), **Enable SSL / TLS** for HTTPS, the **ACL token** (in the password field, stored in Secret Storage; empty = no token) and the **Datacenter** (in the database field; empty = the datacenter of the agent). There is no username. See [Consul](#13-consul).
+
+**Test connection** checks the connection before **Save connection** (for Consul it shows the cluster leader); the result is shown in the footer next to the buttons. **Edit Connection** opens the form (step 2) directly.
 
 **Import Connections from DBCode…** (the **⋯** menu of the **Connections** view) reads the connections of the DBCode extension from the setting `dbcode.connections` and shows them in a multi-select quick pick: name, type, host, port, instance, user, database, group, SSL, connection timeout and read only are copied. Connections whose name is already used, or whose type is not supported, are skipped (the message lists them). Passwords are not imported: the password is asked once when the connection is first used, then saved in VS Code Secret Storage.
 
@@ -101,6 +105,7 @@ Use for example Red for production connections.
 Right-click a connection in **Connections** for:
 
 - **Select Connection**: make it the active connection;
+- **Connect** / **Disconnect**: see below;
 - **Edit Connection…** (also the pencil button on the connection row): open the form;
 - **Rename…**: a new, unique name; the saved password and the `.sql` files bound to the connection follow the new name;
 - **Change Color…**: a quick pick with colored circles, or *No color*;
@@ -108,6 +113,15 @@ Right-click a connection in **Connections** for:
 - **Auto-commit Confirmation…**: *On*, *Off* or *Same as group* (see [Transactions](#7-transactions));
 - **Live Monitor (charts)** (SQL Server, MySQL / MariaDB, PostgreSQL): see [Live Monitor](#12-live-monitor);
 - **Delete Connection**: asks to confirm; the saved password is removed too, and files bound to it fall back to the active connection.
+
+**Connect** opens the connection and checks the login (for Consul: reads the cluster leader); the status bar shows the result and the time it took. **Disconnect** closes it:
+
+- open transactions in Manual commit first ask **Commit** or **Rollback** (Cancel keeps the connection open);
+- running queries on the connection are cancelled;
+- its Live Monitor and Consul Dashboard panels are closed;
+- the connection pool is closed.
+
+While a pool, a transaction or a monitor panel is open, the connection shows `● connected` in **Connections**. With `moonageDaydream.connection.idleDisconnectMinutes` (default `0` = off) a connection that has not been used for that many minutes is disconnected automatically, never while a query runs, a transaction is open or a monitor is shown.
 
 Expand a connection to browse databases, tables, views, procedures and columns (SQL Server connections show a full Object Explorer, see [SQL Server Object Explorer](#11-sql-server-object-explorer)). Use the play icon on a table or view for **Select Top 100**, or the new-file icon on a database for **New SQL File** bound to that database.
 
@@ -245,6 +259,25 @@ Under the charts, tabs show **Running queries** (with the current statement), **
 
 The monitor does not count its own queries. When monitoring one database, values that only exist for the whole server are labelled *(server)*. Polling stops while the monitor tab is hidden or paused. On SQL Server the login needs VIEW SERVER STATE.
 
+### 13. Consul
+
+Expand a Consul connection in **Connections** for a **Dashboard** node and the KV keys, shown as folders split on `/` (each folder is loaded when expanded).
+
+Click a key (or **Open Key**) to open its value in an editor (a `moonage-consul://` document); the language is detected from the value: JSON, YAML or plain text. Edit it and press **Ctrl+S**:
+
+- a confirmation shows the connection and datacenter (Consul has no transactions, the change applies at once);
+- a JSON value must still be valid JSON;
+- the current value is backed up;
+- the value is written with `PUT ?cas=<ModifyIndex>`, so the save is refused when someone changed the key after it was opened (reopen it and edit again).
+
+**New Key…** on the connection or a folder asks for a key name (relative to the folder, `/` makes folders, e.g. `shop/config/app.json`) and opens an empty editor; the key is created in Consul when you save. **Delete Key…** on a key or a folder shows how many keys are removed, asks to confirm and backs everything up first.
+
+Backups are written in the `consul kv export` format to the extension storage (`backups/consul/<connection>/`); the message after a save or delete shows the file. Restore with `consul kv import @<file>`.
+
+**Consul Dashboard** (the **Dashboard** node, or right-click the connection) shows the leader, raft peers, nodes, services with their health (passing / warning / critical), failing checks and the members. Refresh every 5, 10, 30 or 60 s, or **Pause**; polling stops while the tab is hidden.
+
+Read-only connections cannot save or delete keys. When the ACL token lacks a permission (HTTP 403) the message says which one is needed (`key:read`, `key:write`, or operator / node / service read for the dashboard).
+
 ## Settings
 
 | Setting | Default | Description |
@@ -255,6 +288,7 @@ The monitor does not count its own queries. When monitoring one database, values
 | `moonageDaydream.format.leadingComma` | `true` | Put commas at the start of the line (`    , column`) |
 | `moonageDaydream.format.semicolonNewline` | `true` | Put the semicolon that ends a statement on its own line |
 | `moonageDaydream.lint.semicolon` | `error` | Mark statements not terminated with `;`: `error`, `warning`, `off` |
+| `moonageDaydream.connection.idleDisconnectMinutes` | `0` | Disconnect a connection after it has not been used for this many minutes (no running query, open transaction or monitor). `0` = never |
 
 The extension also sets itself as the default formatter for `[sql]`.
 
@@ -277,6 +311,9 @@ The extension also sets itself as the default formatter for `[sql]`.
 | `Moonage Daydream: Import Connections from DBCode…` | Copy the connections from `dbcode.connections` (without passwords; Connections view **⋯** menu) |
 | `Moonage Daydream: Rename…` / `Change Color…` | Rename a connection or change its color (Connections view) |
 | `Moonage Daydream: Select Connection` | Choose the active connection |
+| `Moonage Daydream: Connect` / `Disconnect` | Open or close a connection (Connections view) |
+| `Moonage Daydream: Open Key` / `New Key…` / `Delete Key…` | Consul KV keys (Connections view) |
+| `Moonage Daydream: Consul Dashboard` | Leader, nodes, services and health checks of a Consul connection |
 | `Moonage Daydream: Move to Group…` / `Rename Group…` | Connection groups (Connections view) |
 | `Moonage Daydream: Auto-commit Confirmation…` | Ask before data changes in Auto-commit mode: On / Off per group, On / Off / Same as group per connection |
 | `Moonage Daydream: Show Definition` / `Edit (CREATE OR ALTER script)` / `Run Procedure…` | View, procedure, function (and SQL Server trigger) in Connections |
@@ -311,6 +348,8 @@ The extension also sets itself as the default formatter for `[sql]`.
 - Script as CREATE TABLE (SQL Server) has no partitioning, compression, filegroups, columnstore, temporal or memory-optimized options.
 - Live Monitor: MySQL / MariaDB has no CPU % chart; PostgreSQL statistics are flushed with about 1 s delay; Expensive queries need `performance_schema` (MySQL / MariaDB) or `pg_stat_statements` (PostgreSQL).
 - Auto-commit confirmation: EXEC / CALL always asks, since the procedure body is not inspected.
+- Consul over HTTPS with a self-signed certificate is not supported yet (Trust server certificate does not apply).
+- Consul: YAML values are not validated before saving (JSON is).
 
 ## Development
 
