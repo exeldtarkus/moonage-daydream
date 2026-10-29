@@ -1,9 +1,9 @@
 # TODO
 
-> **▶ LANJUT DARI SINI (2026-10-28, commit b62d682)**
-> Berikutnya: README + icon + screenshot (rujukan: `../live-log-viewer/scripts/screenshots.js`; screenshot pakai data contoh, README lewat background agent).
-> Lalu: SQLite (sql.js) → virtual scroll grid → MySQL / PostgreSQL (butuh server test dari user) → publish (butuh token user).
-> Alur per TODO: kerjakan → `npm test` + `npm run test:real` → tandai [x] → 1 commit per TODO → push.
+> **▶ LANJUT DARI SINI (2026-10-29, v0.2.0)**
+> Selesai: SQLite, MySQL / MariaDB, PostgreSQL, MongoDB, virtual scroll, README + icon + screenshot.
+> Berikutnya: publish (butuh token Open VSX di `deployment/vsx/token` / upload manual VSIX ke Marketplace oleh user).
+> Alur per TODO: kerjakan → `npm test` + `npm run test:real` (+ `npm run test:servers` untuk driver) → tandai [x] → 1 commit per TODO → push.
 
 
 ## Tahap 1 — inti (selesai, v0.1.0)
@@ -53,7 +53,7 @@
 - [x] SQL Server Windows Authentication (NTLM: domain + user + password; SSO user Windows aktif tidak didukung tedious)
 
 ## Rilis
-- [ ] README + icon + screenshot
+- [x] README (EN + ID) + icon + screenshot (`node scripts/screenshots.js`, data contoh)
 - [x] Field `repository` di package.json
 - [ ] Publish (Open VSX / Marketplace) — butuh token / upload manual oleh user
 - [x] Bundle dengan esbuild saat package (VSIX 9 MB / 5000+ file -> 603 KB / 6 file)

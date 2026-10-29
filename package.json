@@ -1,9 +1,10 @@
 {
   "name": "moonage-daydream",
   "displayName": "Moonage Daydream",
-  "description": "Database client: connect (SQL Server first), run queries from .sql files and view the results.",
-  "version": "0.1.0",
+  "description": "Database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite and MongoDB: run queries from .sql files and view, filter, edit and export the results.",
+  "version": "0.2.0",
   "publisher": "exeltarkus",
+  "icon": "images/icon.png",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
@@ -11,6 +12,7 @@
   "categories": [
     "Other"
   ],
+  "keywords": ["sql", "database", "sql server", "mssql", "mysql", "mariadb", "postgresql", "sqlite", "mongodb", "query"],
   "extensionKind": [
     "workspace"
   ],

@@ -12,3 +12,5 @@ test-extention/**
 node_modules/**
 out/**
 !out/extension.js
+images/*.svg
+images/screenshots/**

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d2050"/>
+      <stop offset="1" stop-color="#4a1f63"/>
+    </linearGradient>
+    <linearGradient id="disk" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2bb3c9"/>
+      <stop offset="1" stop-color="#5ee0c8"/>
+    </linearGradient>
+    <mask id="crescent">
+      <circle cx="90" cy="38" r="22" fill="#fff"/>
+      <circle cx="80" cy="30" r="19" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="url(#sky)"/>
+  <circle cx="90" cy="38" r="22" fill="#ffd36b" mask="url(#crescent)"/>
+  <g fill="#fff">
+    <circle cx="30" cy="22" r="2"/>
+    <circle cx="52" cy="14" r="1.3"/>
+    <circle cx="112" cy="74" r="1.6"/>
+    <circle cx="20" cy="50" r="1.2"/>
+  </g>
+  <g transform="translate(22 50)">
+    <path d="M0 10v46c0 6 15 11 34 11s34-5 34-11V10" fill="url(#disk)"/>
+    <ellipse cx="34" cy="10" rx="34" ry="10" fill="#8ff0dc"/>
+    <path d="M0 26c0 6 15 11 34 11s34-5 34-11M0 41c0 6 15 11 34 11s34-5 34-11" fill="none" stroke="#1d2050" stroke-opacity=".35" stroke-width="3"/>
+  </g>
+</svg>
