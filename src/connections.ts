@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
-import type { ConnectionInfo } from './db';
+import type { ConnectionInfo, GroupSettings } from './db';
 
 const LIST = 'connections';
 const ACTIVE = 'activeConnection';
 const BINDINGS = 'fileBindings';
+const GROUPS = 'groupSettings';
 
 /** koneksi + database yang dipakai satu file .sql (key: uri file) */
 export interface FileBinding {
@@ -90,6 +91,28 @@ export class Connections {
       if (!names.includes(c.name)) return c;
       const { group: _old, ...rest } = c;
       return group?.trim() ? { ...rest, group: group.trim() } : rest;
+    })));
+  }
+
+  /** pengaturan per group (konfirmasi Auto-commit) */
+  groupSettings(): GroupSettings {
+    return this.read<GroupSettings>(GROUPS, {});
+  }
+
+  /** konfirmasi Auto-commit per group; undefined = default (aktif) */
+  setGroupConfirm(group: string, on: boolean | undefined): Promise<void> {
+    return this.serial(() => {
+      const { [group]: _old, ...rest } = this.groupSettings();
+      return this.write(GROUPS, on === undefined ? rest : { ...rest, [group]: { confirmAutoCommit: on } });
+    });
+  }
+
+  /** konfirmasi Auto-commit per koneksi; undefined = ikut group */
+  setConfirm(name: string, on: boolean | undefined): Promise<void> {
+    return this.serial(() => this.write(LIST, this.list().map((c) => {
+      if (c.name !== name) return c;
+      const { confirmAutoCommit: _old, ...rest } = c;
+      return on === undefined ? rest : { ...rest, confirmAutoCommit: on };
     })));
   }
 

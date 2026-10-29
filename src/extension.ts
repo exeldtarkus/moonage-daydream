@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, PAGE_ROWS, QueryResult, ResultSet, Session, address, drivers, openSession, schemaOf } from './db';
+import { ConnectionInfo, PAGE_ROWS, QueryResult, ResultSet, Session, address, confirmAutoCommit, drivers, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -17,7 +17,7 @@ import type { ConnColor } from './connColor';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
-import { addWhere, affectedStatements, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 import { monitorKit } from './monitorKits';
 import { monitorHtml } from './monitorHtml';
@@ -151,6 +151,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.addConnection', (n?: Node) => editConnection(undefined, n?.kind === 'group' ? n.group : undefined)),
     vscode.commands.registerCommand('moonageDaydream.importDbcode', importFromDbcode),
+    vscode.commands.registerCommand('moonageDaydream.autoCommitConfirm', autoCommitConfirmCommand),
     vscode.commands.registerCommand('moonageDaydream.editConnection', async (n?: Node) => {
       const c = connOf(n) ?? (await pickConnection('Edit connection'));
       if (c) await editConnection(c);
@@ -832,6 +833,25 @@ async function objectScript(n: Node | undefined, mode: 'show' | 'edit' | 'run') 
   }
 }
 
+/** klik kanan group / koneksi: konfirmasi Auto-commit On / Off (koneksi juga: ikut group) */
+async function autoCommitConfirmCommand(n?: Node) {
+  if (n?.kind !== 'group' && n?.kind !== 'conn') return;
+  const groups = conns.groupSettings();
+  const current = n.kind === 'group' ? groups[n.group]?.confirmAutoCommit : n.c.confirmAutoCommit;
+  const items: (vscode.QuickPickItem & { value: boolean | undefined })[] = [
+    { label: 'On', description: 'ask before INSERT / UPDATE / DELETE / DDL / EXEC run in Auto-commit', value: true },
+    { label: 'Off', description: 'run them without asking', value: false },
+    ...(n.kind === 'conn' ? [{ label: 'Same as group', description: n.c.group ? `group "${n.c.group}": ${confirmAutoCommit({ ...n.c, confirmAutoCommit: undefined }, groups) ? 'On' : 'Off'}` : 'no group: On', value: undefined }] : []),
+  ];
+  for (const i of items) if (i.value === current || (n.kind === 'group' && current === undefined && i.value === true)) i.picked = true, i.label = `$(check) ${i.label}`;
+  const pick = await vscode.window.showQuickPick(items, { title: `Auto-commit confirmation for ${n.kind === 'group' ? `group "${n.group}"` : `connection "${n.c.name}"`}` });
+  if (!pick) return;
+  if (n.kind === 'group') await conns.setGroupConfirm(n.group, pick.value === true ? undefined : pick.value);
+  else await conns.setConfirm(n.c.name, pick.value);
+  log.info(`autoCommitConfirm ${n.kind === 'group' ? `group ${n.group}` : `connection ${n.c.name}`}: ${pick.value ?? 'same as group'}`);
+  explorer.refresh();
+}
+
 /** koneksi DBCode (setting dbcode.connections) -> Connections; password ditanya saat pertama dipakai */
 async function importFromDbcode() {
   const list = vscode.workspace.getConfiguration('dbcode').get<unknown[]>('connections', []);
@@ -1271,6 +1291,15 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
     log.info(`runQuery blocked (read-only connection ${c.name}): ${preview(text)}`);
     await results.show(c.database ? `${c.name} / ${c.database}` : c.name, { error: blocked, uri: key });
     return;
+  }
+  // Auto-commit: statement pengubah data langsung permanen -> konfirmasi dulu (bisa dimatikan per group / koneksi)
+  const changing = txMode(key) === 'auto' && confirmAutoCommit(c, conns.groupSettings())
+    ? changingStatement(drivers[c.type].dialect, splitBatches(text).flatMap((b) => splitStatements(b, drivers[c.type].dialect))) : undefined;
+  if (changing) {
+    const ok = await vscode.window.showWarningMessage('You are running in Auto-commit mode. Data changes are saved permanently and cannot be rolled back.', {
+      modal: true, detail: `${c.name}${c.database ? ` / ${c.database}` : ''}\n\n${preview(changing)}\n\nSwitch the file to Manual commit to review changes before committing, or turn this confirmation off for the connection / group (right-click in Connections).`,
+    }, 'Confirm');
+    if (ok !== 'Confirm') return void log.info(`runQuery cancelled at the Auto-commit confirmation: ${c.name} / ${c.database}`);
   }
   const { q, ac, end } = startRun(key, c, text);
   log.info(`runQuery start: ${c.name} / ${c.database}`);

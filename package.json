@@ -49,6 +49,12 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "moonageDaydream.autoCommitConfirm",
+        "title": "Auto-commit Confirmation…",
+        "category": "Moonage Daydream",
+        "icon": "$(shield)"
+      },
+      {
         "command": "moonageDaydream.editConnection",
         "title": "Edit Connection…",
         "category": "Moonage Daydream",
@@ -710,6 +716,16 @@
           "command": "moonageDaydream.liveMonitor",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^db\\.(mssql|live)$/",
           "group": "3_db@0"
+        },
+        {
+          "command": "moonageDaydream.autoCommitConfirm",
+          "when": "view == moonageDaydream.explorer && viewItem == group",
+          "group": "4_safety@1"
+        },
+        {
+          "command": "moonageDaydream.autoCommitConfirm",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?$/",
+          "group": "4_safety@1"
         }
       ],
       "commandPalette": [

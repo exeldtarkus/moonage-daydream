@@ -961,8 +961,8 @@ async function serversUiTest(m: typeof import('../../extension')): Promise<numbe
     const mongo = c.type === 'mongodb';
     const db = c.type === 'sqlite' ? 'main' : 'shop';
     try {
-      await m.conns.save(c, SERVER_PW);
-      await settle(() => !!m.conns.get(c.name), () => m.conns.save(c, SERVER_PW), `connection ${c.name} saved`);
+      await m.conns.save({ ...c, confirmAutoCommit: false }, SERVER_PW); // koneksi test sementara: tanpa popup Auto-commit
+      await settle(() => !!m.conns.get(c.name), () => m.conns.save({ ...c, confirmAutoCommit: false }, SERVER_PW), `connection ${c.name} saved`);
       const rows = Array.from({ length: 250 }, (_, i) => `(${i + 1}, 'item ${i + 1}', ${(i + 1) / 2})`).join(', ');
       await d.run(c, SERVER_PW, mongo
         ? "db.item.drop(); db.item.insertMany(Array.from({ length: 250 }, (_, i) => ({ _id: i + 1, name: 'item ' + (i + 1), price: (i + 1) / 2 })));"
@@ -1140,10 +1140,14 @@ export async function run(only?: string): Promise<void> {
   const hist0 = m.history.list();
   const since = Date.now();
   let failed = 0;
+  let confirm0: boolean | undefined;
   try {
     const names = m.conns.list().map((c) => c.name);
     say(`connections: ${names.join(', ') || '(none)'}`);
     assert.ok(names.includes(CONN), `connection "${CONN}" not found`);
+    // konfirmasi Auto-commit dimatikan selama test (DML hanya di #temp); nilai asli dikembalikan di akhir
+    confirm0 = m.conns.get(CONN)!.confirmAutoCommit;
+    await m.conns.setConfirm(CONN, false);
     await m.conns.setActive(CONN);
 
     const doc = await fixture('locations', QUERY);
@@ -1309,6 +1313,7 @@ export async function run(only?: string): Promise<void> {
     failed++;
     say(`FAIL setup: ${e instanceof Error ? e.stack : e}`);
   } finally {
+    await m.conns.setConfirm(CONN, confirm0);
     await m.results.setLocation(original);
     // kembalikan history user (tanpa entri dari test ini)
     await (m.history as unknown as { state: vscode.Memento }).state.update('queryHistory', hist0);

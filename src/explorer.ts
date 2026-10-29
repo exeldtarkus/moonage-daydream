@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { Connections } from './connections';
-import { ConnectionInfo, DbObject, ListKind, ObjectKind, address, drivers } from './db';
+import { ConnectionInfo, DbObject, ListKind, ObjectKind, address, confirmAutoCommit, drivers } from './db';
 import { CONN_COLORS } from './connColor';
 import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './mssqlTree';
 import { monitorKit } from './monitorKits';
@@ -44,13 +44,14 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       case 'group': {
         const count = this.conns.list().filter((c) => c.group === n.group).length;
         return Object.assign(new vscode.TreeItem(n.group, vscode.TreeItemCollapsibleState.Expanded), {
-          id: `group:${n.group}`, description: `${count}`, iconPath: new vscode.ThemeIcon('folder-library'), contextValue: 'group',
+          id: `group:${n.group}`, description: `${count}${this.conns.groupSettings()[n.group]?.confirmAutoCommit === false ? ' · no commit confirm' : ''}`,
+          iconPath: new vscode.ThemeIcon('folder-library'), contextValue: 'group',
         });
       }
       case 'conn': {
         const active = this.conns.active === n.c.name;
         return Object.assign(new vscode.TreeItem(n.c.name, C), {
-          description: `${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}`,
+          description: `${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}${confirmAutoCommit(n.c, this.conns.groupSettings()) ? '' : ' · no commit confirm'}`,
           tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
           // logo jenis database; warna koneksi lewat ConnDecorations (nama berwarna + ●)
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)

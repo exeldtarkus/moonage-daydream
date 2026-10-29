@@ -262,7 +262,13 @@ export function affectedStatements(stmts: string[], counts: number): ({ n: numbe
  * Boleh: SELECT / WITH tanpa INTO / DML, DECLARE, SET @variabel, SHOW, DESCRIBE; MongoDB: method baca (find, aggregate tanpa $out / $merge, count ...).
  */
 export function readOnlyBlocked(dialect: Dialect, stmts: string[]): string | undefined {
-  const bad = stmts.find((st) => {
+  const bad = changingStatement(dialect, stmts);
+  return bad === undefined ? undefined : `The connection is read-only: only statements that do not change data can run (blocked: ${preview(bad)})`;
+}
+
+/** statement pertama yang bisa mengubah data (Read only memblokir, Auto-commit minta konfirmasi); undefined = hanya membaca */
+export function changingStatement(dialect: Dialect, stmts: string[]): string | undefined {
+  return stmts.find((st) => {
     const code = maskSql(st);
     if (dialect === 'mongodb') {
       return /\.(insert\w*|update\w*|replace\w*|delete\w*|remove|drop\w*|create\w*|rename\w*|bulkWrite|findOneAnd\w*|findAndModify)\s*\(|\$(out|merge)\b/i.test(st);
@@ -271,7 +277,6 @@ export function readOnlyBlocked(dialect: Dialect, stmts: string[]): string | und
     return !/^\s*(select|with)\b/i.test(code)
       || /\b(into|insert|update|delete|merge|exec|execute|drop|alter|create|truncate|grant|revoke|deny)\b/i.test(code);
   });
-  return bad === undefined ? undefined : `The connection is read-only: only statements that do not change data can run (blocked: ${preview(bad)})`;
 }
 
 /**

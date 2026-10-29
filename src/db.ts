@@ -38,7 +38,15 @@ export interface ConnectionInfo {
   readOnly?: boolean;
   /** Driver settings: opsi tambahan yang diteruskan ke driver (key / value) */
   options?: Record<string, string>;
+  /** konfirmasi sebelum statement pengubah data di Auto-commit; undefined = ikut group (default aktif) */
+  confirmAutoCommit?: boolean;
 }
+
+/** pengaturan per group di Connections */
+export type GroupSettings = Record<string, { confirmAutoCommit?: boolean }>;
+/** konfirmasi Auto-commit aktif? koneksi -> group -> default aktif */
+export const confirmAutoCommit = (c: ConnectionInfo, groups: GroupSettings) =>
+  c.confirmAutoCommit ?? (c.group ? groups[c.group]?.confirmAutoCommit : undefined) ?? true;
 
 // shortcut: hanya MAX_ROWS baris pertama per result set yang disimpan & ditampilkan (sisanya dihitung saja) supaya memori kecil
 // dan cancel tetap responsif di tabel besar; ganti ke paging / virtual scroll bila perlu melihat semua baris
