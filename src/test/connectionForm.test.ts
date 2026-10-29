@@ -76,3 +76,10 @@ test('two-step form: database cards for a new connection, form directly when edi
   const edit = formHtml('csp', toConnection(ok));
   assert.ok(edit.includes('<div id="step1" hidden>') && edit.includes('<form id="f" autocomplete'), 'edit: form directly');
 });
+
+test('database picker search terms include aliases', () => {
+  const html = formHtml('csp');
+  assert.ok(html.includes('id="dbq"'), 'search box');
+  assert.ok(/data-type="postgres"[^>]*data-search="[^"]*\bpg\b/.test(html) && /data-type="mongodb"[^>]*data-search="[^"]*atlas/.test(html), 'aliases searchable');
+  assert.ok(html.includes('Default port 1433') && html.includes('Connect →'), 'action row');
+});

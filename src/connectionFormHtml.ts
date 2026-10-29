@@ -78,6 +78,11 @@ const DB_BRAND: Record<DbType, string> = {
 const EYE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5 13.5 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
+/** kata lain yang cocok di pencarian database */
+const DB_ALIAS: Record<DbType, string> = {
+  mssql: 'mssql microsoft azure tsql t-sql', mysql: 'oracle', mariadb: 'maria', postgres: 'pg postgresql psql', sqlite: 'file local lite', mongodb: 'mongo atlas nosql document',
+};
+
 /** username contoh per tipe (diganti saat ganti tipe selama belum diubah user) */
 const DEFAULT_USER: Record<DbType, string> = { mssql: 'sa', mysql: 'root', mariadb: 'root', postgres: 'postgres', sqlite: '', mongodb: '' };
 
@@ -108,37 +113,30 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
   .sub { margin: 0 0 22px; color: var(--vscode-descriptionForeground); }
   [hidden], .off { display: none !important; }
-  /* langkah 1: hero + kartu database (aksen warna brand, animasi masuk, hover terangkat) */
-  .hero { position: relative; padding: 30px 30px 26px; margin-bottom: 26px; border-radius: 14px; overflow: hidden; border: 1px solid var(--border);
-    background: radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--vscode-focusBorder) 22%, transparent), transparent 60%),
-      radial-gradient(90% 120% at 100% 100%, color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 18%, transparent), transparent 60%),
-      var(--vscode-editorWidget-background, rgba(128,128,128,.06)); }
-  .hero h1 { font-size: 24px; letter-spacing: -.01em; }
-  .hero .sub { margin: 6px 0 0; font-size: 13.5px; }
-  .hero .moon { position: absolute; right: 28px; top: 50%; width: 74px; height: 74px; margin-top: -37px; border-radius: 50%; opacity: .85;
-    box-shadow: inset -18px -6px 0 0 color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 85%, white); animation: float 6s ease-in-out infinite; }
-  @keyframes float { 50% { transform: translateY(-6px) rotate(-6deg); } }
-  .dbgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
-  .db { --brand: var(--vscode-focusBorder); position: relative; display: flex; align-items: center; gap: 14px; padding: 18px 18px 18px 20px; text-align: left; font: inherit; color: inherit; cursor: pointer; overflow: hidden;
-    background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 10%, transparent), transparent 55%), var(--vscode-editorWidget-background, rgba(128,128,128,.06));
-    border: 1px solid var(--border); border-radius: 12px; opacity: 0; animation: rise .45s cubic-bezier(.2,.7,.2,1) forwards; animation-delay: calc(var(--i) * 60ms);
-    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
-  .db::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--brand); opacity: .9; }
-  .db:hover, .db:focus-visible { transform: translateY(-3px); outline: none; border-color: color-mix(in srgb, var(--brand) 70%, transparent);
-    box-shadow: 0 10px 24px -12px color-mix(in srgb, var(--brand) 70%, transparent); }
-  .db b { display: block; font-size: 14.5px; margin-bottom: 3px; }
+  /* langkah 1: pencarian + kartu database (deskripsi di atas, baris port + Connect terpisah di bawah) */
+  .pickhead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .pickhead h1 { font-size: 22px; }
+  .pickhead .sub { margin: 6px 0 0; }
+  .search { position: relative; width: 280px; max-width: 100%; }
+  .search svg { position: absolute; left: 9px; top: 8px; width: 15px; height: 15px; color: var(--vscode-descriptionForeground); }
+  .search input { padding-left: 30px; height: 32px; border-radius: 16px; }
+  .dbgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+  .db { --brand: var(--vscode-focusBorder); display: flex; flex-direction: column; padding: 0; overflow: hidden; text-align: left; font: inherit; color: inherit; cursor: pointer;
+    background: var(--vscode-editorWidget-background, rgba(128,128,128,.06)); border: 1px solid var(--border); border-radius: 12px;
+    opacity: 0; animation: rise .4s cubic-bezier(.2,.7,.2,1) forwards; animation-delay: calc(var(--i) * 50ms); transition: border-color .15s, transform .15s, box-shadow .15s; }
+  .db .top { display: flex; gap: 14px; align-items: center; padding: 18px; flex: 1; }
+  .db b { display: block; font-size: 15px; margin-bottom: 3px; }
   .db small { color: var(--vscode-descriptionForeground); }
-  .db .go { position: absolute; right: 14px; bottom: 10px; font-size: 12px; color: var(--brand); opacity: 0; transform: translateX(-6px); transition: opacity .18s, transform .18s; }
-  .db:hover .go, .db:focus-visible .go { opacity: 1; transform: none; }
-  .db:hover .logo { transform: scale(1.06) rotate(-3deg); }
+  .db .foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--brand) 6%, transparent); font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .db .go { color: var(--brand); font-weight: 600; opacity: .85; transition: transform .15s, opacity .15s; }
+  .db:hover, .db:focus-visible, .db.first { outline: none; transform: translateY(-2px); border-color: var(--brand); box-shadow: 0 10px 24px -14px var(--brand); }
+  .db:hover .go, .db:focus-visible .go, .db.first .go { opacity: 1; transform: translateX(3px); }
   .db .logo { transition: transform .2s ease; }
-  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-  @media (prefers-reduced-motion: reduce) { .db, .hero .moon { animation: none; opacity: 1; } .db, .db .logo, .db .go { transition: none; } }
-  /* tile terang di belakang logo: logo gelap (MariaDB, SQL Server) tetap terlihat di tema gelap */
-  .logo, .logo-sm { flex: none; object-fit: contain; background: #fff; border-radius: 8px; box-shadow: 0 0 0 1px var(--border); }
-  .logo { width: 44px; height: 44px; padding: 6px; }
-  .logo-sm { width: 34px; height: 34px; padding: 4px; }
-  .nologo { display: grid; place-items: center; border-radius: 8px; font-weight: 700; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+  .db:hover .logo { transform: scale(1.06) rotate(-3deg); }
+  #nomatch { padding: 26px; text-align: center; color: var(--vscode-descriptionForeground); border: 1px dashed var(--border); border-radius: 12px; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .db { animation: none; opacity: 1; } .db, .db .logo, .db .go { transition: none; } }
   /* langkah 2: form */
   .head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
   .head h1 { margin: 0; }
@@ -190,9 +188,16 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
 <body>
 <main>
 <div id="step1"${old ? ' hidden' : ''}>
-  <div class="hero"><h1>New connection</h1><p class="sub">Pick a database to start. You can change it later.</p><span class="moon"></span></div>
+  <div class="pickhead">
+    <div><h1>New connection</h1><p class="sub">Pick a database to start. You can change it later.</p></div>
+    <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="m10.5 10.5 3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <input type="text" id="dbq" placeholder="Search databases" aria-label="Search databases" autocomplete="off"></label>
+  </div>
   <div class="dbgrid">${types.map(([k, d], i) =>
-    `<button type="button" class="db" data-type="${k}" data-port="${d.defaultPort}" style="--brand: ${DB_BRAND[k]}; --i: ${i}">${logo(k, 'logo')}<span><b>${esc(d.label)}</b><small>${esc(DB_HINT[k])}</small></span><span class="go">Connect →</span></button>`).join('')}</div>
+    `<button type="button" class="db" data-type="${k}" data-port="${d.defaultPort}" data-search="${esc(`${d.label} ${DB_HINT[k]} ${k} ${DB_ALIAS[k]}`.toLowerCase())}" style="--brand: ${DB_BRAND[k]}; --i: ${i}">`
+    + `<span class="top">${logo(k, 'logo')}<span><b>${esc(d.label)}</b><small>${esc(DB_HINT[k])}</small></span></span>`
+    + `<span class="foot"><span>${k === 'sqlite' ? 'Database file' : `Default port ${d.defaultPort}`}</span><span class="go">Connect →</span></span></button>`).join('')}</div>
+  <div id="nomatch" hidden>No database matches "<span id="nomatchq"></span>".</div>
 </div>
 <form id="f"${old ? '' : ' hidden'} autocomplete="off">
   <input type="hidden" id="type" value="${esc(old?.type ?? 'mssql')}">
@@ -290,7 +295,24 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
     (btn.dataset.type === 'sqlite' ? $('file') : $('name')).focus();
   };
   document.querySelectorAll('.db').forEach((b) => (b.onclick = () => choose(b)));
-  $('change').onclick = () => { $('step1').hidden = false; $('f').hidden = true; $('foot').hidden = true; };
+  // pencarian: semua kata harus cocok (nama, deskripsi, alias); Enter = kartu pertama, Esc = kosongkan
+  const cards = [...document.querySelectorAll('.db')];
+  const visible = () => cards.filter((c) => !c.hidden);
+  const filter = () => {
+    const words = $('dbq').value.toLowerCase().split(/\s+/).filter(Boolean);
+    cards.forEach((c) => (c.hidden = !words.every((w) => c.dataset.search.includes(w))));
+    const v = visible();
+    cards.forEach((c) => c.classList.toggle('first', !!words.length && c === v[0]));
+    $('nomatch').hidden = v.length > 0;
+    $('nomatchq').textContent = $('dbq').value;
+  };
+  $('dbq').oninput = filter;
+  $('dbq').onkeydown = (e) => {
+    if (e.key === 'Enter' && visible()[0]) { e.preventDefault(); choose(visible()[0]); }
+    if (e.key === 'Escape') { $('dbq').value = ''; filter(); }
+  };
+  if (!editing) $('dbq').focus();
+  $('change').onclick = () => { $('step1').hidden = false; $('f').hidden = true; $('foot').hidden = true; $('dbq').focus(); };
   document.querySelectorAll('.sw').forEach((b) => (b.onclick = () => {
     document.querySelectorAll('.sw').forEach((x) => x.classList.toggle('on', x === b));
     $('color').value = b.dataset.color;
