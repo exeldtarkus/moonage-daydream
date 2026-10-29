@@ -1,23 +1,15 @@
 import { randomBytes } from 'crypto';
 import { esc } from './resultsHtml';
-
-const CHARTS: [string, string, string][] = [
-  ['cpu', 'CPU %', 'SQL Server CPU usage (Resource Pool Stats)'], ['batch', 'Batch requests/sec', 'SQL Statistics: Batch Requests/sec'],
-  ['waiting', 'Waiting tasks', 'User tasks waiting for a resource (sys.dm_os_waiting_tasks)'], ['io', 'Database I/O MB/s', 'Read and write MB/s, all database files'],
-  ['conn', 'User connections', 'General Statistics: User Connections'], ['tran', 'Transactions/sec', 'Databases: Transactions/sec (_Total)'],
-];
-const TABS: [string, string][] = [['running', 'Running queries'], ['sessions', 'Sessions / Blocking'], ['waits', 'Top waits'], ['expensive', 'Expensive queries'], ['files', 'File I/O']];
-
-// angka level server walau monitoring satu database (SQL Server tidak memecahnya per database)
-const SERVER_WIDE = new Set(['cpu', 'batch', 'waits']);
+import { monitorKit } from './monitorKits';
+import type { MonitorKit } from './monitorKits';
 
 /**
- * panel Live Monitor SQL Server: grafik SVG live + tabel; data dikirim extension lewat postMessage ({ type: 'sample' | 'error' }).
- * perDb: monitoring satu database -> grafik / tab yang tetap level server diberi label (server)
+ * panel Live Monitor: grafik SVG live + tabel dari kit database (monitorKits); data lewat postMessage
+ * ({ type: 'sample', point: { t, values }, tables } | { type: 'error' }). perDb: grafik / tab level server diberi label (server).
  */
-export function monitorHtml(cspSource: string, title: string, perDb = false): string {
+export function monitorHtml(cspSource: string, title: string, perDb = false, kit: MonitorKit = monitorKit('mssql')!): string {
   const nonce = randomBytes(16).toString('base64');
-  const label = (id: string, text: string) => (perDb && SERVER_WIDE.has(id) ? `${text} (server)` : text);
+  const label = (text: string, serverWide?: boolean) => (perDb && serverWide ? `${text} (server)` : text);
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -62,24 +54,26 @@ export function monitorHtml(cspSource: string, title: string, perDb = false): st
   <button id="pause">Pause</button>
   <span id="status">Collecting…</span>
 </div>
-<div class="charts">${CHARTS.map(([id, text, tip]) => `<div class="chart" data-chart="${id}" title="${esc(tip)}"><h2>${esc(label(id, text))} <b id="v-${id}">–</b></h2><svg viewBox="0 0 300 90" preserveAspectRatio="none"></svg></div>`).join('')}</div>
-<div class="tabs">${TABS.map(([id, text], i) => `<button data-tab="${id}"${i ? '' : ' class="on"'}>${esc(label(id, text))}</button>`).join('')}<span class="sp"></span><button id="open" title="Open this table as a query (grid with filter / export)">Open as query</button></div>
+<div class="charts">${kit.charts.map((c) => `<div class="chart" data-chart="${c.id}" title="${esc(c.tip)}"><h2>${esc(label(c.label, c.serverWide))} <b id="v-${c.id}">–</b></h2><svg viewBox="0 0 300 90" preserveAspectRatio="none"></svg></div>`).join('')}</div>
+<div class="tabs">${kit.tabs.map(([id, text, serverWide], i) => `<button data-tab="${id}"${i ? '' : ' class="on"'}>${esc(label(text, serverWide))}</button>`).join('')}<span class="sp"></span><button id="open" title="Open this table as a query (grid with filter / export)">Open as query</button></div>
 <div class="wrap" id="table"><div class="empty">Waiting for the first sample…</div></div>
 <script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
   const esc = (x) => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   let points = [], last, tab = 'running', paused = false;
-  // seri per grafik: [nama, ambil nilai]
-  const SERIES = { cpu: [(p) => p.cpu], batch: [(p) => p.batchPerSec], waiting: [(p) => p.waiting], io: [(p) => p.readMBs, (p) => p.writeMBs], conn: [(p) => p.connections], tran: [(p) => p.tranPerSec] };
+  // grafik dari kit: id -> batas tetap (persen) atau skala otomatis; seri = point.values[id][i]
+  const CHARTS = ${JSON.stringify(Object.fromEntries(kit.charts.map((c) => [c.id, c.max ?? null])))};
   const fmt = (v) => (v === null || v === undefined ? '–' : Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : (Math.round(v * 10) / 10).toString());
   function draw() {
     const win = +$('window').value * 60000, now = points.length ? points[points.length - 1].t : 0;
     points = points.filter((p) => p.t >= now - win);
-    for (const [id, fns] of Object.entries(SERIES)) {
+    for (const [id, fixed] of Object.entries(CHARTS)) {
       const svg = document.querySelector('[data-chart="' + id + '"] svg');
+      const n = Math.max(1, ...points.map((p) => (p.values[id] || []).length));
+      const fns = Array.from({ length: n }, (_, i) => (p) => (p.values[id] || [])[i]);
       const vals = fns.flatMap((f) => points.map(f)).filter((v) => v !== null && v !== undefined);
-      const max = id === 'cpu' ? 100 : Math.max(1, ...vals) * 1.15;
+      const max = fixed || Math.max(1, ...vals) * 1.15;
       const x = (t) => 300 - ((now - t) / win) * 300, y = (v) => 88 - (v / max) * 84;
       const lines = fns.map((f, i) => {
         const pts = points.filter((p) => f(p) !== null && f(p) !== undefined).map((p) => x(p.t).toFixed(1) + ',' + y(f(p)).toFixed(1)).join(' ');
@@ -92,7 +86,8 @@ export function monitorHtml(cspSource: string, title: string, perDb = false): st
     }
   }
   function table() {
-    const t = last && last[tab];
+    const t = last && last.tables[tab];
+    if (t && t.message) return void ($('table').innerHTML = '<div class="empty">' + esc(t.message) + '</div>');
     if (!t || !t.rows.length) return void ($('table').innerHTML = '<div class="empty">' + (last ? (tab === 'waits' ? 'No waits since the previous sample.' : tab === 'running' ? 'No query is running right now (this monitor is not counted).' : 'Nothing to show.') : 'Waiting for the first sample…') + '</div>');
     const bi = t.columns.indexOf('blocked_by'), si = t.columns.indexOf('session_id');
     const kill = tab === 'sessions' || tab === 'running';

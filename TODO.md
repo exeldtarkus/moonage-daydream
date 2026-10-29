@@ -100,7 +100,11 @@
   - [x] makesure monitoring query execute grafiknya jangan include excute query dari laptop user, agar datanya memang bener transaksi yang sedang di lakukan di database / server
   - [x] monitoring menampilkan juga query yang sedang di execute
   - [x] makesure kill pada monitoring bener-bener bekerja
-- [ ] Live Monitor MySQL / MariaDB (SHOW GLOBAL STATUS, processlist) dan PostgreSQL (pg_stat_database, pg_stat_activity) — sesudah SQL Server
+- [ ] Live Monitor MySQL / MariaDB (SHOW GLOBAL STATUS, processlist) dan PostgreSQL (pg_stat_database, pg_stat_activity), per tahap dengan TDD — kode + unit test + verifikasi Docker (MySQL 8.4, MariaDB 11.4, PostgreSQL 16) selesai, menunggu test real di VS Code (user):
+  - [x] Panel generik: grafik & tab dari definisi per database (point.values per grafik), SQL Server tetap sama (adapter)
+  - [x] MySQL / MariaDB: Queries/s, Transactions/s, Threads connected / running, Network MB/s, InnoDB I/O MB/s, Row lock waits; Running queries / Sessions (processlist), Expensive queries (performance_schema digest, opsional), Kill = KILL <id>; per database (klik kanan database)
+  - [x] PostgreSQL: Transactions/s, Rows/s, Disk blocks/s, Cache hit %, Connections, Active / Waiting sessions; Running queries / Sessions (pg_stat_activity + pg_blocking_pids), Expensive queries (pg_stat_statements, opsional), Kill = pg_terminate_backend; per database
+  - [x] Verifikasi ke MySQL / MariaDB / PostgreSQL Docker sementara, screenshot panel, langkah test real
 
 ## Rilis
 - [x] README (EN + ID) + icon + screenshot (`node scripts/screenshots.js`, data contoh)

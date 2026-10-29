@@ -19,7 +19,7 @@ import type { Outcome, Source } from './resultsHtml';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
 import { addWhere, affectedStatements, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
-import { MonitorPart, monitorQueries, monitorSample, monitorSql } from './monitor';
+import { monitorKit } from './monitorKits';
 import { monitorHtml } from './monitorHtml';
 import { permissionHint } from './mssqlTree';
 import { importDbcode } from './connString';
@@ -702,20 +702,24 @@ async function killCommand(n?: Node) {
 function liveMonitor(n?: Node) {
   if (n?.kind !== 'conn' && n?.kind !== 'db') return;
   const node = n;
+  const found = monitorKit(node.c.type);
+  if (!found) return void vscode.window.showInformationMessage(`Live Monitor is not available for ${drivers[node.c.type].label}`);
+  const kit = found; // tetap ter-narrow di dalam fungsi tick
   // klik kanan database = monitoring database itu saja; koneksi = seluruh server
   const db = node.kind === 'db' ? node.db : undefined;
-  const sql = monitorSql(db);
-  const queries = monitorQueries(db);
+  const parts = kit.parts(db);
   const title = db ? `${node.c.name} / ${db}` : node.c.name;
-  const c = { ...node.c, database: 'master' };
+  // SQL Server: DMV dibaca dari master; MySQL / PostgreSQL: database koneksi (statistik server tetap terbaca)
+  const c = node.c.type === 'mssql' ? { ...node.c, database: 'master' } : node.c;
+  const d = drivers[node.c.type];
   const panel = vscode.window.createWebviewPanel('moonageDaydream.monitor', `Monitor: ${title}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
-  panel.webview.html = monitorHtml(panel.webview.cspSource, title, db !== undefined);
+  panel.webview.html = monitorHtml(panel.webview.cspSource, title, db !== undefined, kit);
   let interval = 5000;
   let paused = false;
   let disposed = false;
   let busy = false;
   let timer: NodeJS.Timeout | undefined;
-  let prev: { sets: ResultSet[]; t: number } | undefined;
+  let prev: { res: Record<string, ResultSet[] | Error>; t: number } | undefined;
   const schedule = () => {
     if (!disposed && !timer) timer = setTimeout(tick, interval);
   };
@@ -725,14 +729,25 @@ function liveMonitor(n?: Node) {
     if (paused || !panel.visible || busy) return schedule(); // tersembunyi / pause: tidak ada query ke server
     busy = true;
     try {
-      const r = await drivers.mssql.run(c, await conns.password(node.c.name), sql);
+      const pw = await conns.password(node.c.name);
+      const res: Record<string, ResultSet[] | Error> = {};
+      for (const part of parts) {
+        try {
+          res[part.id] = (await d.run(c, pw, part.sql)).resultSets;
+        } catch (e) {
+          if (!part.optional) throw e;
+          // bagian opsional (performance_schema / pg_stat_statements tidak aktif): pesan di tab-nya, grafik tetap jalan
+          log.error(`liveMonitor ${part.id} - EXCEPTION CAUGHT | ${node.c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+          res[part.id] = e instanceof Error ? e : new Error(String(e));
+        }
+      }
       const t = Date.now();
-      const s = monitorSample(r.resultSets, t, prev);
-      prev = { sets: r.resultSets, t };
+      const s = kit.sample(res, t, prev, db);
+      prev = { res, t };
       void panel.webview.postMessage({ type: 'sample', ...s });
     } catch (e) {
       log.error(`liveMonitor - EXCEPTION CAUGHT | ${node.c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'error', message: permissionHint('monitor', e) ?? errMsg(e) });
+      void panel.webview.postMessage({ type: 'error', message: (node.c.type === 'mssql' && permissionHint('monitor', e)) || errMsg(e) });
     } finally {
       busy = false;
       schedule();
@@ -748,20 +763,20 @@ function liveMonitor(n?: Node) {
     disposed = true;
     if (timer) clearTimeout(timer);
   });
-  panel.webview.onDidReceiveMessage(async (m: { type: string; ms?: number; paused?: boolean; id?: string; tab?: MonitorPart }) => {
+  panel.webview.onDidReceiveMessage(async (m: { type: string; ms?: number; paused?: boolean; id?: string; tab?: string }) => {
     if (m.type === 'interval' && m.ms) {
       interval = Math.min(60000, Math.max(1000, m.ms));
       restart();
     } else if (m.type === 'pause') {
       paused = !!m.paused;
       if (!paused) restart();
-    } else if (m.type === 'open' && m.tab && m.tab in queries) {
-      await openScript(node.c, 'master', queries[m.tab], true);
+    } else if (m.type === 'open' && m.tab && kit.query(m.tab, db)) {
+      await openScript(node.c, c.database, kit.query(m.tab, db)!, true);
     } else if (m.type === 'kill' && m.id) {
       const ok = await vscode.window.showWarningMessage(`Kill session ${m.id} on ${node.c.name}? Its open transaction is rolled back.`, { modal: true }, 'Kill');
       if (!ok) return;
       try {
-        await drivers.mssql.run(c, await conns.password(node.c.name), killScript(m.id));
+        await d.run(c, await conns.password(node.c.name), kit.kill(m.id));
         log.info(`kill session ${m.id} (live monitor): ${node.c.name}`);
         restart();
       } catch (e) {

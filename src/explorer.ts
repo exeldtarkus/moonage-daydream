@@ -3,6 +3,7 @@ import type { Connections } from './connections';
 import { ConnectionInfo, DbObject, ListKind, ObjectKind, address, drivers } from './db';
 import { CONN_COLORS } from './connColor';
 import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './mssqlTree';
+import { monitorKit } from './monitorKits';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -55,11 +56,11 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
-          contextValue: isMs(n.c) ? 'conn.mssql' : 'conn',
+          contextValue: isMs(n.c) ? 'conn.mssql' : monitorKit(n.c.type) ? 'conn.live' : 'conn',
         });
       }
       case 'db':
-        return Object.assign(new vscode.TreeItem(n.db, C), { iconPath: new vscode.ThemeIcon('database'), contextValue: isMs(n.c) ? 'db.mssql' : 'db' });
+        return Object.assign(new vscode.TreeItem(n.db, C), { iconPath: new vscode.ThemeIcon('database'), contextValue: isMs(n.c) ? 'db.mssql' : monitorKit(n.c.type) ? 'db.live' : 'db' });
       case 'folder': {
         const f = FOLDERS.find((x) => x.objKind === n.objKind)!;
         return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder') });
