@@ -2,7 +2,7 @@
   "name": "moonage-daydream",
   "displayName": "Moonage Daydream",
   "description": "Database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite and MongoDB: run queries from .sql files and view, filter, edit and export the results.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publisher": "exeltarkus",
   "icon": "images/icon.png",
   "license": "GPL-3.0-or-later",
