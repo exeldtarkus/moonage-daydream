@@ -203,7 +203,8 @@ async function ctrlEnterTest(m: typeof import('../../extension')) {
   await m.conns.bind(doc.uri.toString(), { conn: CONN, db: 'master' });
   await vscode.window.showTextDocument(doc);
   await vscode.commands.executeCommand('dbcode.editor.execute');
-  assert.ok(/<td class="num">42<\/td>/.test(resultHtml(m)), 'dbcode.editor.execute alias runs the Moonage query');
+  const html = resultHtml(m);
+  assert.ok(/<td class="num">42<\/td>/.test(html), `dbcode.editor.execute alias runs the Moonage query (active: ${vscode.window.activeTextEditor?.document.uri.path.split('/').pop()}, result: ${html.match(/<h3>[^\n]*|class="err">[^<]*/)?.[0]})`);
   say('PASS ctrl+enter: dbcode.editor.execute (no DBCode in this window) -> Moonage runQuery');
 }
 
