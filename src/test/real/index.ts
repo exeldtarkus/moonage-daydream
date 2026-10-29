@@ -106,6 +106,42 @@ async function sqlFilesTest(m: typeof import('../../extension')) {
     const item = m.sqlFiles.getTreeItem(q2);
     assert.ok(String(item.description).startsWith('__moonage_test__/sub'), `flat description ${item.description}`);
     say(`PASS sql files: tree __moonage_test__/sub -> q1.sql, q2.sql; flat ${flat.length} file(s), "${item.description}"`);
+
+    // rename / duplicate / delete: binding koneksi ikut, nama tidak valid ditolak
+    const f = require('../../sqlFiles') as typeof import('../../sqlFiles');
+    let tStep = Date.now();
+    const step = (what: string) => { say(`  sql files step ${what}: ${Date.now() - tStep} ms`); tStep = Date.now(); };
+    assert.equal(f.siblingName(' r ', true), 'r.sql');
+    assert.ok(typeof f.siblingName('a/b', true) !== 'string' && typeof f.siblingName('..', false) !== 'string', 'reject / and ..');
+    const q1 = vscode.Uri.joinPath(dir, 'sub', 'q1.sql');
+    await m.conns.bind(q1.toString(), { conn: CONN, db: 'master' });
+    const renamed = (await f.renameSqlNode(m.sqlFiles, m.conns, { kind: 'file', uri: q1 }, 'r1'))!;
+    step('rename file');
+    assert.ok(renamed?.path.endsWith('/sub/r1.sql'), `renamed ${renamed?.path}`);
+    const keys = () => Object.keys((m.conns as unknown as { ctx: vscode.ExtensionContext }).ctx.globalState.get<Record<string, unknown>>('fileBindings', {})).filter((k) => k.includes('__moonage_test__'));
+    const own = () => JSON.stringify(((m.conns as unknown as { own: Map<string, { value: Record<string, unknown> }> }).own.get('fileBindings')?.value ?? {}), (k, v) => (k === '' ? Object.fromEntries(Object.entries(v).filter(([x]) => x.includes('__moonage_test__'))) : v));
+    const snap0 = `stored=[${keys().join(' , ')}] own=${own()}`;
+    await sleep(500);
+    assert.deepEqual(m.conns.binding(renamed.toString()), { conn: CONN, db: 'master' }, `binding follows rename | right after: ${snap0} | after 500 ms: stored=[${keys().join(' , ')}] own=${own()}`);
+    assert.equal(m.conns.binding(q1.toString()), undefined, 'old binding gone');
+    await assert.rejects(f.renameSqlNode(m.sqlFiles, m.conns, { kind: 'file', uri: renamed }, 'q2'), /already exists/);
+    const dup = (await f.duplicateSqlFile(m.sqlFiles, m.conns, { kind: 'file', uri: renamed }, 'r1 copy'))!;
+    step('duplicate');
+    assert.ok(dup?.path.endsWith('/sub/r1 copy.sql'), `duplicate ${dup?.path}`);
+    assert.deepEqual(m.conns.binding(dup.toString()), { conn: CONN, db: 'master' }, `binding copied: dup=${dup.toString()} keys=${keys().join(' , ')}`);
+    const folder = await f.renameSqlNode(m.sqlFiles, m.conns, { kind: 'folder', root, rel: '__moonage_test__/sub' }, 'sub2');
+    step('rename folder');
+    const moved = vscode.Uri.joinPath(dir, 'sub2', 'r1.sql');
+    assert.ok(folder?.path.endsWith('/__moonage_test__/sub2') && (await vscode.workspace.fs.stat(moved)), 'folder renamed');
+    assert.deepEqual(m.conns.binding(moved.toString()), { conn: CONN, db: 'master' }, 'binding follows folder rename');
+    await assert.rejects(f.deleteSqlNode(m.sqlFiles, m.conns, { kind: 'folder', root, rel: '' }, true), /workspace folder/);
+    const t0 = Date.now();
+    await f.deleteSqlNode(m.sqlFiles, m.conns, { kind: 'file', uri: moved }, true);
+    const trash = `${vscode.env.remoteName ? `permanent (remote ${vscode.env.remoteName})` : 'trash'} in ${Date.now() - t0} ms`;
+    assert.ok(Date.now() - t0 < 5000, `delete took ${Date.now() - t0} ms`);
+    assert.equal(m.conns.binding(moved.toString()), undefined, 'binding removed with the file');
+    await assert.rejects(Promise.resolve(vscode.workspace.fs.stat(moved)));
+    say(`PASS sql files: rename file / folder (binding follows), duplicate (binding copied), delete -> ${trash}`);
   } finally {
     // tutup hanya tab file test ini (closeAllEditors memunculkan dialog Save untuk tab Untitled user)
     await vscode.window.tabGroups.close(vscode.window.tabGroups.all.flatMap((g) => g.tabs)
@@ -846,6 +882,20 @@ async function serversUiTest(m: typeof import('../../extension')): Promise<numbe
 
 export async function run(only?: string): Promise<void> {
   userUntitled = new Set(untitledTabs().map((u) => u.toString()));
+  if (only === 'files') {
+    mkdirSync(OUT, { recursive: true });
+    writeFileSync(REPORT, '');
+    await vscode.extensions.getExtension('exeltarkus.moonage-daydream')!.activate();
+    let failed = 0;
+    try {
+      await sqlFilesTest(require('../../extension') as typeof import('../../extension'));
+    } catch (e) {
+      failed = 1;
+      say(`FAIL sql files: ${e instanceof Error ? e.message : e}`);
+    }
+    say(`DONE failed=${failed}`);
+    return;
+  }
   if (only === 'servers') {
     mkdirSync(OUT, { recursive: true });
     writeFileSync(REPORT, '');

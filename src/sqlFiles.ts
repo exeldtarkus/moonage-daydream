@@ -86,7 +86,7 @@ export class SqlFiles implements vscode.TreeDataProvider<SqlNode> {
       const uri = n.rel ? vscode.Uri.joinPath(n.root.uri, n.rel) : n.root.uri;
       return Object.assign(new vscode.TreeItem(uri, vscode.TreeItemCollapsibleState.Collapsed), {
         label: n.rel ? path.posix.basename(n.rel) : n.root.name,
-        contextValue: 'sqlFolder',
+        contextValue: n.rel ? 'sqlFolder' : 'sqlFolderRoot', // root workspace tidak bisa di-rename / dihapus dari sini
       });
     }
     const b = this.conns.binding(n.uri.toString());
@@ -139,3 +139,91 @@ export async function newSqlFile(sqlFiles: SqlFiles, n?: SqlNode, input?: string
   return uri;
 }
 
+
+/** uri file / folder dari node (folder root = workspace folder) */
+export const nodeUri = (n: SqlNode) => (n.kind === 'file' ? n.uri : n.rel ? vscode.Uri.joinPath(n.root.uri, n.rel) : n.root.uri);
+
+const exists = (u: vscode.Uri) => Promise.resolve(vscode.workspace.fs.stat(u)).then(() => true, () => false); // stat gagal = belum ada (bukan error)
+
+/** nama baru di folder yang sama: tanpa / dan .., file tetap .sql */
+export function siblingName(input: string, isFile: boolean): string | { error: string } {
+  const name = input.trim();
+  if (!name) return { error: 'Name is required' };
+  if (/[\\/]/.test(name) || name === '.' || name === '..') return { error: 'Name must not contain / or \\' };
+  return isFile && !/\.sql$/i.test(name) ? `${name}.sql` : name;
+}
+
+async function askName(title: string, value: string, dir: vscode.Uri, isFile: boolean, input?: string): Promise<vscode.Uri | undefined> {
+  input ??= await vscode.window.showInputBox({
+    title, value, valueSelection: [0, isFile ? value.replace(/\.sql$/i, '').length : value.length],
+    validateInput: async (v) => {
+      const name = siblingName(v, isFile);
+      if (typeof name !== 'string') return name.error;
+      return name !== value && (await exists(vscode.Uri.joinPath(dir, name))) ? `${name} already exists` : undefined;
+    },
+  });
+  if (input === undefined) return undefined;
+  const name = siblingName(input, isFile);
+  if (typeof name !== 'string') throw new Error(name.error);
+  return vscode.Uri.joinPath(dir, name);
+}
+
+/** Rename file / folder lewat WorkspaceEdit (editor yang terbuka ikut pindah, bisa Undo); binding koneksi ikut */
+export async function renameSqlNode(sqlFiles: SqlFiles, conns: Connections, n: SqlNode, input?: string): Promise<vscode.Uri | undefined> {
+  if (n.kind === 'folder' && !n.rel) throw new Error('A workspace folder cannot be renamed here');
+  const from = nodeUri(n);
+  const name = path.posix.basename(from.path);
+  const to = await askName(`Rename ${name}`, name, vscode.Uri.joinPath(from, '..'), n.kind === 'file', input);
+  if (!to || to.toString() === from.toString()) return undefined;
+  if (await exists(to)) throw new Error(`${path.posix.basename(to.path)} already exists`);
+  const edit = new vscode.WorkspaceEdit();
+  edit.renameFile(from, to);
+  if (!(await vscode.workspace.applyEdit(edit))) throw new Error(`Rename ${name} was not applied`);
+  await conns.moveBindings(from.toString(), to.toString());
+  sqlFiles.refresh();
+  return to;
+}
+
+/** Duplicate: salinan di folder yang sama ("nama copy.sql"), binding koneksi ikut disalin, lalu dibuka */
+export async function duplicateSqlFile(sqlFiles: SqlFiles, conns: Connections, n: SqlNode, input?: string): Promise<vscode.Uri | undefined> {
+  if (n.kind !== 'file') return undefined;
+  const dir = vscode.Uri.joinPath(n.uri, '..');
+  const base = path.posix.basename(n.uri.path).replace(/\.sql$/i, '');
+  let suggestion = `${base} copy.sql`;
+  for (let i = 2; await exists(vscode.Uri.joinPath(dir, suggestion)); i++) suggestion = `${base} copy ${i}.sql`;
+  const to = await askName(`Duplicate ${base}.sql`, suggestion, dir, true, input);
+  if (!to) return undefined;
+  if (await exists(to)) throw new Error(`${path.posix.basename(to.path)} already exists`);
+  await vscode.workspace.fs.copy(n.uri, to);
+  await conns.moveBindings(n.uri.toString(), to.toString(), true);
+  sqlFiles.refresh();
+  await vscode.window.showTextDocument(to);
+  return to;
+}
+
+/** Delete setelah konfirmasi: lokal ke Recycle Bin / Trash, remote permanen (pesan konfirmasi menyebutnya); binding koneksi dihapus */
+export async function deleteSqlNode(sqlFiles: SqlFiles, conns: Connections, n: SqlNode, confirmed = false): Promise<boolean> {
+  if (n.kind === 'folder' && !n.rel) throw new Error('A workspace folder cannot be deleted here');
+  const uri = nodeUri(n);
+  const name = vscode.workspace.asRelativePath(uri);
+  // remote (WSL / SSH): Trash tidak didukung dan percobaannya bisa menggantung lama -> langsung tawarkan hapus permanen
+  const trash = !vscode.env.remoteName;
+  if (!confirmed) {
+    const what = n.kind === 'folder' ? `folder "${name}" and everything in it` : `"${name}"`;
+    const ok = trash ? 'Delete' : 'Delete Permanently';
+    const detail = trash ? 'It is moved to the Recycle Bin / Trash.' : 'This window is remote, so there is no Recycle Bin / Trash: it cannot be restored.';
+    if ((await vscode.window.showWarningMessage(`Delete ${what}?`, { modal: true, detail }, ok)) !== ok) return false;
+  }
+  try {
+    await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: trash });
+  } catch (e) {
+    if (!trash || confirmed) throw e;
+    // Trash gagal di jendela lokal: hapus permanen hanya setelah konfirmasi kedua
+    if ((await vscode.window.showWarningMessage(`The Recycle Bin / Trash is not available (${e instanceof Error ? e.message : e}). Delete "${name}" permanently?`,
+      { modal: true }, 'Delete Permanently')) !== 'Delete Permanently') return false;
+    await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
+  }
+  await conns.moveBindings(uri.toString(), undefined);
+  sqlFiles.refresh();
+  return true;
+}

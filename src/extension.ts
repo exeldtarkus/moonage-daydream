@@ -6,7 +6,7 @@ import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, PAGE_ROWS, Session, address, drivers, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
-import { SqlFiles, SqlNode, newSqlFile } from './sqlFiles';
+import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode } from './sqlFiles';
 import { SqlCompletion } from './completion';
 import { driverLog } from './log';
 import { formatSql } from './sqlFormat';
@@ -26,6 +26,7 @@ export const running = new Map<string, RunningQuery>();
 export let runningView: RunningView;
 export let history: History;
 export let sqlFiles: SqlFiles;
+let sqlFilesView: vscode.TreeView<SqlNode>;
 export let completion: SqlCompletion;
 /** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
 export let ownFormatter = false;
@@ -79,7 +80,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     runningView,
     vscode.window.registerTreeDataProvider('moonageDaydream.running', runningView),
     vscode.window.registerTreeDataProvider('moonageDaydream.history', history),
-    vscode.window.registerTreeDataProvider('moonageDaydream.sqlFiles', sqlFiles),
+    (sqlFilesView = vscode.window.createTreeView('moonageDaydream.sqlFiles', { treeDataProvider: sqlFiles })),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesFlat', () => sqlFiles.setFlat(true)),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesTree', () => sqlFiles.setFlat(false)),
     vscode.commands.registerCommand('moonageDaydream.refreshSqlFiles', () => sqlFiles.refresh()),
@@ -91,6 +92,25 @@ export function activate(ctx: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`New SQL file failed: ${errMsg(e)}`);
       }
     }),
+    // klik kanan / F2 / Delete di SQL Files: node dari menu, atau item terpilih bila dari keybinding
+    ...([
+      ['renameSqlFile', 'Rename', (n: SqlNode) => renameSqlNode(sqlFiles, conns, n)],
+      ['duplicateSqlFile', 'Duplicate', (n: SqlNode) => duplicateSqlFile(sqlFiles, conns, n)],
+      ['deleteSqlFile', 'Delete', (n: SqlNode) => deleteSqlNode(sqlFiles, conns, n)],
+      ['copySqlFilePath', 'Copy path', (n: SqlNode) => vscode.env.clipboard.writeText(nodeUri(n).fsPath)],
+      ['copySqlFileRelativePath', 'Copy relative path', (n: SqlNode) => vscode.env.clipboard.writeText(vscode.workspace.asRelativePath(nodeUri(n)))],
+      ['openSqlFileToSide', 'Open to the side', (n: SqlNode) => vscode.window.showTextDocument(nodeUri(n), { viewColumn: vscode.ViewColumn.Beside })],
+      ['revealSqlFile', 'Reveal in Explorer', (n: SqlNode) => vscode.commands.executeCommand('revealInExplorer', nodeUri(n))],
+    ] as [string, string, (n: SqlNode) => Thenable<unknown>][]).map(([id, what, f]) => vscode.commands.registerCommand(`moonageDaydream.${id}`, async (n?: SqlNode) => {
+      const node = n ?? sqlFilesView.selection[0];
+      if (!node) return;
+      try {
+        return await f(node);
+      } catch (e) {
+        log.error(`${id} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        vscode.window.showErrorMessage(`${what} failed: ${errMsg(e)}`);
+      }
+    })),
     sqlWatcher(),
     vscode.commands.registerCommand('moonageDaydream.cancelRunning', (q?: RunningQuery) => q && cancel(q)),
     vscode.commands.registerCommand('moonageDaydream.cancelAllQueries', () => running.forEach(cancel)),
