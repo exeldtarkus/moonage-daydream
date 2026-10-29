@@ -67,8 +67,34 @@ const mssqlKit: MonitorKit = {
 
 const MY_STATUS = ['Questions', 'Com_commit', 'Com_rollback', 'Threads_connected', 'Threads_running', 'Bytes_received', 'Bytes_sent',
   'Innodb_data_read', 'Innodb_data_written', 'Innodb_row_lock_current_waits'];
-/** MySQL / MariaDB: SHOW GLOBAL STATUS, processlist, digest performance_schema (opsional) */
-const mysqlKit: MonitorKit = {
+/** lock wait: siapa (processlist id) menunggu siapa; MySQL 8 lewat performance_schema, MariaDB lewat information_schema InnoDB */
+function blockingSql(flavor: 'mysql' | 'mariadb', db?: string): string {
+  const cols = 'AS waiting_id, %B AS blocking_id, %T AS `table`, %WL AS waiting_lock, %BL AS blocking_lock, TIMESTAMPDIFF(SECOND, r.trx_wait_started, NOW()) AS wait_seconds,'
+    + ' LEFT(r.trx_query, 4000) AS waiting_statement, LEFT(b.trx_query, 4000) AS blocking_statement';
+  if (flavor === 'mysql') {
+    return `${MARK} SELECT rt.PROCESSLIST_ID ${cols.replace('%B', 'bt.PROCESSLIST_ID').replace('%T', "CONCAT(w.OBJECT_SCHEMA, '.', w.OBJECT_NAME)").replace('%WL', 'w.LOCK_MODE').replace('%BL', 'bl.LOCK_MODE')}
+  FROM performance_schema.data_lock_waits dw
+  JOIN performance_schema.data_locks w ON w.ENGINE_LOCK_ID = dw.REQUESTING_ENGINE_LOCK_ID
+  JOIN performance_schema.data_locks bl ON bl.ENGINE_LOCK_ID = dw.BLOCKING_ENGINE_LOCK_ID
+  JOIN performance_schema.threads rt ON rt.THREAD_ID = dw.REQUESTING_THREAD_ID
+  JOIN performance_schema.threads bt ON bt.THREAD_ID = dw.BLOCKING_THREAD_ID
+  LEFT JOIN information_schema.INNODB_TRX r ON r.trx_id = dw.REQUESTING_ENGINE_TRANSACTION_ID
+  LEFT JOIN information_schema.INNODB_TRX b ON b.trx_id = dw.BLOCKING_ENGINE_TRANSACTION_ID${db === undefined ? '' : `
+  WHERE w.OBJECT_SCHEMA = ${lit(db)}`}
+  ORDER BY wait_seconds DESC`;
+  }
+  return `${MARK} SELECT r.trx_mysql_thread_id ${cols.replace('%B', 'b.trx_mysql_thread_id').replace('%T', 'rl.lock_table').replace('%WL', 'rl.lock_mode').replace('%BL', 'bl.lock_mode')}
+  FROM information_schema.INNODB_LOCK_WAITS w
+  JOIN information_schema.INNODB_TRX r ON r.trx_id = w.requesting_trx_id
+  JOIN information_schema.INNODB_TRX b ON b.trx_id = w.blocking_trx_id
+  JOIN information_schema.INNODB_LOCKS rl ON rl.lock_id = w.requested_lock_id
+  JOIN information_schema.INNODB_LOCKS bl ON bl.lock_id = w.blocking_lock_id${db === undefined ? '' : `
+  WHERE rl.lock_table LIKE CONCAT('\`', ${lit(db)}, '\`.%')`}
+  ORDER BY wait_seconds DESC`;
+}
+
+/** MySQL / MariaDB: SHOW GLOBAL STATUS, processlist, lock wait, digest performance_schema (opsional) */
+const myKit = (flavor: 'mysql' | 'mariadb'): MonitorKit => ({
   charts: [
     { id: 'queries', label: 'Queries/sec', tip: 'Questions: statements sent by clients', serverWide: true },
     { id: 'tran', label: 'Transactions/sec', tip: 'Com_commit + Com_rollback', serverWide: true },
@@ -78,12 +104,14 @@ const mysqlKit: MonitorKit = {
     { id: 'io', label: 'InnoDB I/O MB/s', tip: 'Innodb_data_read / Innodb_data_written', serverWide: true },
     { id: 'locks', label: 'Row lock waits', tip: 'Innodb_row_lock_current_waits', serverWide: true },
   ],
-  tabs: [['running', 'Running queries'], ['sessions', 'Sessions'], ['expensive', 'Expensive queries']],
+  tabs: [['running', 'Running queries'], ['sessions', 'Sessions'], ['blocking', 'Blocking'], ['expensive', 'Expensive queries']],
   parts: (db) => [
     { id: 'status', sql: `${MARK} SHOW GLOBAL STATUS WHERE Variable_name IN (${MY_STATUS.map(lit).join(', ')})` },
     { id: 'processlist', sql: `${MARK} SELECT ID AS session_id, USER AS user, HOST AS host, DB AS \`database\`, COMMAND AS command, TIME AS seconds,
   STATE AS state, LEFT(INFO, 4000) AS statement FROM information_schema.PROCESSLIST WHERE ID <> CONNECTION_ID()${db === undefined ? '' : ` AND DB = ${lit(db)}`}
   ORDER BY TIME DESC` },
+    { id: 'blocking', optional: flavor === 'mysql' ? 'Blocking needs performance_schema (data_lock_waits)' : 'Blocking needs information_schema InnoDB lock tables',
+      sql: blockingSql(flavor, db) },
     // digest tanpa komentar: statement monitor sendiri dikenali dari teksnya
     { id: 'expensive', optional: 'Expensive queries need performance_schema', sql: `${MARK} SELECT LEFT(DIGEST_TEXT, 400) AS query, SCHEMA_NAME AS \`database\`,
   COUNT_STAR AS executions, ROUND(SUM_TIMER_WAIT / 1000000000) AS total_ms, ROUND(AVG_TIMER_WAIT / 1000000000, 1) AS avg_ms, SUM_ROWS_EXAMINED AS rows_examined,
@@ -100,7 +128,12 @@ const mysqlKit: MonitorKit = {
     const own = this.parts(db).length; // statement monitor sendiri di antara dua sampel
     const g = (m: Map<string, number> | undefined, k: string) => m?.get(k);
     const r = (k: string, div = 1, o = 0) => rate(c.get(k) ?? 0, g(p, k), dt, div, o);
-    const sessions = table(res.processlist, 'Processlist not available');
+    const blocking = table(res.blocking, flavor === 'mysql' ? 'Blocking needs performance_schema (data_lock_waits)' : 'Blocking needs information_schema InnoDB lock tables');
+    // blocked_by per sesi dari lock wait: baris yang menunggu / memblokir ditandai merah seperti SQL Server
+    const blocker = new Map('rows' in blocking ? blocking.rows.map((x) => [String(x[0]), x[1]]) : []);
+    const plist = table(res.processlist, 'Processlist not available');
+    const sessions: MonitorTab = 'rows' in plist
+      ? { columns: [...plist.columns, 'blocked_by'], rows: plist.rows.map((x) => [...x, blocker.get(String(x[0])) ?? null]) } : plist;
     const ci = col(sessions, 'command');
     const running: MonitorTab = 'rows' in sessions ? { columns: sessions.columns, rows: sessions.rows.filter((x) => !['Sleep', 'Daemon', 'Binlog Dump'].includes(String(x[ci]))) } : sessions;
     const tranCur = (c.get('Com_commit') ?? 0) + (c.get('Com_rollback') ?? 0);
@@ -115,15 +148,16 @@ const mysqlKit: MonitorKit = {
           locks: [c.get('Innodb_row_lock_current_waits') ?? 0],
         },
       },
-      tables: { running, sessions, expensive: table(res.expensive, 'Expensive queries need performance_schema') },
+      tables: { running, sessions, blocking, expensive: table(res.expensive, 'Expensive queries need performance_schema') },
     };
   },
   kill: (id) => `KILL ${sessionId(id)};`,
   query(tab, db) {
     const ps = this.parts(db);
-    return (tab === 'expensive' ? ps.find((x) => x.id === 'expensive') : tab === 'running' || tab === 'sessions' ? ps.find((x) => x.id === 'processlist') : undefined)?.sql;
+    const id = tab === 'running' || tab === 'sessions' ? 'processlist' : tab;
+    return ps.find((x) => x.id === id)?.sql;
   },
-};
+});
 
 /** PostgreSQL: pg_stat_database, pg_stat_activity (+ pg_blocking_pids), pg_stat_statements (opsional) */
 const postgresKit: MonitorKit = {
@@ -182,6 +216,6 @@ const postgresKit: MonitorKit = {
   },
 };
 
-const KITS: Partial<Record<DbType, MonitorKit>> = { mssql: mssqlKit, mysql: mysqlKit, mariadb: mysqlKit, postgres: postgresKit };
+const KITS: Partial<Record<DbType, MonitorKit>> = { mssql: mssqlKit, mysql: myKit('mysql'), mariadb: myKit('mariadb'), postgres: postgresKit };
 /** kit Live Monitor untuk jenis database; undefined = tidak didukung (SQLite, MongoDB) */
 export const monitorKit = (type: DbType) => KITS[type];

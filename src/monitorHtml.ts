@@ -89,11 +89,13 @@ export function monitorHtml(cspSource: string, title: string, perDb = false, kit
     const t = last && last.tables[tab];
     if (t && t.message) return void ($('table').innerHTML = '<div class="empty">' + esc(t.message) + '</div>');
     if (!t || !t.rows.length) return void ($('table').innerHTML = '<div class="empty">' + (last ? (tab === 'waits' ? 'No waits since the previous sample.' : tab === 'running' ? 'No query is running right now (this monitor is not counted).' : 'Nothing to show.') : 'Waiting for the first sample…') + '</div>');
-    const bi = t.columns.indexOf('blocked_by'), si = t.columns.indexOf('session_id');
-    const kill = tab === 'sessions' || tab === 'running';
+    // kolom session id yang di-Kill per tab; Blocking = sesi pemblokir
+    const KILL = { sessions: 'session_id', running: 'session_id', blocking: 'blocking_id' };
+    const bi = t.columns.indexOf('blocked_by'), si = t.columns.indexOf(KILL[tab] || 'session_id');
+    const kill = !!KILL[tab] && si >= 0;
     const blockers = new Set(bi < 0 ? [] : t.rows.map((r) => r[bi]).filter((v) => v));
     $('table').innerHTML = '<table><thead><tr>' + (kill ? '<th></th>' : '') + t.columns.map((c) => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>'
-      + t.rows.map((r) => '<tr' + (bi >= 0 && (r[bi] || blockers.has(r[si])) ? ' class="blk"' : '') + '>' + (kill ? '<td><button class="kill" data-id="' + esc(r[si]) + '">Kill</button></td>' : '')
+      + t.rows.map((r) => '<tr' + (bi >= 0 && (r[bi] || blockers.has(r[si])) ? ' class="blk"' : '') + '>' + (kill ? '<td><button class="kill" data-id="' + esc(r[si]) + '">' + (tab === 'blocking' ? 'Kill blocker' : 'Kill') + '</button></td>' : '')
         + r.map((v) => '<td title="' + esc(v) + '">' + esc(v) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
     document.querySelectorAll('.kill').forEach((b) => (b.onclick = () => vscode.postMessage({ type: 'kill', id: b.dataset.id })));
   }

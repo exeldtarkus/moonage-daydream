@@ -105,6 +105,27 @@
   - [x] MySQL / MariaDB: Queries/s, Transactions/s, Threads connected / running, Network MB/s, InnoDB I/O MB/s, Row lock waits; Running queries / Sessions (processlist), Expensive queries (performance_schema digest, opsional), Kill = KILL <id>; per database (klik kanan database)
   - [x] PostgreSQL: Transactions/s, Rows/s, Disk blocks/s, Cache hit %, Connections, Active / Waiting sessions; Running queries / Sessions (pg_stat_activity + pg_blocking_pids), Expensive queries (pg_stat_statements, opsional), Kill = pg_terminate_backend; per database
   - [x] Verifikasi ke MySQL / MariaDB / PostgreSQL Docker sementara, screenshot panel, langkah test real
+- [ ] Live Monitor MySQL / MariaDB: tab Blocking (siapa menunggu lock siapa: session menunggu, session pemblokir, tabel / lock, lama menunggu, statement keduanya, tombol Kill pemblokir), per tahap dengan TDD — kode + unit test + verifikasi Docker selesai, menunggu test real di VS Code (user):
+  - [x] MySQL 8: `performance_schema.data_lock_waits` + `performance_schema.data_locks` + `performance_schema.threads` (PROCESSLIST_ID) — atau `sys.innodb_lock_waits` bila ada
+  - [x] MariaDB: `information_schema.INNODB_LOCK_WAITS` + `INNODB_LOCKS` + `INNODB_TRX` (trx_mysql_thread_id)
+  - [x] kit memilih query sesuai jenis (mysql / mariadb); query opsional (izin / performance_schema mati -> pesan di tab), per database (klik kanan database)
+  - [x] Running queries / Sessions: baris yang diblokir / memblokir ditandai merah seperti SQL Server
+  - [x] Verifikasi blocking nyata di MySQL 8.4 + MariaDB 11.4 Docker (dua sesi UPDATE baris yang sama), Kill pemblokir melepas yang menunggu
+- [ ] Konfirmasi Auto-commit: menjalankan statement yang mengubah data (INSERT / UPDATE / DELETE / MERGE / TRUNCATE / DDL / EXEC ...) saat mode Auto-commit memunculkan popup modal, per tahap dengan TDD:
+  - [ ] Wording: "You are running in Auto-commit mode. Data changes are saved permanently and cannot be rolled back." + ringkasan statement (mis. "UPDATE dbo.orders …"), tombol **Confirm** / **Cancel** (Cancel = tidak ada yang dikirim ke server)
+  - [ ] Deteksi statement pengubah data memakai aturan yang sudah ada (readOnly / readOnlyBlocked di sqlContext); SELECT / mode Manual commit tidak memunculkan popup
+  - [ ] Bisa dinonaktifkan per group: Connections -> klik kanan group -> "Disable Auto-commit Confirmation" / "Enable ..." (berlaku untuk semua koneksi di group)
+  - [ ] Bisa dinonaktifkan per koneksi: Connections -> group -> klik kanan koneksi -> "Disable / Enable Auto-commit Confirmation" (pengaturan koneksi mengalahkan group)
+  - [ ] Default aktif; status terlihat (mis. ikon / deskripsi di Connections); disimpan bersama koneksi / group
+  - [ ] Berlaku untuk semua driver SQL (SQL Server, MySQL / MariaDB, PostgreSQL, SQLite); MongoDB: method tulis (insert / update / delete / drop ...)
+- [ ] Lisensi MIT -> GPL-3.0 dan deskripsi repo GitHub:
+  - [ ] `LICENSE`: teks lengkap GNU GPL v3 (dari gnu.org / choosealicense), ganti teks MIT; pilih `GPL-3.0-only` atau `GPL-3.0-or-later` (keputusan user)
+  - [ ] `package.json` field `license` -> `GPL-3.0-only` / `GPL-3.0-or-later`; README EN + ID bagian License (lewat agent dokumentasi)
+  - [ ] Cek dependency kompatibel dengan GPL-3.0: mssql / mysql2 / pg / sql.js / sql-formatter (MIT), mongodb (Apache-2.0) -> kompatibel
+  - [ ] GitHub (exeldtarkus/moonage-daydream): description + topics lewat `gh repo edit` (konfirmasi user dulu, outward). Usulan description:
+        "Database client for VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite and MongoDB. Run queries from .sql files, explore objects, edit data, manual transactions and live monitoring."
+        Topics: vscode-extension, database, sql, sql-server, mysql, mariadb, postgresql, sqlite, mongodb, database-client
+  - [ ] Verifikasi: GitHub mendeteksi lisensi "GPL-3.0" di halaman repo; `npx vsce ls` / package tetap jalan dengan lisensi baru
 
 ## Rilis
 - [x] README (EN + ID) + icon + screenshot (`node scripts/screenshots.js`, data contoh)

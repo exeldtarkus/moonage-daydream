@@ -32,9 +32,9 @@ test('MySQL kit: queries, per database filter, own statements not counted, kill'
   const res = (q: number, commit: number, rx: number, rd: number) => ({ status: [status(q, commit, rx, rd)], processlist: [plist], expensive: new Error('performance_schema is off') });
   const prev = { res: res(100, 10, MB, 2 * MB), t: 1000 };
   const s = k.sample(res(203, 20, 3 * MB, 6 * MB), 3000, prev);
-  assert.deepEqual(s.point.values, { queries: [50], tran: [5], conn: [7], running: [2], net: [1, 0], io: [2, 0], locks: [1] },
-    'Questions minus own 3 statements, Threads_running minus own, MB/s');
-  assert.deepEqual(s.tables.running, { columns: plist.columns, rows: [plist.rows[0]] }, 'running = not Sleep');
+  assert.deepEqual(s.point.values, { queries: [49.5], tran: [5], conn: [7], running: [2], net: [1, 0], io: [2, 0], locks: [1] },
+    'Questions minus own 4 statements, Threads_running minus own, MB/s');
+  assert.deepEqual((s.tables.running as { rows: unknown[][] }).rows.map((r) => r[0]), [10], 'running = not Sleep');
   assert.equal((s.tables.sessions as { rows: unknown[] }).rows.length, 2);
   assert.match((s.tables.expensive as { message: string }).message, /performance_schema/);
   const first = k.sample(res(100, 10, MB, 2 * MB), 1000);
@@ -73,4 +73,44 @@ test('panel from a kit: its charts and tabs, server-wide ones labelled per datab
   const my = monitorHtml('csp', 'my / shop', true, monitorKit('mysql')!);
   assert.ok(my.includes('Queries/sec (server)') && !my.includes('Threads connected (server)'));
   assert.ok(monitorHtml('csp', 'ms').includes('data-chart="cpu"'), 'SQL Server stays the default');
+});
+
+test('MySQL / MariaDB kits: Blocking tab with each database own lock tables, optional, per database', () => {
+  const my = monitorKit('mysql')!, maria = monitorKit('mariadb')!;
+  const part = (k: typeof my, db?: string) => k.parts(db).find((p: { id: string }) => p.id === 'blocking')!;
+  assert.match(part(my).sql, /performance_schema\.data_lock_waits/);
+  assert.match(part(my).sql, /performance_schema\.threads/, 'thread -> processlist id');
+  assert.match(part(maria).sql, /information_schema\.INNODB_LOCK_WAITS/);
+  assert.match(part(maria).sql, /trx_mysql_thread_id/);
+  assert.ok(part(my).optional && part(maria).optional, 'performance_schema off / no privilege: message in the tab');
+  assert.match(part(my, "O'Shop").sql, /OBJECT_SCHEMA = 'O''Shop'/);
+  assert.match(part(maria, "O'Shop").sql, /lock_table LIKE CONCAT\('`', 'O''Shop', '`\.%'\)/);
+  for (const k of [my, maria]) assert.deepEqual(k.tabs.map((t: [string, string, boolean?]) => t[0]), ['running', 'sessions', 'blocking', 'expensive']);
+});
+
+test('MySQL kit: blocking rows mark waiting / blocking sessions (blocked_by) like SQL Server', () => {
+  const k = monitorKit('mysql')!;
+  const plist = rs(['session_id', 'user', 'host', 'database', 'command', 'seconds', 'state', 'statement'], [
+    [10, 'app', 'h:1', 'shop', 'Query', 5, 'updating', 'UPDATE t SET a = 2 WHERE id = 1'],
+    [11, 'app', 'h:2', 'shop', 'Sleep', 30, '', null],
+  ]);
+  const blocking = rs(['waiting_id', 'blocking_id', 'table', 'waiting_lock', 'blocking_lock', 'wait_seconds', 'waiting_statement', 'blocking_statement'],
+    [[10, 11, 'shop.t', 'X,REC_NOT_GAP', 'X,REC_NOT_GAP', 5, 'UPDATE t SET a = 2 WHERE id = 1', null]]);
+  const status = rs(['Variable_name', 'Value'], [['Questions', 1], ['Threads_connected', 2], ['Threads_running', 2]]);
+  const s = k.sample({ status: [status], processlist: [plist], blocking: [blocking], expensive: [rs(['query'], [])] }, 1000);
+  assert.deepEqual(s.tables.blocking, { columns: blocking.columns, rows: blocking.rows });
+  const sessions = s.tables.sessions as { columns: string[]; rows: unknown[][] };
+  const bi = sessions.columns.indexOf('blocked_by');
+  assert.ok(bi > 0, 'blocked_by column added');
+  assert.deepEqual(sessions.rows.map((r) => [r[0], r[bi]]), [[10, 11], [11, null]]);
+  const running = s.tables.running as { columns: string[]; rows: unknown[][] };
+  assert.deepEqual(running.rows.map((r) => [r[0], r[running.columns.indexOf('blocked_by')]]), [[10, 11]]);
+  const off = k.sample({ status: [status], processlist: [plist], blocking: new Error('SELECT command denied'), expensive: [rs(['query'], [])] }, 1000);
+  assert.match((off.tables.blocking as { message: string }).message, /SELECT command denied/);
+});
+
+test('panel: Kill in the Blocking tab targets the blocking session', () => {
+  const html = monitorHtml('csp', 'my', false, monitorKit('mysql')!);
+  assert.ok(html.includes('data-tab="blocking"'));
+  assert.match(html, /blocking: 'blocking_id'/, 'kill column of the blocking tab');
 });
