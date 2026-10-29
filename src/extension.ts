@@ -12,6 +12,8 @@ import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri
 import { SqlCompletion } from './completion';
 import { driverLog } from './log';
 import { ConnBanner } from './connBanner';
+import { CONN_COLORS, colorLabel, isConnColor } from './connColor';
+import type { ConnColor } from './connColor';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { splitBatches } from './mssql';
@@ -151,8 +153,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.removeConnection', async (n?: Node) => {
       const c = connOf(n) ?? (await pickConnection('Remove connection'));
       if (!c) return;
-      const ok = await vscode.window.showWarningMessage(`Remove connection "${c.name}"?`, { modal: true }, 'Remove');
-      if (ok !== 'Remove') return;
+      const ok = await vscode.window.showWarningMessage(`Delete connection "${c.name}"?`, { modal: true, detail: 'The saved password is removed too. Files bound to it fall back to the active connection.' }, 'Delete');
+      if (ok !== 'Delete') return;
       await closePool(c);
       await conns.remove(c.name);
       updateStatus();
@@ -213,6 +215,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'sql' && banner.update(fileConn)),
     vscode.window.registerWebviewViewProvider(VIEW_ID, results),
     vscode.window.registerTreeDataProvider('moonageDaydream.explorer', explorer),
+    vscode.commands.registerCommand('moonageDaydream.renameConnection', (n?: Node, name?: string) => renameConnection(n, name)),
+    vscode.commands.registerCommand('moonageDaydream.changeConnectionColor', (n?: Node, color?: string) => changeConnectionColor(n, color)),
     vscode.commands.registerCommand('moonageDaydream.moveConnectionToGroup', (n?: Node, pick?: string) => moveToGroup(n, pick)),
     vscode.commands.registerCommand('moonageDaydream.renameGroup', (n?: Node, name?: string) => renameGroup(n, name)),
     vscode.commands.registerCommand('moonageDaydream.refreshExplorer', (n?: Node) => {
@@ -505,6 +509,53 @@ async function closePool(c: ConnectionInfo) {
     await drivers[c.type].close(c.name);
   } catch (e) {
     log.error(`closePool - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+  }
+}
+
+/** klik kanan koneksi -> Rename: nama baru (unik); password, binding file dan koneksi aktif ikut (Connections.save dengan oldName) */
+export async function renameConnection(n?: Node, input?: string): Promise<void> {
+  const c = connOf(n);
+  if (!c) return;
+  try {
+    const name = input ?? (await vscode.window.showInputBox({
+      title: `Rename connection ${c.name}`, value: c.name,
+      validateInput: (v) => (!v.trim() ? 'Name is required' : v.trim() !== c.name && conns.get(v.trim()) ? `"${v.trim()}" is already used` : undefined),
+    }));
+    if (name === undefined || !name.trim() || name.trim() === c.name) return;
+    if (conns.get(name.trim())) throw new Error(`"${name.trim()}" is already used`);
+    const pw = await conns.password(c.name);
+    await closePool(c); // pool di-cache per nama koneksi
+    await conns.save({ ...c, name: name.trim() }, pw, c.name);
+    updateStatus();
+  } catch (e) {
+    log.error(`renameConnection - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Rename connection failed: ${errMsg(e)}`);
+  }
+}
+
+/** klik kanan koneksi -> Change Color: daftar warna (bulatan berwarna) + No color; color diisi test */
+export async function changeConnectionColor(n?: Node, color?: string): Promise<void> {
+  const c = connOf(n);
+  if (!c) return;
+  try {
+    let picked: string | undefined = color;
+    if (picked === undefined) {
+      const items = [
+        { label: 'No color', value: '', iconPath: new vscode.ThemeIcon('circle-slash'), description: c.color ? '' : 'current' },
+        ...(Object.keys(CONN_COLORS) as ConnColor[]).map((k) => ({
+          label: colorLabel(k), value: k as string, iconPath: new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(CONN_COLORS[k])), description: c.color === k ? 'current' : '',
+        })),
+      ];
+      picked = (await vscode.window.showQuickPick(items, { title: `Color of ${c.name}`, placeHolder: 'Shown in Connections and in the editor' }))?.value;
+    }
+    if (picked === undefined) return;
+    if (picked && !isConnColor(picked)) throw new Error(`Unknown color ${picked}`);
+    const { color: _old, ...rest } = c;
+    await conns.save(picked ? { ...rest, color: picked as ConnColor } : rest, await conns.password(c.name), c.name);
+    updateStatus();
+  } catch (e) {
+    log.error(`changeConnectionColor - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Change color failed: ${errMsg(e)}`);
   }
 }
 

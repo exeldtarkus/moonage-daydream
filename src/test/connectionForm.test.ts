@@ -53,7 +53,11 @@ test('connection color: dropdown, validation, banner text', async () => {
   const { bannerText } = await import('../connColor');
   assert.equal(toConnection({ ...ok, color: 'red' }).color, 'red');
   assert.ok(!('color' in toConnection({ ...ok, color: '' })));
-  assert.equal(validate({ ...ok, color: 'pink' }, { get: () => undefined }), 'Unknown color pink');
+  assert.equal(validate({ ...ok, color: 'chartreuse' }, { get: () => undefined }), 'Unknown color chartreuse');
+  const { CONN_COLORS, cssColor } = await import('../connColor');
+  assert.equal(Object.keys(CONN_COLORS).length, 15, 'palette size');
+  assert.equal(cssColor('pink'), 'var(--vscode-terminal-ansiBrightMagenta)');
+  assert.ok(formHtml('csp').includes('data-color="teal" title="Teal"'), 'all swatches rendered');
   const html = formHtml('csp', { ...toConnection(ok), color: 'green' });
   assert.ok(html.includes('class="sw on" data-color="green"') && html.includes('id="color" value="green"'), 'color swatch selected');
   assert.equal(bannerText({ name: 'orders-db', group: 'prod' }), 'you are using connection prod - orders-db');

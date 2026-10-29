@@ -44,13 +44,15 @@
       },
       {
         "command": "moonageDaydream.editConnection",
-        "title": "Edit Connection",
-        "category": "Moonage Daydream"
+        "title": "Edit Connection…",
+        "category": "Moonage Daydream",
+        "icon": "$(edit)"
       },
       {
         "command": "moonageDaydream.removeConnection",
-        "title": "Remove Connection",
-        "category": "Moonage Daydream"
+        "title": "Delete Connection",
+        "category": "Moonage Daydream",
+        "icon": "$(trash)"
       },
       {
         "command": "moonageDaydream.selectConnection",
@@ -267,6 +269,18 @@
         "title": "Rename Group…",
         "category": "Moonage Daydream",
         "icon": "$(edit)"
+      },
+      {
+        "command": "moonageDaydream.renameConnection",
+        "title": "Rename…",
+        "category": "Moonage Daydream",
+        "icon": "$(pencil)"
+      },
+      {
+        "command": "moonageDaydream.changeConnectionColor",
+        "title": "Change Color…",
+        "category": "Moonage Daydream",
+        "icon": "$(symbol-color)"
       }
     ],
     "keybindings": [
@@ -391,12 +405,12 @@
         {
           "command": "moonageDaydream.editConnection",
           "when": "view == moonageDaydream.explorer && viewItem == conn",
-          "group": "1_conn@2"
+          "group": "2_edit@1"
         },
         {
           "command": "moonageDaydream.removeConnection",
           "when": "view == moonageDaydream.explorer && viewItem == conn",
-          "group": "1_conn@3"
+          "group": "9_delete@1"
         },
         {
           "command": "moonageDaydream.refreshExplorer",
@@ -501,7 +515,7 @@
         {
           "command": "moonageDaydream.moveConnectionToGroup",
           "when": "view == moonageDaydream.explorer && viewItem == conn",
-          "group": "1_conn@4"
+          "group": "2_edit@4"
         },
         {
           "command": "moonageDaydream.renameGroup",
@@ -517,6 +531,21 @@
           "command": "moonageDaydream.addConnection",
           "when": "view == moonageDaydream.explorer && viewItem == group",
           "group": "0_add"
+        },
+        {
+          "command": "moonageDaydream.renameConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "2_edit@2"
+        },
+        {
+          "command": "moonageDaydream.changeConnectionColor",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "2_edit@3"
+        },
+        {
+          "command": "moonageDaydream.editConnection",
+          "when": "view == moonageDaydream.explorer && viewItem == conn",
+          "group": "inline@2"
         }
       ],
       "commandPalette": [
@@ -594,6 +623,14 @@
         },
         {
           "command": "moonageDaydream.renameGroup",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.renameConnection",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.changeConnectionColor",
           "when": "false"
         }
       ],

@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto';
 import { drivers } from './db';
 import type { ConnectionInfo, DbType } from './db';
-import { CONN_COLORS, isConnColor } from './connColor';
+import { CONN_COLORS, colorLabel, cssColor, isConnColor } from './connColor';
+import type { ConnColor } from './connColor';
 import { esc } from './resultsHtml';
 
 export interface FormData {
@@ -70,6 +71,13 @@ const DB_HINT: Record<DbType, string> = {
   mssql: 'Microsoft SQL Server, Azure SQL', mysql: 'MySQL 5.7 / 8.x', mariadb: 'MariaDB 10.x / 11.x',
   postgres: 'PostgreSQL 12+', sqlite: 'Local database file', mongodb: 'MongoDB, Atlas (mongodb+srv)',
 };
+/** warna brand untuk aksen kartu */
+const DB_BRAND: Record<DbType, string> = {
+  mssql: '#cc2927', mysql: '#00758f', mariadb: '#c0765a', postgres: '#336791', sqlite: '#0f80cc', mongodb: '#47a248',
+};
+const EYE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5 13.5 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+
 /** username contoh per tipe (diganti saat ganti tipe selama belum diubah user) */
 const DEFAULT_USER: Record<DbType, string> = { mssql: 'sa', mysql: 'root', mariadb: 'root', postgres: 'postgres', sqlite: '', mongodb: '' };
 
@@ -86,7 +94,7 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   const types = Object.entries(drivers) as [DbType, (typeof drivers)[DbType]][];
   const logo = (t: DbType, cls: string) => (logos[t] ? `<img class="${cls}" src="${logos[t]}" alt="">` : `<span class="${cls} nologo">${esc(drivers[t].label[0])}</span>`);
   const swatches = ['', ...Object.keys(CONN_COLORS)].map((c) =>
-    `<button type="button" class="sw${(old?.color ?? '') === c ? ' on' : ''}" data-color="${c}" title="${c ? c[0].toUpperCase() + c.slice(1) : 'None'}" aria-label="${c || 'no'} color"${c ? ` style="--c: var(--vscode-charts-${c})"` : ''}></button>`).join('');
+    `<button type="button" class="sw${(old?.color ?? '') === c ? ' on' : ''}" data-color="${c}" title="${c ? colorLabel(c as ConnColor) : 'None'}" aria-label="${c || 'no'} color"${c ? ` style="--c: ${cssColor(c as ConnColor)}"` : ''}></button>`).join('');
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -100,13 +108,32 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
   .sub { margin: 0 0 22px; color: var(--vscode-descriptionForeground); }
   [hidden], .off { display: none !important; }
-  /* langkah 1: kartu database */
-  .dbgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--gap); }
-  .db { display: flex; align-items: center; gap: 14px; padding: 16px; text-align: left; font: inherit; color: inherit; cursor: pointer;
-    background: var(--vscode-editorWidget-background, rgba(128,128,128,.06)); border: 1px solid var(--border); border-radius: var(--radius); transition: border-color .12s, transform .12s; }
-  .db:hover, .db:focus-visible { border-color: var(--vscode-focusBorder); transform: translateY(-1px); outline: none; }
-  .db b { display: block; font-size: 14px; margin-bottom: 3px; }
+  /* langkah 1: hero + kartu database (aksen warna brand, animasi masuk, hover terangkat) */
+  .hero { position: relative; padding: 30px 30px 26px; margin-bottom: 26px; border-radius: 14px; overflow: hidden; border: 1px solid var(--border);
+    background: radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--vscode-focusBorder) 22%, transparent), transparent 60%),
+      radial-gradient(90% 120% at 100% 100%, color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 18%, transparent), transparent 60%),
+      var(--vscode-editorWidget-background, rgba(128,128,128,.06)); }
+  .hero h1 { font-size: 24px; letter-spacing: -.01em; }
+  .hero .sub { margin: 6px 0 0; font-size: 13.5px; }
+  .hero .moon { position: absolute; right: 28px; top: 50%; width: 74px; height: 74px; margin-top: -37px; border-radius: 50%; opacity: .85;
+    box-shadow: inset -18px -6px 0 0 color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 85%, white); animation: float 6s ease-in-out infinite; }
+  @keyframes float { 50% { transform: translateY(-6px) rotate(-6deg); } }
+  .dbgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .db { --brand: var(--vscode-focusBorder); position: relative; display: flex; align-items: center; gap: 14px; padding: 18px 18px 18px 20px; text-align: left; font: inherit; color: inherit; cursor: pointer; overflow: hidden;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 10%, transparent), transparent 55%), var(--vscode-editorWidget-background, rgba(128,128,128,.06));
+    border: 1px solid var(--border); border-radius: 12px; opacity: 0; animation: rise .45s cubic-bezier(.2,.7,.2,1) forwards; animation-delay: calc(var(--i) * 60ms);
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+  .db::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--brand); opacity: .9; }
+  .db:hover, .db:focus-visible { transform: translateY(-3px); outline: none; border-color: color-mix(in srgb, var(--brand) 70%, transparent);
+    box-shadow: 0 10px 24px -12px color-mix(in srgb, var(--brand) 70%, transparent); }
+  .db b { display: block; font-size: 14.5px; margin-bottom: 3px; }
   .db small { color: var(--vscode-descriptionForeground); }
+  .db .go { position: absolute; right: 14px; bottom: 10px; font-size: 12px; color: var(--brand); opacity: 0; transform: translateX(-6px); transition: opacity .18s, transform .18s; }
+  .db:hover .go, .db:focus-visible .go { opacity: 1; transform: none; }
+  .db:hover .logo { transform: scale(1.06) rotate(-3deg); }
+  .db .logo { transition: transform .2s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .db, .hero .moon { animation: none; opacity: 1; } .db, .db .logo, .db .go { transition: none; } }
   /* tile terang di belakang logo: logo gelap (MariaDB, SQL Server) tetap terlihat di tema gelap */
   .logo, .logo-sm { flex: none; object-fit: contain; background: #fff; border-radius: 8px; box-shadow: 0 0 0 1px var(--border); }
   .logo { width: 44px; height: 44px; padding: 6px; }
@@ -131,9 +158,13 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
     color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--border)); }
   select { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border-color: var(--vscode-dropdown-border, var(--border)); }
   input:focus, select:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-  .pw { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+  .pw { position: relative; }
+  .pw input { padding-right: 34px; }
+  .eye { position: absolute; right: 3px; top: 3px; width: 26px; height: 24px; padding: 3px; border: 0; border-radius: 3px; cursor: pointer; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); opacity: .75; }
+  .eye:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2)); }
+  .eye svg { width: 18px; height: 18px; display: block; }
   .check { display: flex; align-items: center; gap: 8px; font-weight: normal !important; }
-  .swatches { display: flex; gap: 8px; align-items: center; height: 30px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 30px; }
   .sw { width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--c, transparent);
     border: 1px solid var(--border); box-shadow: 0 0 0 2px transparent; }
   .sw[data-color=""] { background: linear-gradient(135deg, transparent 45%, var(--vscode-errorForeground) 45%, var(--vscode-errorForeground) 55%, transparent 55%); }
@@ -159,10 +190,9 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
 <body>
 <main>
 <div id="step1"${old ? ' hidden' : ''}>
-  <h1>New connection</h1>
-  <p class="sub">Choose the database you want to connect to.</p>
-  <div class="dbgrid">${types.map(([k, d]) =>
-    `<button type="button" class="db" data-type="${k}" data-port="${d.defaultPort}">${logo(k, 'logo')}<span><b>${esc(d.label)}</b><small>${esc(DB_HINT[k])}</small></span></button>`).join('')}</div>
+  <div class="hero"><h1>New connection</h1><p class="sub">Pick a database to start. You can change it later.</p><span class="moon"></span></div>
+  <div class="dbgrid">${types.map(([k, d], i) =>
+    `<button type="button" class="db" data-type="${k}" data-port="${d.defaultPort}" style="--brand: ${DB_BRAND[k]}; --i: ${i}">${logo(k, 'logo')}<span><b>${esc(d.label)}</b><small>${esc(DB_HINT[k])}</small></span><span class="go">Connect →</span></button>`).join('')}</div>
 </div>
 <form id="f"${old ? '' : ' hidden'} autocomplete="off">
   <input type="hidden" id="type" value="${esc(old?.type ?? 'mssql')}">
@@ -208,7 +238,7 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
     <div class="grid2">
       <div class="field"><label for="user">Username</label><input type="text" id="user" ${v(old?.user ?? DEFAULT_USER[old?.type ?? 'mssql'])}></div>
       <div class="field"><label for="password">Password</label>
-        <div class="pw"><input type="password" id="password" placeholder="${old ? 'Leave empty to keep current password' : ''}"><button type="button" class="btn secondary" id="show">Show</button></div></div>
+        <div class="pw"><input type="password" id="password" placeholder="${old ? 'Leave empty to keep current password' : ''}"><button type="button" class="eye" id="show" title="Show password" aria-label="Show password">${EYE}</button></div></div>
     </div>
     <div class="field mongo"><label for="authSource">Auth database</label><input type="text" id="authSource" ${v(old?.authSource)} placeholder="e.g. admin (where the user was created)"></div>
   </section>
@@ -270,7 +300,13 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   showType();
   const busy = (b) => ['test', 'save'].forEach((id) => ($(id).disabled = b));
   const status = (cls, text) => { $('status').className = cls; $('status').textContent = text; };
-  $('show').onclick = () => { const p = $('password'); p.type = p.type === 'password' ? 'text' : 'password'; $('show').textContent = p.type === 'password' ? 'Show' : 'Hide'; };
+  const EYE = ${JSON.stringify(EYE)}, EYE_OFF = ${JSON.stringify(EYE_OFF)};
+  $('show').onclick = () => {
+    const p = $('password'), hidden = p.type === 'password';
+    p.type = hidden ? 'text' : 'password';
+    $('show').innerHTML = hidden ? EYE_OFF : EYE;
+    $('show').title = $('show').ariaLabel = hidden ? 'Hide password' : 'Show password';
+  };
   $('test').onclick = () => { busy(true); status('busy', 'Testing connection…'); vscode.postMessage({ type: 'test', data: data() }); };
   $('cancel').onclick = () => vscode.postMessage({ type: 'cancel' });
   $('f').onsubmit = (e) => { e.preventDefault(); busy(true); status('busy', 'Saving…'); vscode.postMessage({ type: 'save', data: data() }); };

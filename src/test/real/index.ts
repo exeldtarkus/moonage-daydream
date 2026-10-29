@@ -101,6 +101,17 @@ async function groupTest(m: typeof import('../../extension')) {
     assert.ok((await m.explorer.getChildren()).some((n) => n.kind === 'conn' && n.c.name === name), 'back at top level');
     await m.moveToGroup({ kind: 'conn', c: m.conns.get(name)! }, '__it prod');
     assert.deepEqual(m.conns.groups().filter((x) => x.startsWith('__it')), ['__it prod']);
+    // klik kanan koneksi: Rename (binding file ikut) lalu kembali, Change Color
+    const tmpDoc = await fixture('rename-conn', 'SELECT 1;\n');
+    await m.conns.bind(tmpDoc.uri.toString(), { conn: name });
+    await m.renameConnection({ kind: 'conn', c: m.conns.get(name)! }, `${name}2`);
+    assert.ok(m.conns.get(`${name}2`) && !m.conns.get(name), 'renamed');
+    assert.equal(m.conns.binding(tmpDoc.uri.toString())?.conn, `${name}2`, 'file binding follows the rename');
+    await m.renameConnection({ kind: 'conn', c: m.conns.get(`${name}2`)! }, name);
+    await m.changeConnectionColor({ kind: 'conn', c: m.conns.get(name)! }, 'teal');
+    assert.equal(m.conns.get(name)?.color, 'teal');
+    await m.changeConnectionColor({ kind: 'conn', c: m.conns.get(name)! }, '');
+    assert.equal(m.conns.get(name)?.color, undefined, 'no color');
     // warna: ikon Connections + label "you are using connection …" di editor file yang terikat
     await m.conns.save({ ...m.conns.get(name)!, color: 'red' }, '');
     const item = m.explorer.getTreeItem((await m.explorer.getChildren((await m.explorer.getChildren()).find((n) => n.kind === 'group' && n.group === '__it prod')))[0]);
@@ -112,7 +123,7 @@ async function groupTest(m: typeof import('../../extension')) {
     await m.conns.bind(doc.uri.toString(), { conn: name });
     await vscode.window.showTextDocument(doc);
     m.banner.update((u) => (u.toString() === doc.uri.toString() ? m.conns.get(name) : undefined));
-    say('PASS connection groups: folder with count, rename group, move to no group / back, quick pick, color icon + editor banner (no error)');
+    say('PASS connection groups: folder with count, rename group, move to no group / back, rename connection (binding follows), change color, color + editor banner');
   } finally {
     await m.conns.remove(name);
     assert.deepEqual(m.conns.list(), before, 'connection list restored');
