@@ -17,31 +17,79 @@ export class Connections {
   /** file untitled: binding hanya di memori, karena uri `untitled:Untitled-1` dipakai ulang di sesi berikutnya */
   private untitled = new Map<string, FileBinding>();
 
+  /** penulisan globalState berurutan: baca-ubah-tulis yang bersamaan (mis. bind saat rename) tidak saling menimpa */
+  private queue: Promise<unknown> = Promise.resolve();
+
   constructor(private ctx: vscode.ExtensionContext) {}
 
+  /**
+   * gema globalState: setiap update dikirim balik async, dan nilai yang sudah lewat (gema tulisan / nilai lama) bisa sesaat terbaca lagi.
+   * Per key disimpan nilai terakhir yang dipakai jendela ini + semua nilai yang pernah terlihat (dibaca / ditulis):
+   * nilai yang pernah terlihat = gema -> pakai nilai terakhir; nilai yang belum pernah terlihat = perubahan dari jendela VS Code lain -> dipakai.
+   */
+  private own = new Map<string, { value: unknown; seen: Set<string> }>();
+
+  /** catat nilai yang terlihat; hanya 100 terakhir (gema selalu dari tulisan / bacaan yang baru lewat) */
+  private see(seen: Set<string>, json: string): Set<string> {
+    seen.add(json);
+    if (seen.size > 100) seen.delete(seen.values().next().value as string);
+    return seen;
+  }
+
+  private read<T>(key: string, def: T): T {
+    const stored = this.ctx.globalState.get<T>(key, def);
+    const json = JSON.stringify(stored);
+    const o = this.own.get(key);
+    if (o?.seen.has(json)) return o.value as T;
+    this.own.set(key, { value: stored, seen: this.see(o?.seen ?? new Set<string>(), json) });
+    return stored;
+  }
+
+  private async write(key: string, value: unknown): Promise<void> {
+    const o = this.own.get(key) ?? { value, seen: new Set<string>() };
+    o.value = value;
+    this.see(o.seen, JSON.stringify(value));
+    this.own.set(key, o);
+    await this.ctx.globalState.update(key, value);
+  }
+
+  private serial<T>(f: () => Promise<T>): Promise<T> {
+    const r = this.queue.then(f);
+    this.queue = r.catch(() => undefined); // error dilaporkan ke pemanggil lewat r, antrean tetap jalan
+    return r;
+  }
+
   list(): ConnectionInfo[] {
-    return this.ctx.globalState.get<ConnectionInfo[]>(LIST, []);
+    return this.read<ConnectionInfo[]>(LIST, []);
   }
 
   get(name: string | undefined): ConnectionInfo | undefined {
     return this.list().find((c) => c.name === name);
   }
 
-  async save(c: ConnectionInfo, password: string, oldName?: string): Promise<void> {
+  save(c: ConnectionInfo, password: string, oldName?: string): Promise<void> {
+    return this.serial(() => this.saveNow(c, password, oldName));
+  }
+
+  private async saveNow(c: ConnectionInfo, password: string, oldName?: string): Promise<void> {
     const rest = this.list().filter((x) => x.name !== c.name && x.name !== oldName);
-    await this.ctx.globalState.update(LIST, [...rest, c].sort((a, b) => a.name.localeCompare(b.name)));
+    await this.write(LIST, [...rest, c].sort((a, b) => a.name.localeCompare(b.name)));
     if (oldName && oldName !== c.name) {
       await this.ctx.secrets.delete(secretKey(oldName));
-      const b = this.bindings();
-      for (const v of [...Object.values(b), ...this.untitled.values()]) if (v.conn === oldName) v.conn = c.name;
-      await this.ctx.globalState.update(BINDINGS, b);
+      const b = Object.fromEntries(Object.entries(this.bindings()).map(([k, v]) => [k, v.conn === oldName ? { ...v, conn: c.name } : v]));
+      for (const v of this.untitled.values()) if (v.conn === oldName) v.conn = c.name;
+      await this.write(BINDINGS, b);
     }
     await this.ctx.secrets.store(secretKey(c.name), password);
     if (oldName && this.active === oldName) await this.setActive(c.name);
   }
 
-  async remove(name: string): Promise<void> {
-    await this.ctx.globalState.update(LIST, this.list().filter((x) => x.name !== name));
+  remove(name: string): Promise<void> {
+    return this.serial(() => this.removeNow(name));
+  }
+
+  private async removeNow(name: string): Promise<void> {
+    await this.write(LIST, this.list().filter((x) => x.name !== name));
     await this.ctx.secrets.delete(secretKey(name));
     if (this.active === name) await this.setActive(undefined);
   }
@@ -51,7 +99,7 @@ export class Connections {
   }
 
   private bindings(): Record<string, FileBinding> {
-    return this.ctx.globalState.get<Record<string, FileBinding>>(BINDINGS, {});
+    return this.read<Record<string, FileBinding>>(BINDINGS, {});
   }
 
   /** binding file; diabaikan bila koneksinya sudah dihapus */
@@ -62,7 +110,27 @@ export class Connections {
 
   async bind(uri: string, b: FileBinding): Promise<void> {
     if (uri.startsWith('untitled:')) this.untitled.set(uri, b);
-    else await this.ctx.globalState.update(BINDINGS, { ...this.bindings(), [uri]: b });
+    else await this.serial(() => this.write(BINDINGS, { ...this.bindings(), [uri]: b }));
+  }
+
+  /**
+   * file / folder di-rename, di-copy atau dihapus: binding file itu (dan file di bawah folder) ikut pindah, disalin atau dihapus.
+   * to undefined = hapus; keep = salin (from tetap ada).
+   */
+  moveBindings(from: string, to: string | undefined, keep = false): Promise<void> {
+    return this.serial(() => this.moveNow(from, to, keep));
+  }
+
+  private async moveNow(from: string, to: string | undefined, keep: boolean): Promise<void> {
+    const b = { ...this.bindings() }; // salinan: objek di globalState tidak diubah langsung
+    const hit = (k: string) => k === from || k.startsWith(`${from}/`);
+    let changed = false;
+    for (const k of Object.keys(b).filter(hit)) {
+      if (to !== undefined) b[to + k.slice(from.length)] = { ...b[k] };
+      if (!keep) delete b[k];
+      changed = true;
+    }
+    if (changed) await this.write(BINDINGS, b);
   }
 
   /** koneksi aktif disimpan per workspace */
