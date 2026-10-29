@@ -49,6 +49,7 @@
 - [ ] MySQL / MariaDB
 - [ ] PostgreSQL
 - [ ] SQLite
+- [ ] MongoDB (bukan SQL: query lewat find / aggregate JSON, explorer database → collection; server test di Docker lalu dibersihkan)
 - [x] SQL Server Windows Authentication (NTLM: domain + user + password; SSO user Windows aktif tidak didukung tedious)
 
 ## Rilis
