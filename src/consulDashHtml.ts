@@ -209,6 +209,8 @@ export function consulDashboardHtml(cspSource: string, title: string): string {
 
   /* KV Browse (Left Pane) */
   function kvBrowse(prefix) {
+    // filter hanya untuk folder yang sedang dibuka; Refresh (folder sama) tetap
+    if (prefix !== kvPrefix) $('filter').value = '';
     kvPrefix = prefix;
     $('status').className = '';
     $('status').textContent = 'Loading…';

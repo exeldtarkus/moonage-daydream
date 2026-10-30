@@ -198,3 +198,18 @@ test('consul dashboard panel: KV sections, split layout, editor, save, delete, n
   // script panel harus valid (mis. escape \\n di template literal)
   assert.doesNotThrow(() => new Function(html.split(/<script nonce="[^"]*">/)[1].split('</script>')[0]));
 });
+
+test('consul dashboard panel: filter is cleared when moving to another folder, kept on refresh', async () => {
+  const { consulDashboardHtml } = await import('../consulDashHtml');
+  const js = consulDashboardHtml('csp', 't').split(/<script nonce="[^"]*">/)[1].split('</script>')[0];
+  const fn = /function kvBrowse\(prefix\) \{[\s\S]*?\n  \}\n/.exec(js)?.[0];
+  assert.ok(fn, 'kvBrowse found');
+  const els: Record<string, { value: string; className: string; textContent: string; innerHTML: string }> = {};
+  const $ = (id: string) => (els[id] ??= { value: '', className: '', textContent: '', innerHTML: '' });
+  const browse = new Function('$', 'vscode', `let kvPrefix = 'app/'; ${fn} return kvBrowse;`)($, { postMessage: () => undefined }) as (p: string) => void;
+  $('filter').value = 'port';
+  browse('app/');
+  assert.equal($('filter').value, 'port', 'refresh keeps the filter');
+  browse('db/');
+  assert.equal($('filter').value, '', 'new folder clears the filter');
+});
