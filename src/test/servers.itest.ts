@@ -132,7 +132,7 @@ for (const s of SERVERS) {
     assert.equal(String(await one('SELECT COUNT(*) FROM cheap')), '9', 'view replaced, same rows');
   });
 
-  test(`${d.label}: Columns editor script (show, rename, change, add, drop) on the server`, { skip: !d.columnDdl }, async () => {
+  test(`${d.label}: Columns editor script (show, rename, change, add, drop) on the server`, { skip: s.type === 'postgres' }, async () => {
     const ddl = d.columnDdl!;
     await run(`DROP TABLE IF EXISTS column_lab; CREATE TABLE column_lab (
       id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'none' COMMENT 'the title',
@@ -176,6 +176,49 @@ for (const s of SERVERS) {
     assert.ok(by(after, 'total2').generated);
     assert.deepEqual(by(after, 'note'), { name: 'note', type: 'varchar(20)', nullable: false, default: "'x'", keep: by(after, 'note').keep });
     assert.equal(String(await one('SELECT COUNT(*) FROM column_lab WHERE note = \'x\' AND qty = 5')), '1', 'data kept');
+    await run('DROP TABLE column_lab');
+  });
+
+  test(`${d.label}: Columns editor script on PostgreSQL (short type names, identity, generated, collation, one transaction)`, { skip: s.type !== 'postgres' }, async () => {
+    const ddl = d.columnDdl!;
+    await run(`DROP TABLE IF EXISTS column_lab; CREATE TABLE column_lab (
+      id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, title varchar(50) COLLATE "C" NOT NULL DEFAULT 'none',
+      qty integer NOT NULL DEFAULT 0, price numeric(10,2), flag boolean NOT NULL DEFAULT true, created_at timestamptz(3) NOT NULL DEFAULT now(),
+      tags text[], total numeric(12,2) GENERATED ALWAYS AS (qty * price) STORED);
+      COMMENT ON COLUMN column_lab.title IS 'the title';
+      INSERT INTO column_lab (title, qty, price) VALUES ('apple', 5, 1.50);`);
+    const o = { schema: 'public', name: 'column_lab' };
+    const load = async () => showColumns((await run(ddl.show(o))).resultSets[0]).cols;
+    const by = (cs: ColumnRow[], n: string) => cs.find((x) => x.name === n)!;
+    const cols = await load();
+    assert.deepEqual(by(cols, 'id'), { name: 'id', type: 'integer', nullable: false, generated: true });
+    assert.deepEqual(by(cols, 'title'), { name: 'title', type: 'varchar(50)', nullable: false, default: "'none'::character varying", keep: 'COLLATE "C"' });
+    assert.equal(by(cols, 'created_at').type, 'timestamptz(3)');
+    assert.equal(by(cols, 'tags').type, 'text[]');
+    assert.ok(by(cols, 'total').generated);
+    assert.equal(by(cols, 'total').default, undefined, 'generated expression is not a default');
+
+    const rows: ColumnRow[] = cols.map((x) => ({ ...x, orig: x.name }));
+    const edit = (n: string, ch: Partial<ColumnRow>) => Object.assign(rows.find((x) => x.orig === n)!, ch);
+    edit('id', { name: 'item_id' });
+    edit('title', { type: 'varchar(80)' });
+    edit('qty', { name: 'quantity', type: 'bigint', default: '1' });
+    edit('flag', { deleted: true });
+    rows.push({ name: 'note', type: 'text', nullable: false, default: "'x'" });
+    const r = columnChanges(ddl, o, cols, rows);
+    assert.deepEqual(r.errors, []);
+    await run(r.sql);
+    const after = await load();
+    assert.deepEqual(after.map((x) => x.name), ['item_id', 'title', 'quantity', 'price', 'created_at', 'tags', 'total', 'note']);
+    assert.deepEqual(by(after, 'title'), { ...by(cols, 'title'), type: 'varchar(80)' }, 'collation kept');
+    assert.deepEqual([by(after, 'quantity').type, by(after, 'quantity').default], ['bigint', '1']);
+
+    // satu transaksi: langkah yang gagal membatalkan langkah sebelumnya
+    const bad = columnChanges(ddl, o, after, [...after.map((x) => ({ ...x, orig: x.name })).map((x) => (x.name === 'price' ? { ...x, name: 'cost' } : x)),
+      { name: 'item_id', type: 'integer', nullable: true }]);
+    assert.match(bad.errors.join(), /Duplicate/);
+    await assert.rejects(run(`${ddl.edit(o, by(after, 'price'), { ...by(after, 'price'), name: 'cost' })}\n${ddl.add(o, { name: 'item_id', type: 'integer', nullable: true })}`));
+    assert.ok((await load()).some((x) => x.name === 'price'), 'rename rolled back');
     await run('DROP TABLE column_lab');
   });
 

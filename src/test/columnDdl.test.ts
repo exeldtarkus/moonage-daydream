@@ -294,3 +294,61 @@ test('columns editor: Show keep (attributes carried by CHANGE COLUMN) goes to th
   const r = columnChanges(my, mt, cols, [{ ...cols[0], orig: 'id' }, { ...cols[1], orig: 'title', type: 'varchar(60)' }, { name: 'n', type: 'int', nullable: true }]);
   assert.equal(r.sql, `ALTER TABLE ${MT} CHANGE COLUMN \`title\` \`title\` varchar(60) NULL COMMENT 'x';\nALTER TABLE ${MT} ADD COLUMN \`n\` int NULL;`);
 });
+
+// ---------- PostgreSQL ----------
+const pg = drivers.postgres.columnDdl!;
+const pt = { schema: 'sa"les', name: "or'ders" };
+const PT = '"sa""les"."or\'ders"';
+
+test('column ddl: PostgreSQL basics (separator, new column type, note about one transaction)', () => {
+  assert.equal(pg.separator, '\n');
+  assert.equal(pg.newType, 'varchar(100)');
+  assert.match(pg.note!, /one transaction/i);
+});
+
+test('column ddl: PostgreSQL Show reads pg_attribute of the table with short type names, identity, generated, primary key', () => {
+  const sql = pg.show(pt);
+  assert.match(sql, /FROM pg_attribute a/);
+  assert.ok(sql.includes(`to_regclass('${PT.replace(/'/g, "''")}')`), sql);
+  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'identity', 'generated', 'primary_key', 'collation', 'comment', 'keep']) assert.match(sql, new RegExp(`AS ${col}\\b`), col);
+  assert.match(sql, /varchar/);
+  assert.match(sql, /timestamptz/);
+  assert.match(sql, /ORDER BY a\.attnum/);
+});
+
+test('column ddl: PostgreSQL Add / Delete', () => {
+  assert.equal(pg.add(pt, { name: 'note', type: 'varchar(100)', nullable: true }), `ALTER TABLE ${PT} ADD COLUMN "note" varchar(100) NULL;`);
+  assert.equal(pg.add(pt, { name: 'q"ty', type: 'integer', nullable: false, default: '0' }), `ALTER TABLE ${PT} ADD COLUMN "q""ty" integer NOT NULL DEFAULT 0;`);
+  assert.equal(pg.drop(pt, 'price'), `ALTER TABLE ${PT} DROP COLUMN "price";`);
+});
+
+test('column ddl: PostgreSQL Edit = RENAME COLUMN, then one ALTER TABLE with TYPE ... USING, SET / DROP NOT NULL, SET / DROP DEFAULT', () => {
+  const old = { name: 'qty', type: 'integer', nullable: true, default: '0' };
+  assert.match(pg.edit(pt, old, { ...old }), /^-- no changes/);
+  assert.equal(pg.edit(pt, old, { ...old, name: 'quantity' }), `ALTER TABLE ${PT} RENAME COLUMN "qty" TO "quantity";`);
+  assert.equal(pg.edit(pt, old, { name: 'quantity', type: 'bigint', nullable: false, default: '1' }),
+    `ALTER TABLE ${PT} RENAME COLUMN "qty" TO "quantity";\nALTER TABLE ${PT} ALTER COLUMN "quantity" TYPE bigint USING "quantity"::bigint, ALTER COLUMN "quantity" SET NOT NULL, ALTER COLUMN "quantity" SET DEFAULT 1;`);
+  assert.equal(pg.edit(pt, { ...old, nullable: false }, { ...old, default: undefined }),
+    `ALTER TABLE ${PT} ALTER COLUMN "qty" DROP NOT NULL, ALTER COLUMN "qty" DROP DEFAULT;`);
+  // collation non-default dibawa saat tipe teks berubah, tidak untuk tipe bukan teks
+  const t = { name: 'title', type: 'varchar(50)', nullable: true, keep: 'COLLATE "C"' };
+  assert.equal(pg.edit(pt, t, { ...t, type: 'varchar(80)' }), `ALTER TABLE ${PT} ALTER COLUMN "title" TYPE varchar(80) COLLATE "C" USING "title"::varchar(80);`);
+  assert.equal(pg.edit(pt, t, { ...t, type: 'integer' }), `ALTER TABLE ${PT} ALTER COLUMN "title" TYPE integer USING "title"::integer;`);
+});
+
+test('PostgreSQL data types: complete list, grouped, size rules', () => {
+  const names = pg.types.map((x) => x.name);
+  for (const n of ['smallint', 'integer', 'bigint', 'numeric', 'real', 'double precision', 'smallserial', 'serial', 'bigserial', 'money', 'boolean',
+    'char', 'varchar', 'text', 'bytea', 'date', 'time', 'timetz', 'timestamp', 'timestamptz', 'interval', 'uuid', 'json', 'jsonb', 'xml',
+    'inet', 'cidr', 'macaddr', 'bit', 'varbit', 'tsvector', 'point']) assert.ok(names.includes(n), n);
+  assert.equal(new Set(names).size, names.length, 'no duplicates');
+  assert.ok(pg.types.every((x) => x.group), 'every type has a group');
+  for (const ty of ['integer', 'varchar', 'varchar(10485760)', 'numeric(1000,0)', 'numeric', 'timestamptz(6)', 'double precision', 'integer[]', 'public.mood']) {
+    assert.equal(checkType(ty, pg.types), undefined, ty);
+  }
+  assert.match(checkType('varchar(10485761)', pg.types)!, /varchar: length 1-10485760/);
+  assert.match(checkType('numeric(1001,2)', pg.types)!, /numeric: precision 1-1000/);
+  assert.match(checkType('timestamp(7)', pg.types)!, /timestamp: fractional seconds 0-6/);
+  assert.match(checkType('integer(4)', pg.types)!, /integer has no size/);
+  assert.ok(pg.types.find((x) => x.name === 'serial')!.note!.match(/add/i), 'serial is only for new columns');
+});

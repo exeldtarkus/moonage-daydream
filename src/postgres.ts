@@ -1,6 +1,6 @@
 import { Client, Pool, types } from 'pg';
 import type { ClientConfig, PoolClient, QueryArrayResult } from 'pg';
-import type { ConnectionInfo, ListKind, ObjectKind, ProcParam } from './db';
+import type { ColumnDdl, ConnectionInfo, ListKind, ObjectKind, ProcParam, TypeSpec } from './db';
 import { connectMs, typedOptions } from './db';
 import { maskSql } from './sqlContext';
 import { driverLog } from './log';
@@ -153,6 +153,81 @@ const KIND: Record<ListKind, string> = {
 };
 const full = (schema: string, name: string) => `${quotePg(schema)}.${quotePg(name)}`;
 
+/** literal string PostgreSQL (standard_conforming_strings: backslash bukan escape) */
+const litPg = (s: string) => `'${s.replace(/'/g, "''")}'`;
+const PG_MAXLEN = 10485760;
+
+/** tipe data bawaan PostgreSQL 16 (nama pendek seperti hasil Show), urut dropdown editor Columns */
+export const PG_TYPES: TypeSpec[] = [
+  ...['smallint', 'integer', 'bigint'].map((name) => ({ name, group: 'Numeric' })),
+  { name: 'numeric', group: 'Numeric', args: 'precisionScale', max: 1000, def: '10,2' },
+  { name: 'real', group: 'Numeric' },
+  { name: 'double precision', group: 'Numeric' },
+  ...['smallserial', 'serial', 'bigserial'].map((name) => ({ name, group: 'Numeric', note: 'Add only: integer + sequence default' })),
+  { name: 'money', group: 'Numeric' },
+  { name: 'boolean', group: 'Boolean' },
+  { name: 'char', group: 'Text', args: 'length', max: PG_MAXLEN, def: '10' },
+  { name: 'varchar', group: 'Text', args: 'length', max: PG_MAXLEN, def: '100', note: 'no length = unlimited' },
+  { name: 'text', group: 'Text' },
+  { name: 'bytea', group: 'Binary' },
+  { name: 'bit', group: 'Binary', args: 'length', max: 83886080, def: '1' },
+  { name: 'varbit', group: 'Binary', args: 'length', max: 83886080, def: '8' },
+  { name: 'date', group: 'Date and time' },
+  ...['time', 'timetz', 'timestamp', 'timestamptz', 'interval'].map((name) => ({ name, group: 'Date and time', args: 'scale' as const, max: 6 })),
+  ...['uuid', 'json', 'jsonb', 'xml', 'tsvector', 'tsquery'].map((name) => ({ name, group: 'Other' })),
+  ...['inet', 'cidr', 'macaddr', 'macaddr8'].map((name) => ({ name, group: 'Network' })),
+  ...['point', 'line', 'lseg', 'box', 'path', 'polygon', 'circle'].map((name) => ({ name, group: 'Geometric' })),
+];
+
+export const pgColumnDdl: ColumnDdl = {
+  separator: '\n',
+  newType: 'varchar(100)',
+  note: 'PostgreSQL runs the whole script in one transaction: if a step fails, no change is applied.',
+  types: PG_TYPES,
+  // format_type -> nama pendek yang ada di dropdown (character varying(50) -> varchar(50), timestamp(3) with time zone -> timestamptz(3))
+  show: (o) => `SELECT a.attnum AS ordinal, a.attname AS column_name,
+  CASE t.typname WHEN 'varchar' THEN replace(f.ft, 'character varying', 'varchar') WHEN 'bpchar' THEN replace(f.ft, 'character', 'char')
+    WHEN 'varbit' THEN replace(f.ft, 'bit varying', 'varbit')
+    WHEN 'timestamp' THEN regexp_replace(f.ft, ' without time zone$', '') WHEN 'timestamptz' THEN regexp_replace(f.ft, '^timestamp(.*) with time zone$', 'timestamptz\\1')
+    WHEN 'time' THEN regexp_replace(f.ft, ' without time zone$', '') WHEN 'timetz' THEN regexp_replace(f.ft, '^time(.*) with time zone$', 'timetz\\1')
+    ELSE f.ft END AS data_type,
+  CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS nullable,
+  CASE WHEN a.attgenerated = '' THEN pg_get_expr(d.adbin, d.adrelid) END AS default_value,
+  CASE a.attidentity WHEN 'a' THEN 'ALWAYS' WHEN 'd' THEN 'BY DEFAULT' END AS identity,
+  CASE WHEN a.attgenerated <> '' THEN pg_get_expr(d.adbin, d.adrelid) END AS generated,
+  CASE WHEN EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)) THEN 'PK' ELSE '' END AS primary_key,
+  CASE WHEN a.attcollation <> t.typcollation THEN c.collname END AS collation,
+  col_description(a.attrelid, a.attnum) AS comment,
+  CASE WHEN a.attcollation <> t.typcollation THEN 'COLLATE ' || quote_ident(c.collname) END AS keep
+FROM pg_attribute a
+JOIN pg_type t ON t.oid = a.atttypid
+CROSS JOIN LATERAL (SELECT format_type(a.atttypid, a.atttypmod) AS ft) f
+LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+LEFT JOIN pg_collation c ON c.oid = a.attcollation
+WHERE a.attrelid = to_regclass(${litPg(full(o.schema, o.name))}) AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;`,
+  add: (o, c) => `ALTER TABLE ${full(o.schema, o.name)} ADD COLUMN ${quotePg(c.name)} ${c.type.trim()} ${c.nullable ? 'NULL' : 'NOT NULL'}${c.default?.trim() ? ` DEFAULT ${c.default.trim()}` : ''};`,
+  drop: (o, name) => `ALTER TABLE ${full(o.schema, o.name)} DROP COLUMN ${quotePg(name)};`,
+  edit(o, old, next) {
+    const tbl = full(o.schema, o.name);
+    const col = quotePg(next.name);
+    const type = next.type.trim();
+    const [was, now] = [old.default?.trim() || '', next.default?.trim() || ''];
+    // tanpa COLLATE, ALTER TYPE memakai collation default tipe baru: collation lama dibawa untuk tipe teks
+    const collate = old.keep && /^\s*(var)?char|^\s*text\b/i.test(type) ? ` ${old.keep}` : '';
+    const alters = [
+      ...(type !== old.type ? [`ALTER COLUMN ${col} TYPE ${type}${collate} USING ${col}::${type}`] : []),
+      ...(next.nullable !== old.nullable ? [`ALTER COLUMN ${col} ${next.nullable ? 'DROP' : 'SET'} NOT NULL`] : []),
+      ...(now !== was ? [now ? `ALTER COLUMN ${col} SET DEFAULT ${now}` : `ALTER COLUMN ${col} DROP DEFAULT`] : []),
+    ];
+    const steps = [
+      ...(next.name !== old.name ? [`ALTER TABLE ${tbl} RENAME COLUMN ${quotePg(old.name)} TO ${col};`] : []),
+      ...(alters.length ? [`ALTER TABLE ${tbl} ${alters.join(', ')};`] : []),
+    ];
+    return steps.length ? steps.join('\n') : `-- no changes to ${quotePg(old.name)}`;
+  },
+};
+
 export const postgresDriver = sqlDriver({
   label: 'PostgreSQL',
   defaultPort: 5432,
@@ -164,6 +239,7 @@ export const postgresDriver = sqlDriver({
   testSql: `SELECT COALESCE(inet_server_addr()::text, 'local') AS server, current_database() AS db`,
   // ANALYZE menjalankan query (pemanggil membatasi ke SELECT)
   explain: (s, mode) => (mode === 'estimated' ? `EXPLAIN ${s}` : `EXPLAIN ANALYZE ${s}`),
+  columnDdl: pgColumnDdl,
 
   async link(conn, password, db) {
     const p = pool(conn, password, db);
