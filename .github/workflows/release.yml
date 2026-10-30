@@ -59,6 +59,13 @@ jobs:
       - name: Package
         run: npm run package
 
+      # bila Marketplace menolak, Open VSX + GitHub Release tetap jalan (upload .vsix manual dari Release)
+      - name: Publish to VS Code Marketplace (trusted publishing)
+        continue-on-error: true
+        env:
+          VSIX: ${{ steps.meta.outputs.vsix }}
+        run: npx --yes @vscode/vsce@4.1.0 publish -i "$VSIX" --oidc
+
       - name: Publish to Open VSX (trusted publishing)
         env:
           NAME: ${{ steps.meta.outputs.name }}
@@ -73,6 +80,7 @@ jobs:
             npx --yes ovsx@1.3.0 publish "$VSIX" --trusted-publishing
           fi
 
+      # paling akhir: rilis GitHub dibuat setelah publish ke marketplace
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,10 +105,3 @@ jobs:
             echo '```'
           } > release-notes.md
           gh release create "$TAG" "$VSIX" --title "$TAG" --notes-file release-notes.md
-
-      # setelah Release: bila Marketplace menolak, Open VSX + GitHub Release tetap jadi (upload .vsix manual dari Release)
-      - name: Publish to VS Code Marketplace (trusted publishing)
-        continue-on-error: true
-        env:
-          VSIX: ${{ steps.meta.outputs.vsix }}
-        run: npx --yes @vscode/vsce@4.1.0 publish -i "$VSIX" --oidc
