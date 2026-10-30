@@ -187,6 +187,12 @@
         "icon": "$(pulse)"
       },
       {
+        "command": "moonageDaydream.newDatabase",
+        "title": "New Database…",
+        "category": "Moonage Daydream",
+        "icon": "$(add)"
+      },
+      {
         "command": "moonageDaydream.killSession",
         "title": "Kill Session…",
         "category": "Moonage Daydream",
@@ -725,6 +731,11 @@
           "group": "1_job@2"
         },
         {
+          "command": "moonageDaydream.newDatabase",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
+          "group": "2_db@1"
+        },
+        {
           "command": "moonageDaydream.activityMonitor",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
           "group": "3_server@1"
@@ -847,6 +858,10 @@
         },
         {
           "command": "moonageDaydream.editColumns",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.newDatabase",
           "when": "false"
         },
         {

@@ -1,6 +1,6 @@
 import * as sql from 'mssql';
 import { MAX_ROWS, connectMs, typedOptions } from './db';
-import type { Column, ColumnDdl, ColumnDef, ConnectionInfo, TypeSpec, Driver, ListKind, ObjectKind, ProcParam, QueryResult, ResultSet, Session, Sink } from './db';
+import type { Column, ColumnDdl, NewDatabase, ColumnDef, ConnectionInfo, TypeSpec, Driver, ListKind, ObjectKind, ProcParam, QueryResult, ResultSet, Session, Sink } from './db';
 import { driverLog } from './log';
 import { maskSql, readOnly, splitStatements } from './sqlContext';
 
@@ -261,6 +261,28 @@ ORDER BY c.column_id;`,
       ...(redefault && now ? [`ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${dfName(o, next.name)} DEFAULT ${wrapped(now)} FOR ${q(next.name)};`] : []),
     ];
     return steps.length ? steps.join('\nGO\n') : `-- no changes to ${q(old.name)}`;
+  },
+};
+
+const RECOVERY = ['SIMPLE', 'FULL', 'BULK_LOGGED'];
+
+/** New Database SQL Server: collation dari server, recovery model; ukuran / lokasi file = default server (model database) */
+export const msNewDatabase: NewDatabase = {
+  maxName: 128,
+  options: [
+    { key: 'collation', title: 'Collation', async items(run) {
+      const rows = (await run('SELECT name, description FROM sys.fn_helpcollations() ORDER BY name;')).resultSets[0]?.rows ?? [];
+      return [{ label: '(server default)', value: '' }, ...rows.map(([name, description]) => ({ label: String(name), value: String(name), description: String(description ?? '') }))];
+    } },
+    { key: 'recovery', title: 'Recovery model', items: async () => [{ label: '(model database default)', value: '' }, ...RECOVERY.map((r) => ({ label: r, value: r }))] },
+  ],
+  script(name, picks) {
+    const db = q(name.trim());
+    const collation = picks.collation ?? '';
+    const recovery = picks.recovery ?? '';
+    if (collation && !/^\w+$/.test(collation)) throw new Error(`Invalid collation: ${collation}`);
+    if (recovery && !RECOVERY.includes(recovery)) throw new Error(`Invalid recovery model: ${recovery}`);
+    return [`CREATE DATABASE ${db}${collation ? ` COLLATE ${collation}` : ''};`, ...(recovery ? [`ALTER DATABASE ${db} SET RECOVERY ${recovery};`] : [])].join('\n');
   },
 };
 
@@ -613,6 +635,7 @@ export const mssqlDriver: Driver = {
   },
 
   columnDdl: msColumnDdl,
+  newDatabase: msNewDatabase,
 
   selectTop(db, obj, n) {
     return `SELECT TOP ${n} * FROM ${q(db)}.${q(obj.schema)}.${q(obj.name)};`;

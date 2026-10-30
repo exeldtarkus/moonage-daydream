@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnDef, ColumnRow, ConnectionInfo, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnDef, ColumnRow, ConnectionInfo, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, checkDbName, confirmAutoCommit, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -286,6 +286,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.stopJob', (n?: Node) => jobCommand(n, 'stop')),
     vscode.commands.registerCommand('moonageDaydream.activityMonitor', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', ACTIVITY_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.killSession', killCommand),
+    vscode.commands.registerCommand('moonageDaydream.newDatabase', newDatabase),
     vscode.commands.registerCommand('moonageDaydream.liveMonitor', liveMonitor),
     vscode.commands.registerCommand('moonageDaydream.serverInfo', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', SERVER_INFO_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.databaseInfo', (n?: Node) => n?.kind === 'db' && openScript(n.c, n.db, DB_INFO_SQL, true)),
@@ -772,6 +773,55 @@ async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
   } catch (e) {
     log.error(`jobCommand ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`${action === 'start' ? 'Start' : 'Stop'} job failed: ${errMsg(e)}`);
+  }
+}
+
+/** klik kanan koneksi -> New Database…: nama, pilihan bertahap (quick pick), lalu Execute (konfirmasi) atau Open in SQL Editor */
+async function newDatabase(n?: Node) {
+  if (n?.kind !== 'conn' || !drivers[n.c.type].newDatabase) return;
+  const conn = n.c;
+  const d = drivers[conn.type];
+  const nd = d.newDatabase!;
+  const name = (await vscode.window.showInputBox({ title: `New Database on ${conn.name}`, prompt: 'Database name', validateInput: (v) => checkDbName(v, nd.maxName) }))?.trim();
+  if (!name) return;
+  const picks: Record<string, string> = {};
+  const run = async (sql: string) => d.run(conn, await conns.password(conn.name), sql);
+  for (const [i, o] of nd.options.entries()) {
+    let items: Awaited<ReturnType<typeof o.items>>;
+    try {
+      items = await o.items(run);
+    } catch (e) {
+      // daftar dari server gagal (mis. izin): tetap bisa lanjut dengan default server
+      log.error(`newDatabase options - EXCEPTION CAUGHT | ${conn.name} / ${o.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      items = [{ label: '(server default)', value: '' }];
+    }
+    const pick = await vscode.window.showQuickPick(items, { title: `New Database ${name}: ${o.title} (${i + 1}/${nd.options.length})`, matchOnDescription: true });
+    if (!pick) return;
+    picks[o.key] = pick.value;
+  }
+  let sql: string;
+  try {
+    sql = nd.script(name, picks);
+  } catch (e) {
+    log.error(`newDatabase script - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    return void vscode.window.showErrorMessage(`New Database: ${errMsg(e)}`);
+  }
+  const act = await vscode.window.showQuickPick([
+    { label: '$(play) Execute', id: 'exec', detail: conn.readOnly ? 'Read-only connection: not available' : sql },
+    { label: '$(go-to-file) Open in SQL Editor', id: 'open', detail: 'Review or change the script, then run it yourself' },
+  ].filter((x) => x.id !== 'exec' || !conn.readOnly), { title: `New Database ${name} on ${conn.name}` });
+  if (!act) return;
+  if (act.id === 'open') return openScript(conn, conn.database || d.defaultDb, sql);
+  const ok = await vscode.window.showWarningMessage(`Create database ${name} on ${conn.name}?`, { modal: true, detail: sql }, 'Execute');
+  if (!ok) return;
+  try {
+    await d.run(conn, await conns.password(conn.name), sql);
+    log.info(`newDatabase: ${conn.name} / ${name}`);
+    explorer.refresh();
+    vscode.window.showInformationMessage(`Database ${name} created on ${conn.name}.`);
+  } catch (e) {
+    log.error(`newDatabase execute - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
   }
 }
 

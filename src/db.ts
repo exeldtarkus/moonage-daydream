@@ -255,6 +255,21 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
   return { sql: sql && ddl.wrap ? ddl.wrap(sql) : sql, errors: [], count: steps.length, steps };
 }
 
+/** New Database: nama lalu pilihan bertahap (quick pick), hasilnya script CREATE DATABASE */
+export interface NewDatabase {
+  maxName: number;
+  /** items: run = jalankan query di koneksi (mis. daftar collation); value '' = default server */
+  options: { key: string; title: string; items(run: (sql: string) => Promise<{ resultSets: { rows: unknown[][] }[] }>): Promise<{ label: string; value: string; description?: string }[]> }[];
+  script(name: string, picks: Record<string, string>): string;
+}
+
+/** validasi nama database baru; undefined = valid */
+export function checkDbName(name: string, max: number): string | undefined {
+  if (!name.trim()) return 'Database name is required';
+  if (name.trim().length > max) return `Database name is at most ${max} characters`;
+  return undefined;
+}
+
 /** penerima baris export All Data; row() boleh mengembalikan Promise (backpressure) */
 export interface Sink { columns(cols: string[]): Promise<void> | void; row(values: unknown[]): Promise<void> | void }
 
@@ -323,6 +338,8 @@ export interface Driver {
   /** Script as CREATE untuk tabel (lengkap: identity, computed, default, constraint, FK, index); tidak ada = kolom + PK saja */
   /** Show / Add / Edit / Delete Column untuk tabel; tidak ada = menu kolom tidak tampil */
   columnDdl?: ColumnDdl;
+  /** klik kanan koneksi -> New Database…; tidak ada = menu tidak tampil */
+  newDatabase?: NewDatabase;
   createTableScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<string>;
   /** Run: script EXEC / CALL / SELECT dengan argumen; params = jumlah argumen (0 = langsung dijalankan) */
   runScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<{ sql: string; params: number }>;
