@@ -2,39 +2,73 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { checkDbName, drivers } from '../db';
+import { checkDbName, drivers, newDatabaseScript } from '../db';
+import { newDbHtml } from '../newDbHtml';
 
 const ms = drivers.mssql.newDatabase!;
+const ok = (name: string, v: Record<string, string> = {}) => newDatabaseScript(ms, name, v);
 
 test('new database: name is required, trimmed length limit per database', () => {
   assert.equal(checkDbName(' ', 128), 'Database name is required');
   assert.equal(checkDbName('a'.repeat(129), 128), 'Database name is at most 128 characters');
   assert.equal(checkDbName('shop_dev', 128), undefined);
   assert.equal(ms.maxName, 128);
+  assert.deepEqual(ok(' '), { sql: '', errors: ['Database name is required'] });
 });
 
-test('new database: SQL Server script = CREATE DATABASE (+ COLLATE) (+ recovery model), names quoted', () => {
-  assert.equal(ms.script('shop', {}), 'CREATE DATABASE [shop];');
-  assert.equal(ms.script('sh]op', { collation: 'Latin1_General_100_CI_AS_SC_UTF8', recovery: 'SIMPLE' }),
-    'CREATE DATABASE [sh]]op] COLLATE Latin1_General_100_CI_AS_SC_UTF8;\nALTER DATABASE [sh]]op] SET RECOVERY SIMPLE;');
-  assert.equal(ms.script('shop', { collation: '', recovery: 'FULL' }), 'CREATE DATABASE [shop];\nALTER DATABASE [shop] SET RECOVERY FULL;');
-  assert.throws(() => ms.script('shop', { collation: 'x; DROP DATABASE y' }), /Invalid collation/);
-  assert.throws(() => ms.script('shop', { recovery: 'FAST' }), /Invalid recovery model/);
-});
-
-test('new database: SQL Server options = collation (from the server) then recovery model, default first', async () => {
-  assert.deepEqual(ms.options.map((o) => o.key), ['collation', 'recovery']);
+test('new database: SQL Server fields (form order, Files section folded, choices from the server)', async () => {
+  assert.deepEqual(ms.fields.map((f) => [f.key, f.kind, f.group ?? '']), [
+    ['collation', 'choice', ''], ['recovery', 'choice', ''], ['owner', 'choice', ''],
+    ['dataSize', 'number', 'Files'], ['dataGrowth', 'number', 'Files'], ['dataPath', 'text', 'Files'],
+    ['logSize', 'number', 'Files'], ['logGrowth', 'number', 'Files'], ['logPath', 'text', 'Files'],
+  ]);
   const sqls: string[] = [];
-  const fake = { run: async (sql: string) => (sqls.push(sql), { resultSets: [{ columns: ['name', 'description'], rows: [['Latin1_General_CI_AS', 'Latin1 ...']] }] }) };
-  const coll = await ms.options[0].items(fake.run);
+  const run = async (sql: string) => (sqls.push(sql), { resultSets: [{ rows: [['Latin1_General_CI_AS', 'Latin1 ...']] }] });
+  const coll = await ms.fields[0].items!(run);
   assert.match(sqls[0], /FROM sys\.fn_helpcollations\(\)/);
-  assert.deepEqual(coll[0], { label: '(server default)', value: '' });
-  assert.deepEqual(coll[1], { label: 'Latin1_General_CI_AS', value: 'Latin1_General_CI_AS', description: 'Latin1 ...' });
-  const rec = await ms.options[1].items(fake.run);
-  assert.deepEqual(rec.map((r) => r.value), ['', 'SIMPLE', 'FULL', 'BULK_LOGGED']);
+  assert.deepEqual(coll[0], { value: '', label: '(server default)' });
+  assert.deepEqual(coll[1], { value: 'Latin1_General_CI_AS', label: 'Latin1 ...' });
+  assert.deepEqual((await ms.fields[1].items!(run)).map((r) => r.value), ['', 'SIMPLE', 'FULL', 'BULK_LOGGED']);
+  await ms.fields[2].items!(run);
+  assert.match(sqls.at(-1)!, /FROM sys\.server_principals/);
 });
 
-test('menus: New Database on SQL Server connections only (for now), command title', () => {
+test('new database: SQL Server script = CREATE DATABASE (+ files, collation) + recovery + owner, names / paths quoted', () => {
+  assert.deepEqual(ok('shop'), { sql: 'CREATE DATABASE [shop];', errors: [] });
+  assert.equal(ok('sh]op', { collation: 'Latin1_General_100_CI_AS_SC_UTF8', recovery: 'SIMPLE', owner: "sa'x" }).sql, [
+    'CREATE DATABASE [sh]]op]',
+    '  COLLATE Latin1_General_100_CI_AS_SC_UTF8;',
+    'ALTER DATABASE [sh]]op] SET RECOVERY SIMPLE;',
+    "ALTER AUTHORIZATION ON DATABASE::[sh]]op] TO [sa'x];",
+  ].join('\n'));
+  // file: NAME wajib di klausa ON / LOG ON; FILENAME hanya bila folder diisi (nama file dari nama database)
+  assert.equal(ok('shop', { dataSize: '64', dataGrowth: '64', logSize: '16', logPath: "D:\\Logs\\o'k\\" }).sql, [
+    'CREATE DATABASE [shop]',
+    '  ON (NAME = [shop], SIZE = 64MB, FILEGROWTH = 64MB)',
+    "  LOG ON (NAME = [shop_log], FILENAME = N'D:\\Logs\\o''k\\shop_log.ldf', SIZE = 16MB);",
+  ].join('\n'));
+  assert.equal(ok('shop', { dataPath: '/var/opt/mssql/data' }).sql, "CREATE DATABASE [shop]\n  ON (NAME = [shop], FILENAME = N'/var/opt/mssql/data/shop.mdf');");
+});
+
+test('new database: SQL Server validation (sizes, collation, recovery)', () => {
+  assert.deepEqual(ok('shop', { dataSize: '0', logGrowth: 'abc' }).errors, ['Data file size: whole number of MB, at least 1', 'Log file growth: whole number of MB, at least 1']);
+  assert.deepEqual(ok('shop', { collation: 'x; DROP DATABASE y' }).errors, ['Invalid collation: x; DROP DATABASE y']);
+  assert.deepEqual(ok('shop', { recovery: 'FAST' }).errors, ['Invalid recovery model: FAST']);
+  assert.equal(ok('shop', { recovery: 'FAST' }).sql, '');
+});
+
+test('new database form: name, fields from the driver, Files folded, script preview, Create / Open in SQL Editor; read-only has no Create', () => {
+  const h = newDbHtml('csp-src', { conn: 'local <x>', type: 'SQL Server' }, false);
+  assert.match(h, /Content-Security-Policy[^>]+script-src 'nonce-/);
+  assert.ok(h.includes('local &lt;x&gt;'), 'connection escaped');
+  for (const id of ['name', 'fields', 'preview', 'create', 'openSql', 'errors']) assert.match(h, new RegExp(`id="${id}"`), id);
+  assert.match(h, /<details/, 'folded group');
+  const ro = newDbHtml('csp-src', { conn: 'x', type: 'SQL Server' }, true);
+  assert.doesNotMatch(ro, /id="create"/);
+  assert.match(ro, /read-only/i);
+});
+
+test('menus: New Database on SQL Server connections and the Databases folder, command title', () => {
   const pkg = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
   const items: { command: string; when?: string }[] = pkg.contributes.menus['view/item/context'];
   const shown = (viewItem: string) => items.some((it) => it.command === 'moonageDaydream.newDatabase'
@@ -44,7 +78,4 @@ test('menus: New Database on SQL Server connections only (for now), command titl
   assert.ok(shown('ms.databases'), 'right-click the Databases folder (SQL Server)');
   assert.ok(!shown('ms.systemDatabases'), 'not on System Databases');
   assert.ok(pkg.contributes.commands.some((c: { command: string; title: string }) => c.command === 'moonageDaydream.newDatabase' && c.title === 'New Database…'));
-  for (const t of Object.keys(drivers) as (keyof typeof drivers)[]) {
-    if (drivers[t].newDatabase) assert.ok(shown(t === 'mssql' ? 'conn.mssql.on' : ['mysql', 'mariadb', 'postgres'].includes(t) ? 'conn.live.on' : 'conn.on'), `${t} has the menu`);
-  }
 });

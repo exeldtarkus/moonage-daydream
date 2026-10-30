@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnDef, ColumnRow, ConnectionInfo, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, checkDbName, confirmAutoCommit, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnDef, ColumnRow, ConnectionInfo, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -17,6 +17,7 @@ import type { ConnColor } from './connColor';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { columnsHtml } from './columnsHtml';
+import { newDbHtml } from './newDbHtml';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
@@ -776,58 +777,62 @@ async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
   }
 }
 
-/** klik kanan koneksi / folder Databases -> New Database…: nama, pilihan bertahap (quick pick), lalu Execute (konfirmasi) atau Open in SQL Editor */
-async function newDatabase(n?: Node) {
+/** form New Database per koneksi (dibuka lagi = tab yang sama di-reveal) */
+const newDbPanels = new Map<string, vscode.WebviewPanel>();
+
+/** klik kanan koneksi / folder Databases -> New Database…: form tab, script live, Create (konfirmasi) atau Open in SQL Editor */
+function newDatabase(n?: Node) {
   if ((n?.kind !== 'conn' && !(n?.kind === 'mfolder' && n.folder === 'databases')) || !drivers[n.c.type].newDatabase) return;
   const conn = n.c;
   const d = drivers[conn.type];
   const nd = d.newDatabase!;
-  const name = (await vscode.window.showInputBox({ title: `New Database on ${conn.name}`, prompt: 'Database name', validateInput: (v) => checkDbName(v, nd.maxName) }))?.trim();
-  if (!name) return;
-  const picks: Record<string, string> = {};
+  const open = newDbPanels.get(conn.name);
+  if (open) return open.reveal();
+  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.newDatabase', `New Database: ${conn.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
+  newDbPanels.set(conn.name, panel);
+  panel.onDidDispose(() => newDbPanels.delete(conn.name));
+  panel.webview.html = newDbHtml(panel.webview.cspSource, { conn: conn.name, type: d.label }, !!conn.readOnly);
+  const post = (m: unknown) => void panel.webview.postMessage(m);
   // daftar pilihan bisa ribuan baris (collation SQL Server ~5500): stream tanpa batas MAX_ROWS
   const run = async (sql: string) => {
     const rows: unknown[][] = [];
     await d.stream(conn, await conns.password(conn.name), sql, undefined, { columns: () => undefined, row: (v) => { rows.push(v); } });
     return { resultSets: [{ rows }] };
   };
-  for (const [i, o] of nd.options.entries()) {
-    let items: Awaited<ReturnType<typeof o.items>>;
-    try {
-      items = await o.items(run);
-    } catch (e) {
-      // daftar dari server gagal (mis. izin): tetap bisa lanjut dengan default server
-      log.error(`newDatabase options - EXCEPTION CAUGHT | ${conn.name} / ${o.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      items = [{ label: '(server default)', value: '' }];
+  panel.webview.onDidReceiveMessage(async (m: { type: string; name?: string; values?: Record<string, string> }) => {
+    if (m.type === 'ready') {
+      const fields = await Promise.all(nd.fields.map(async ({ items, ...f }) => {
+        try {
+          return { ...f, items: items ? await items(run) : [] };
+        } catch (e) {
+          // daftar dari server gagal (mis. izin): isian tetap bisa diketik bebas
+          log.error(`newDatabase options - EXCEPTION CAUGHT | ${conn.name} / ${f.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+          return { ...f, items: [] };
+        }
+      }));
+      return post({ type: 'init', fields });
     }
-    const pick = await vscode.window.showQuickPick(items, { title: `New Database ${name}: ${o.title} (${i + 1}/${nd.options.length})`, matchOnDescription: true });
-    if (!pick) return;
-    picks[o.key] = pick.value;
-  }
-  let sql: string;
-  try {
-    sql = nd.script(name, picks);
-  } catch (e) {
-    log.error(`newDatabase script - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    return void vscode.window.showErrorMessage(`New Database: ${errMsg(e)}`);
-  }
-  const act = await vscode.window.showQuickPick([
-    { label: '$(play) Execute', id: 'exec', detail: conn.readOnly ? 'Read-only connection: not available' : sql },
-    { label: '$(go-to-file) Open in SQL Editor', id: 'open', detail: 'Review or change the script, then run it yourself' },
-  ].filter((x) => x.id !== 'exec' || !conn.readOnly), { title: `New Database ${name} on ${conn.name}` });
-  if (!act) return;
-  if (act.id === 'open') return openScript(conn, conn.database || d.defaultDb, sql);
-  const ok = await vscode.window.showWarningMessage(`Create database ${name} on ${conn.name}?`, { modal: true, detail: sql }, 'Execute');
-  if (!ok) return;
-  try {
-    await d.run(conn, await conns.password(conn.name), sql);
-    log.info(`newDatabase: ${conn.name} / ${name}`);
-    explorer.refresh();
-    vscode.window.showInformationMessage(`Database ${name} created on ${conn.name}.`);
-  } catch (e) {
-    log.error(`newDatabase execute - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
-  }
+    const name = (m.name ?? '').trim();
+    const r = newDatabaseScript(nd, name, m.values ?? {});
+    if (m.type === 'change') return post({ type: 'script', ...r });
+    if (!r.sql) return;
+    if (m.type === 'open') return openScript(conn, conn.database || d.defaultDb, r.sql);
+    if (m.type !== 'create' || conn.readOnly) return;
+    const ok = await vscode.window.showWarningMessage(`Create database ${name} on ${conn.name}?`, { modal: true, detail: r.sql }, 'Create');
+    if (!ok) return;
+    try {
+      post({ type: 'status', text: 'Creating…' });
+      await d.run(conn, await conns.password(conn.name), r.sql);
+      log.info(`newDatabase: ${conn.name} / ${name}`);
+      explorer.refresh();
+      vscode.window.showInformationMessage(`Database ${name} created on ${conn.name}.`);
+      panel.dispose();
+    } catch (e) {
+      log.error(`newDatabase execute - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      post({ type: 'status', text: `Create failed: ${errMsg(e)}`, error: true });
+      vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
+    }
+  });
 }
 
 /** KILL session (SQL Server) setelah konfirmasi; id dari input, divalidasi angka */

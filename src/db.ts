@@ -255,12 +255,31 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
   return { sql: sql && ddl.wrap ? ddl.wrap(sql) : sql, errors: [], count: steps.length, steps };
 }
 
-/** New Database: nama lalu pilihan bertahap (quick pick), hasilnya script CREATE DATABASE */
+/** isian form New Database; choice = daftar yang bisa dicari (value '' = default server), group = bagian yang bisa dilipat */
+export interface DbField {
+  key: string;
+  label: string;
+  kind: 'text' | 'number' | 'choice';
+  group?: string;
+  hint?: string;
+  /** pilihan choice; run = jalankan query di koneksi (semua baris, mis. 5500 collation) */
+  items?(run: (sql: string) => Promise<{ resultSets: { rows: unknown[][] }[] }>): Promise<{ value: string; label?: string }[]>;
+}
+
+/** New Database (form tab): isian per database lalu script CREATE DATABASE */
 export interface NewDatabase {
   maxName: number;
-  /** items: run = jalankan query di koneksi (mis. daftar collation); value '' = default server */
-  options: { key: string; title: string; items(run: (sql: string) => Promise<{ resultSets: { rows: unknown[][] }[] }>): Promise<{ label: string; value: string; description?: string }[]> }[];
-  script(name: string, picks: Record<string, string>): string;
+  fields: DbField[];
+  /** pesan error isian; kosong = valid */
+  check(values: Record<string, string>): string[];
+  script(name: string, values: Record<string, string>): string;
+}
+
+/** script New Database atau daftar error (script kosong bila ada error) */
+export function newDatabaseScript(nd: NewDatabase, name: string, values: Record<string, string>): { sql: string; errors: string[] } {
+  const v = Object.fromEntries(Object.entries(values).map(([k, x]) => [k, x.trim()]));
+  const errors = [checkDbName(name, nd.maxName), ...nd.check(v)].filter((e): e is string => !!e);
+  return errors.length ? { sql: '', errors } : { sql: nd.script(name.trim(), v), errors: [] };
 }
 
 /** validasi nama database baru; undefined = valid */

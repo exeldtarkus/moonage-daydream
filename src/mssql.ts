@@ -265,24 +265,46 @@ ORDER BY c.column_id;`,
 };
 
 const RECOVERY = ['SIMPLE', 'FULL', 'BULK_LOGGED'];
+const MB = (label: string, v?: string) => (v && !/^[1-9]\d*$/.test(v) ? `${label}: whole number of MB, at least 1` : undefined);
+/** klausa file: NAME wajib; FILENAME dari folder + nama database; ukuran / growth dalam MB */
+function fileSpec(name: string, ext: string, dir?: string, size?: string, growth?: string): string | undefined {
+  if (!dir && !size && !growth) return undefined;
+  const sep = dir?.includes('\\') ? '\\' : '/';
+  return `(NAME = ${q(name)}${dir ? `, FILENAME = ${lit(`${dir.replace(/[\\/]+$/, '')}${sep}${name}${ext}`)}` : ''}${size ? `, SIZE = ${size}MB` : ''}${growth ? `, FILEGROWTH = ${growth}MB` : ''})`;
+}
 
-/** New Database SQL Server: collation dari server, recovery model; ukuran / lokasi file = default server (model database) */
+/** New Database SQL Server: collation, recovery model, owner, file data / log (kosong = default server / model database) */
 export const msNewDatabase: NewDatabase = {
   maxName: 128,
-  options: [
-    { key: 'collation', title: 'Collation', async items(run) {
+  fields: [
+    { key: 'collation', label: 'Collation', kind: 'choice', async items(run) {
       const rows = (await run('SELECT name, description FROM sys.fn_helpcollations() ORDER BY name;')).resultSets[0]?.rows ?? [];
-      return [{ label: '(server default)', value: '' }, ...rows.map(([name, description]) => ({ label: String(name), value: String(name), description: String(description ?? '') }))];
+      return [{ value: '', label: '(server default)' }, ...rows.map(([name, description]) => ({ value: String(name), label: String(description ?? '') }))];
     } },
-    { key: 'recovery', title: 'Recovery model', items: async () => [{ label: '(model database default)', value: '' }, ...RECOVERY.map((r) => ({ label: r, value: r }))] },
+    { key: 'recovery', label: 'Recovery model', kind: 'choice', items: async () => [{ value: '', label: '(model database default)' }, ...RECOVERY.map((value) => ({ value }))] },
+    { key: 'owner', label: 'Owner', kind: 'choice', async items(run) {
+      const rows = (await run(`SELECT name, type_desc FROM sys.server_principals WHERE type IN ('S', 'U', 'E', 'X') AND is_disabled = 0 AND name NOT LIKE '##%' ORDER BY name;`)).resultSets[0]?.rows ?? [];
+      return [{ value: '', label: '(current login)' }, ...rows.map(([name, kind]) => ({ value: String(name), label: String(kind ?? '') }))];
+    } },
+    { key: 'dataSize', label: 'Data file size (MB)', kind: 'number', group: 'Files', hint: 'server default' },
+    { key: 'dataGrowth', label: 'Data file growth (MB)', kind: 'number', group: 'Files', hint: 'server default' },
+    { key: 'dataPath', label: 'Data file folder', kind: 'text', group: 'Files', hint: 'server default data folder' },
+    { key: 'logSize', label: 'Log file size (MB)', kind: 'number', group: 'Files', hint: 'server default' },
+    { key: 'logGrowth', label: 'Log file growth (MB)', kind: 'number', group: 'Files', hint: 'server default' },
+    { key: 'logPath', label: 'Log file folder', kind: 'text', group: 'Files', hint: 'server default log folder' },
   ],
-  script(name, picks) {
-    const db = q(name.trim());
-    const collation = picks.collation ?? '';
-    const recovery = picks.recovery ?? '';
-    if (collation && !/^\w+$/.test(collation)) throw new Error(`Invalid collation: ${collation}`);
-    if (recovery && !RECOVERY.includes(recovery)) throw new Error(`Invalid recovery model: ${recovery}`);
-    return [`CREATE DATABASE ${db}${collation ? ` COLLATE ${collation}` : ''};`, ...(recovery ? [`ALTER DATABASE ${db} SET RECOVERY ${recovery};`] : [])].join('\n');
+  check: (v) => [
+    MB('Data file size', v.dataSize), MB('Data file growth', v.dataGrowth), MB('Log file size', v.logSize), MB('Log file growth', v.logGrowth),
+    v.collation && !/^\w+$/.test(v.collation) ? `Invalid collation: ${v.collation}` : undefined,
+    v.recovery && !RECOVERY.includes(v.recovery) ? `Invalid recovery model: ${v.recovery}` : undefined,
+  ].filter((e): e is string => !!e),
+  script(name, v) {
+    const db = q(name);
+    const data = fileSpec(name, '.mdf', v.dataPath, v.dataSize, v.dataGrowth);
+    const log = fileSpec(`${name}_log`, '.ldf', v.logPath, v.logSize, v.logGrowth);
+    const create = [`CREATE DATABASE ${db}`, ...(data ? [`  ON ${data}`] : []), ...(log ? [`  LOG ON ${log}`] : []), ...(v.collation ? [`  COLLATE ${v.collation}`] : [])];
+    return [`${create.join('\n')};`, ...(v.recovery ? [`ALTER DATABASE ${db} SET RECOVERY ${v.recovery};`] : []),
+      ...(v.owner ? [`ALTER AUTHORIZATION ON DATABASE::${db} TO ${q(v.owner)};`] : [])].join('\n');
   },
 };
 
