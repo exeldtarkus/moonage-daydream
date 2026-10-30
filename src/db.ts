@@ -121,8 +121,8 @@ export interface ColumnDdl {
   add(obj: DbObject, col: ColumnDef): string;
   edit(obj: DbObject, old: ColumnDef, next: ColumnDef): string;
   drop(obj: DbObject, name: string): string;
-  /** validasi tambahan per database (old kosong = kolom baru); undefined = valid */
-  check?(c: ColumnDef, old?: ColumnDef): string | undefined;
+  /** validasi tambahan per database (old kosong = kolom baru, create = New Table); undefined = valid */
+  check?(c: ColumnDef, old?: ColumnDef, create?: boolean): string | undefined;
   /** SQLite: ubah tipe / NULL / default lewat rebuild tabel (changed memakai nama kolom asal); dijalankan sebelum langkah lain */
   rebuild?(obj: DbObject, original: ColumnRow[], changed: ColumnDef[]): string;
   /** bungkus seluruh script (mis. satu transaksi) */
@@ -151,10 +151,12 @@ export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): {
   if (!obj.name.trim()) errors.push('Table name is required');
   if (!cols.length) errors.push('Add at least one column');
   cols.forEach((c, i) => {
-    const e = checkColumn(c) ?? checkType(c.type, ddl.types) ?? ddl.check?.(c);
+    const e = checkColumn(c) ?? checkType(c.type, ddl.types) ?? ddl.check?.(c, undefined, true);
     if (e) errors.push(`${c.name || `column ${i + 1}`}: ${e}`);
+    else if (c.ai && !ddl.aiTypes) errors.push(`${c.name}: auto increment is not supported here`);
+    else if (c.fk && !ddl.fkActions) errors.push(`${c.name}: foreign keys are not supported here`);
     else if (c.ai && ddl.aiTypes && !ddl.aiTypes.includes(splitType(c.type, ddl.types).base)) errors.push(`${c.name}: auto increment needs an integer type (${ddl.aiTypes.join(', ')})`);
-    if (c.fk && (!c.fk.table || !c.fk.column)) errors.push(`${c.name}: choose the referenced table and column`);
+    if (c.fk && ddl.fkActions && (!c.fk.table || !c.fk.column)) errors.push(`${c.name}: choose the referenced table and column`);
   });
   if (cols.filter((c) => c.ai).length > 1) errors.push('Only one auto increment column per table');
   const seen = new Set<string>();
@@ -310,12 +312,16 @@ export interface NewDatabase {
   /** pesan error isian; kosong = valid */
   check(values: Record<string, string>): string[];
   script(name: string, values: Record<string, string>): string;
+  /** jalankan script dengan database baru sebagai database koneksi (MongoDB: database dibuat lewat koleksi pertama) */
+  useNewDatabase?: boolean;
+  /** validasi nama database tambahan; undefined = valid */
+  checkName?(name: string): string | undefined;
 }
 
 /** script New Database atau daftar error (script kosong bila ada error) */
 export function newDatabaseScript(nd: NewDatabase, name: string, values: Record<string, string>): { sql: string; errors: string[] } {
   const v = Object.fromEntries(Object.entries(values).map(([k, x]) => [k, x.trim()]));
-  const errors = [checkDbName(name, nd.maxName), ...nd.check(v)].filter((e): e is string => !!e);
+  const errors = [checkDbName(name, nd.maxName) ?? nd.checkName?.(name.trim()), ...nd.check(v)].filter((e): e is string => !!e);
   return errors.length ? { sql: '', errors } : { sql: nd.script(name.trim(), v), errors: [] };
 }
 

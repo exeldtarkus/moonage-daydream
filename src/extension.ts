@@ -820,8 +820,10 @@ function newTable(n?: Node) {
         }
       }
       const intType = ddl.aiTypes?.find((x) => /^int(eger)?$/.test(x)) ?? ddl.newType;
+      // tanpa auto increment (MongoDB): baris awal _id objectId
+      const first = !ddl.aiTypes && ddl.types.some((x) => x.name === 'objectId') ? { name: '_id', type: 'objectId' } : { name: 'id', type: intType };
       return post({ type: 'load', cols: [], info: { columns: [], rows: [] }, types: ddl.types, newType: ddl.newType, tables, schemas, defaultSchema: d.defaultSchema,
-        fkActions: ddl.fkActions ?? [], rows: [{ name: 'id', type: intType, nullable: false, default: '', pk: true, ai: !!ddl.aiTypes }] });
+        fkActions: ddl.fkActions ?? [], ai: !!ddl.aiTypes, fk: !!ddl.fkActions, rows: [{ ...first, nullable: false, default: '', pk: true, ai: !!ddl.aiTypes }] });
     }
     if (m.type === 'fkColumns') {
       try {
@@ -896,13 +898,15 @@ function newDatabase(n?: Node) {
     const r = newDatabaseScript(nd, name, m.values ?? {});
     if (m.type === 'change') return post({ type: 'script', ...r });
     if (!r.sql) return;
-    if (m.type === 'open') return openScript(conn, conn.database || d.defaultDb, r.sql);
+    // MongoDB: script jalan di database baru (database dibuat bersama koleksi pertama)
+    const target = nd.useNewDatabase ? { ...conn, database: name } : conn;
+    if (m.type === 'open') return openScript(conn, target.database || d.defaultDb, r.sql);
     if (m.type !== 'create' || conn.readOnly) return;
     const ok = await vscode.window.showWarningMessage(`Create database ${name} on ${conn.name}?`, { modal: true, detail: r.sql }, 'Create');
     if (!ok) return;
     try {
       post({ type: 'status', text: 'Creating…' });
-      await d.run(conn, await conns.password(conn.name), r.sql);
+      await d.run(target, await conns.password(conn.name), r.sql);
       log.info(`newDatabase: ${conn.name} / ${name}`);
       explorer.refresh();
       vscode.window.showInformationMessage(`Database ${name} created on ${conn.name}.`);

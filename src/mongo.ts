@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { BSON, Binary, Decimal128, Double, Int32, Long, MongoClient, ObjectId } from 'mongodb';
 import type { AbstractCursor, Db, Document, MongoClientOptions } from 'mongodb';
 import { MAX_ROWS, connectMs, typedOptions } from './db';
-import type { ColumnDdl, ConnectionInfo, Driver, QueryResult, ResultSet, TypeSpec } from './db';
+import type { ColumnDdl, ConnectionInfo, Driver, NewColumn, NewDatabase, QueryResult, ResultSet, TypeSpec } from './db';
 
 /** satu perintah shell yang direkam: db.<collection>.<method>(args) atau db.<method>(args), plus chain cursor */
 export interface Op {
@@ -291,12 +291,39 @@ export const mongoColumnDdl: ColumnDdl = {
     if (steps.length) return steps.join('\n');
     return next.nullable !== old.nullable || d !== (old.default?.trim() || '') ? `// ${key(old.name)}: MongoDB has no constraint, documents unchanged` : `// no changes to ${key(old.name)}`;
   },
-  check(c, old) {
+  // New Collection: createCollection + validator $jsonSchema (Not null = required); _id tidak ditulis (selalu ada); schema diabaikan
+  create(o, cols) {
+    const fields = cols.filter((c) => c.name !== '_id');
+    const required = fields.filter((c) => !c.nullable).map((c) => key(c.name));
+    const opts = !fields.length ? '' : `, { validator: { $jsonSchema: { bsonType: "object", ${required.length ? `required: [${required.join(', ')}], ` : ''}properties: {
+${fields.map((c) => `  ${key(c.name)}: { bsonType: ${key(c.type)} }`).join(',\n')}
+} } } }`;
+    return [`db.createCollection(${key(o.name)}${opts});`,
+      ...fields.filter((c) => c.unique).map((c) => `${coll(o)}.createIndex({ ${key(c.name)}: 1 }, { unique: true, name: ${key(`UQ_${o.name}_${c.name}`)} });`)].join('\n');
+  },
+  check(c, old, create) {
     if (c.name.includes('.') || c.name.startsWith('$')) return 'field name cannot contain "." or start with "$"';
+    if (create) {
+      if (c.default) return 'MongoDB has no column defaults (set values when inserting)';
+      return (c as NewColumn).pk && c.name !== '_id' ? 'only _id is the primary key in MongoDB' : undefined;
+    }
     if (old && c.type !== old.type && !CONVERTIBLE.includes(c.type)) return `cannot convert existing values to ${c.type} (use ${CONVERTIBLE.slice(0, -1).join(', ')} or ${CONVERTIBLE.at(-1)})`;
     if (!c.nullable && !c.default && (!old || old.nullable)) return NOT_NULL_DEFAULT;
     return undefined;
   },
+};
+
+/** New Database: MongoDB membuat database saat koleksi pertama dibuat; script dijalankan di database baru */
+export const mongoNewDatabase: NewDatabase = {
+  maxName: 63,
+  useNewDatabase: true,
+  fields: [{ key: 'collection', label: 'First collection', kind: 'text', hint: 'MongoDB creates the database with its first collection' }],
+  checkName: (name) => (/[/\\. "$*<>:|?]/.test(name) ? 'Database name cannot contain / \\ . " $ * < > : | ? or spaces' : undefined),
+  check: (v) => [
+    !v.collection ? 'First collection is required'
+      : v.collection.startsWith('system.') || v.collection.includes('$') ? 'Collection name cannot start with "system." or contain "$"' : '',
+  ].filter(Boolean),
+  script: (_name, v) => `db.createCollection(${key(v.collection)});`,
 };
 
 export const mongoDriver: Driver = {
@@ -309,6 +336,7 @@ export const mongoDriver: Driver = {
   testSql: 'db.getMongo()',
   transactions: false,
   columnDdl: mongoColumnDdl,
+  newDatabase: mongoNewDatabase,
   explain: (s, mode) => `${s}.explain(${JSON.stringify(mode === 'estimated' ? 'queryPlanner' : 'executionStats')})`,
   autoLimitable: (stmts) => {
     if (stmts.length !== 1) return false;

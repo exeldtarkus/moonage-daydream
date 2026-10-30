@@ -738,12 +738,12 @@
         },
         {
           "command": "moonageDaydream.newDatabase",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.(mssql|live)\\.(on|off)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.(mssql|live))?\\.(on|off)$/",
           "group": "2_db@1"
         },
         {
           "command": "moonageDaydream.newTable",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(db\\.(mssql|live)|ms\\.tables|folder\\.table)$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(db(\\.(mssql|live))?|ms\\.tables|folder\\.table)$/",
           "group": "1_db@2"
         },
         {

@@ -170,7 +170,7 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
 const vscode = acquireVsCodeApi();
 const readOnly = ${readOnly ? 'true' : 'false'};
 const mode = '${mode}';
-let tables = [], schemas = [], fkActions = [], fkCols = {}, openFk = -1;
+let tables = [], schemas = [], fkActions = [], fkCols = {}, openFk = -1, canAi = true, canFk = true;
 const fkKey = (fk) => fk.schema + '.' + fk.table;
 const CUSTOM = '\\u0000custom';
 let orig = [], rows = [], info = { columns: [], rows: [] }, types = [], newType = '', timer;
@@ -212,8 +212,8 @@ function attrs(extra) {
 // New Table: chip atribut PK / AI / UQ / FK (FK membuka baris editor di bawahnya)
 function chips(r, i, lock) {
   const chip = (k, label, on, title) => '<button class="chip' + (k === 'fk' ? ' fk' : '') + '" data-chip="' + k + '" data-i="' + i + '" aria-pressed="' + !!on + '" title="' + title + '"' + lock + '>' + label + '</button>';
-  return chip('pk', 'PK', r.pk, 'Primary key') + chip('ai', 'AI', r.ai, 'Auto increment / identity') + chip('uq', 'UQ', r.unique, 'Unique')
-    + chip('fk', r.fk && r.fk.table ? 'FK → ' + h(r.fk.table + '.' + (r.fk.column || '?')) : 'FK…', !!r.fk, 'Foreign key');
+  return chip('pk', 'PK', r.pk, 'Primary key') + (canAi ? chip('ai', 'AI', r.ai, 'Auto increment / identity') : '') + chip('uq', 'UQ', r.unique, 'Unique')
+    + (canFk ? chip('fk', r.fk && r.fk.table ? 'FK → ' + h(r.fk.table + '.' + (r.fk.column || '?')) : 'FK…', !!r.fk, 'Foreign key') : '');
 }
 function fkRow(r, i) {
   const fk = r.fk || {};
@@ -344,6 +344,8 @@ window.addEventListener('message', ({ data: m }) => {
     rows = mode === 'create' ? m.rows : orig.map((c) => ({ ...c, orig: c.name }));
     if (mode === 'create') {
       tables = m.tables || []; schemas = m.schemas || []; fkActions = m.fkActions || [];
+      // driver tanpa auto increment / foreign key (MongoDB): chip AI / FK disembunyikan
+      canAi = m.ai !== false; canFk = m.fk !== false;
       $('tableSchema').innerHTML = schemas.map((x) => '<option' + (x === m.defaultSchema ? ' selected' : '') + '>' + h(x) + '</option>').join('');
       $('tableSchema').hidden = !schemas.length;
     }
