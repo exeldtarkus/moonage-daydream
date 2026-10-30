@@ -161,17 +161,28 @@ export function dashboardSummary(d: {
   leader: string; peers: string[]; members: Awaited<ReturnType<ConsulClient['members']>>; services: Record<string, string[]>;
   nodes: Awaited<ReturnType<ConsulClient['nodes']>>; health: Health;
 }) {
-  const count = (checks: Health, status: string) => checks.filter((c) => c.Status === status).length;
+  const healthByService = new Map<string, { passing: number; warning: number; critical: number }>();
+  let totalPassing = 0, totalWarning = 0, totalCritical = 0;
+  for (const c of d.health) {
+    let s = healthByService.get(c.ServiceName);
+    if (!s) {
+      s = { passing: 0, warning: 0, critical: 0 };
+      healthByService.set(c.ServiceName, s);
+    }
+    if (c.Status === 'passing') { s.passing++; totalPassing++; }
+    else if (c.Status === 'warning') { s.warning++; totalWarning++; }
+    else if (c.Status === 'critical') { s.critical++; totalCritical++; }
+  }
   const bad = d.health.filter((c) => c.Status !== 'passing');
   return {
     leader: d.leader, peers: d.peers.length,
     members: d.members.map((m) => ({ name: m.Name, address: m.Addr, status: MEMBER[m.Status] ?? String(m.Status) })),
     services: Object.entries(d.services).sort(([a], [b]) => a.localeCompare(b)).map(([name, tags]) => {
-      const own = d.health.filter((c) => c.ServiceName === name);
-      return { name, tags: tags.join(', '), passing: count(own, 'passing'), warning: count(own, 'warning'), critical: count(own, 'critical') };
+      const s = healthByService.get(name) ?? { passing: 0, warning: 0, critical: 0 };
+      return { name, tags: tags.join(', '), passing: s.passing, warning: s.warning, critical: s.critical };
     }),
     nodes: d.nodes.map((n) => ({ name: n.Node, address: n.Address, datacenter: n.Datacenter })),
-    checks: { passing: count(d.health, 'passing'), warning: count(d.health, 'warning'), critical: count(d.health, 'critical') },
+    checks: { passing: totalPassing, warning: totalWarning, critical: totalCritical },
     // critical dulu, lalu warning
     failing: [...bad].sort((a, b) => (a.Status === b.Status ? 0 : a.Status === 'critical' ? -1 : 1))
       .map((c) => ({ node: c.Node, service: c.ServiceName, check: c.Name, status: c.Status, output: c.Output })),
@@ -179,8 +190,17 @@ export function dashboardSummary(d: {
 }
 export type DashboardSummary = ReturnType<typeof dashboardSummary>;
 
-/** satu sampel dashboard (paralel); dipakai panel Dashboard */
-export async function dashboardData(c: ConsulClient): Promise<DashboardSummary> {
-  const [leader, peers, members, services, nodes, health] = await Promise.all([c.leader(), c.peers(), c.members(), c.services(), c.nodes(), c.health()]);
-  return dashboardSummary({ leader, peers, members, services, nodes, health });
+/** satu sampel dashboard (paralel); endpoint yang gagal (mis. ACL 403) tidak menyembunyikan yang lain, error dilaporkan di `errors` */
+export async function dashboardData(c: ConsulClient): Promise<DashboardSummary & { errors: string[] }> {
+  const errors: string[] = [];
+  const safe = <T>(name: string, p: Promise<T>, def: T) => p.catch((e: unknown) => {
+    driverLog.error(`consul dashboardData ${name} - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+    errors.push(`${name}: ${e instanceof Error ? e.message : e}`);
+    return def;
+  });
+  const [leader, peers, members, services, nodes, health] = await Promise.all([
+    safe('leader', c.leader(), ''), safe('peers', c.peers(), []), safe('members', c.members(), []),
+    safe('services', c.services(), {}), safe('nodes', c.nodes(), []), safe('health', c.health(), []),
+  ]);
+  return { ...dashboardSummary({ leader, peers, members, services, nodes, health }), errors };
 }

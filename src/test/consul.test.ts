@@ -159,11 +159,42 @@ test('consul dashboard: leader / peers, member status, health per service, check
   assert.equal(s.nodes.length, 1);
 });
 
-test('consul dashboard panel: refresh choices, pause, sections, escaped title', async () => {
+test('consul dashboard data: an endpoint without ACL permission does not hide the rest, error is reported', async () => {
+  const { dashboardData } = await import('../consul');
+  const { driverLog } = await import('../log');
+  const logged: string[] = [];
+  const oldLog = driverLog.error;
+  driverLog.error = (m) => logged.push(m);
+  try {
+    const { f } = fakeFetch({
+      'GET /v1/status/leader': { body: '"10.0.0.1:8300"' },
+      'GET /v1/status/peers': { body: ['10.0.0.1:8300'] },
+      'GET /v1/agent/members': { status: 403, body: 'Permission denied' },
+      'GET /v1/catalog/services': { body: { web: [] } },
+      'GET /v1/catalog/nodes': { body: [] },
+      'GET /v1/health/state/any': { body: [] },
+    });
+    const d = await dashboardData(new ConsulClient(conn, 'tok', f));
+    assert.equal(d.leader, '10.0.0.1:8300');
+    assert.deepEqual(d.services.map((s) => s.name), ['web']);
+    assert.deepEqual(d.members, []);
+    assert.equal(d.errors.length, 1);
+    assert.match(d.errors[0], /^members: No permission/);
+    assert.equal(logged.length, 1, 'logged as error');
+  } finally {
+    driverLog.error = oldLog;
+  }
+});
+
+test('consul dashboard panel: KV sections, split layout, editor, save, delete, new key', async () => {
   const { consulDashboardHtml } = await import('../consulDashHtml');
   const html = consulDashboardHtml('csp', 'consul <prod>');
-  for (const s of ['5', '10', '30', '60']) assert.ok(html.includes(`<option value="${s}000"`), `refresh ${s}s`);
-  assert.ok(html.includes('id="pause"'));
-  for (const id of ['cards', 'services', 'failing', 'nodes', 'members']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('id="btnRefresh"'));
+  assert.ok(html.includes('id="filter"'));
+  for (const id of ['kvBreadcrumb', 'kvList', 'valEditor', 'btnSave', 'btnDelete', 'btnNewKey', 'paneEmpty', 'paneEditor', 'paneNewKey', 'cluster', 'failing']) {
+    assert.ok(html.includes(`id="${id}"`), id);
+  }
   assert.ok(html.includes('consul &lt;prod&gt;') && !html.includes('consul <prod>'));
+  // script panel harus valid (mis. escape \\n di template literal)
+  assert.doesNotThrow(() => new Function(html.split(/<script nonce="[^"]*">/)[1].split('</script>')[0]));
 });

@@ -14,7 +14,7 @@ export async function consulClient(conns: Connections, c: ConnectionInfo): Promi
 }
 
 /** file backup KV (format consul kv export) di storage extension; path dikembalikan untuk pesan + restore */
-function backupWriter(ctx: vscode.ExtensionContext, conn: string, key: string) {
+export function backupWriter(ctx: vscode.ExtensionContext, conn: string, key: string) {
   return async (json: string) => {
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
     const dir = path.join(ctx.globalStorageUri.fsPath, 'backups', 'consul', conn.replace(/[^\w.-]+/g, '_'));
