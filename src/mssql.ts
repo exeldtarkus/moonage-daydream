@@ -247,6 +247,19 @@ WHERE c.object_id = OBJECT_ID(${lit(tbl(o))})
 ORDER BY c.column_id;`,
   add: (o, c) => `ALTER TABLE ${tbl(o)} ADD ${colDef(c)}${dflt(c.default) ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(dflt(c.default)!)}` : ''};`,
   drop: (o, name) => `${dropDefault(o, name)}\nALTER TABLE ${tbl(o)} DROP COLUMN ${q(name)};`,
+  aiTypes: ['bigint', 'int', 'smallint', 'tinyint'],
+  fkActions: ['NO ACTION', 'CASCADE', 'SET NULL', 'SET DEFAULT'],
+  create(o, cols) {
+    const pk = cols.filter((c) => c.pk);
+    const lines = [
+      ...cols.map((c) => `${q(c.name)} ${c.type}${c.ai ? ' IDENTITY(1, 1)' : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}${c.default ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(c.default)}` : ''}`),
+      ...(pk.length ? [`CONSTRAINT ${q(`PK_${o.name}`)} PRIMARY KEY (${pk.map((c) => q(c.name)).join(', ')})`] : []),
+      ...cols.filter((c) => c.unique).map((c) => `CONSTRAINT ${q(`UQ_${o.name}_${c.name}`)} UNIQUE (${q(c.name)})`),
+      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${q(`FK_${o.name}_${name}`)} FOREIGN KEY (${q(name)}) REFERENCES ${q(fk!.schema)}.${q(fk!.table)} (${q(fk!.column)})`
+        + `${fk!.onDelete && fk!.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk!.onDelete}` : ''}${fk!.onUpdate && fk!.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk!.onUpdate}` : ''}`),
+    ];
+    return [`CREATE TABLE ${tbl(o)} (`, ...lines.map((l, i) => `${i ? '  , ' : '    '}${l}`), ');'].join('\n');
+  },
   edit(o, old, next) {
     const renamed = next.name !== old.name;
     const altered = next.type.trim() !== old.type || next.nullable !== old.nullable;

@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnDef, ColumnRow, ConnectionInfo, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnDef, ColumnRow, ConnectionInfo, NewColumn, createTable, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -288,6 +288,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.activityMonitor', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', ACTIVITY_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.killSession', killCommand),
     vscode.commands.registerCommand('moonageDaydream.newDatabase', newDatabase),
+    vscode.commands.registerCommand('moonageDaydream.newTable', newTable),
     vscode.commands.registerCommand('moonageDaydream.liveMonitor', liveMonitor),
     vscode.commands.registerCommand('moonageDaydream.serverInfo', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', SERVER_INFO_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.databaseInfo', (n?: Node) => n?.kind === 'db' && openScript(n.c, n.db, DB_INFO_SQL, true)),
@@ -775,6 +776,74 @@ async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
     log.error(`jobCommand ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`${action === 'start' ? 'Start' : 'Stop'} job failed: ${errMsg(e)}`);
   }
+}
+
+/** New Table per koneksi / database (dibuka lagi = tab yang sama di-reveal) */
+const newTablePanels = new Map<string, vscode.WebviewPanel>();
+
+/** klik kanan database / folder Tables -> New Table…: grid kolom + chip PK / AI / UQ / FK, script CREATE TABLE live, Create (konfirmasi) */
+function newTable(n?: Node) {
+  if (n?.kind !== 'db' && !(n?.kind === 'mfolder' && n.folder === 'tables')) return;
+  const db = n.db;
+  if (!db || !drivers[n.c.type].columnDdl?.create) return;
+  const conn = n.c;
+  const d = drivers[conn.type];
+  const ddl = d.columnDdl!;
+  const key = `${conn.name}\u0000${db}`;
+  const open = newTablePanels.get(key);
+  if (open) return open.reveal();
+  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.newTable', `New Table: ${db}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
+  newTablePanels.set(key, panel);
+  panel.onDidDispose(() => newTablePanels.delete(key));
+  panel.webview.html = columnsHtml(panel.webview.cspSource, { conn: conn.name, db, table: 'New table' }, !!conn.readOnly, 'create');
+  const c = { ...conn, database: db };
+  const post = (m: unknown) => void panel.webview.postMessage(m);
+  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: NewColumn[]; table?: { schema: string; name: string }; schema?: string; name?: string }) => {
+    if (m.type === 'ready') {
+      let tables: { schema: string; name: string }[] = [];
+      try {
+        tables = await d.objects(c, await conns.password(conn.name), db, 'table');
+      } catch (e) {
+        // daftar tabel untuk FK gagal: tabel tetap bisa dibuat, FK tidak bisa dipilih
+        log.error(`newTable tables - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        post({ type: 'status', text: `Could not list tables for foreign keys: ${errMsg(e)}`, error: true });
+      }
+      const schemas = [...new Set([d.defaultSchema, ...tables.map((x) => x.schema)].filter(Boolean))].sort();
+      const intType = ddl.aiTypes?.find((x) => /^int(eger)?$/.test(x)) ?? ddl.newType;
+      return post({ type: 'load', cols: [], info: { columns: [], rows: [] }, types: ddl.types, newType: ddl.newType, tables, schemas, defaultSchema: d.defaultSchema,
+        fkActions: ddl.fkActions ?? [], rows: [{ name: 'id', type: intType, nullable: false, default: '', pk: true, ai: !!ddl.aiTypes }] });
+    }
+    if (m.type === 'fkColumns') {
+      try {
+        const cols = await d.columns(c, await conns.password(conn.name), db, { schema: m.schema ?? '', name: m.name ?? '' });
+        return post({ type: 'fkColumns', key: `${m.schema ?? ''}.${m.name}`, columns: cols.map((x) => x.name) });
+      } catch (e) {
+        log.error(`newTable fkColumns - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${m.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        return post({ type: 'status', text: `Could not read columns of ${m.name}: ${errMsg(e)}`, error: true });
+      }
+    }
+    const t = { schema: m.table?.schema ?? d.defaultSchema, name: m.table?.name ?? '' };
+    const r = createTable(ddl, t, m.rows ?? []);
+    const label = `${t.schema ? `${t.schema}.` : ''}${t.name.trim()}`;
+    if (m.type === 'change') return post({ type: 'script', ...r, count: r.sql ? 1 : 0, steps: r.sql ? [{ kind: 'create', column: label, sql: r.sql }] : [] });
+    if (!r.sql) return;
+    if (m.type === 'open') return openScript(conn, db, r.sql);
+    if (m.type !== 'execute' || conn.readOnly) return;
+    const ok = await vscode.window.showWarningMessage(`Create table ${label} on ${conn.name} / ${db}?`, { modal: true, detail: r.sql }, 'Create');
+    if (!ok) return;
+    try {
+      post({ type: 'status', text: 'Creating…' });
+      await d.run(c, await conns.password(conn.name), r.sql);
+      log.info(`newTable: ${conn.name} / ${db} / ${label}`);
+      explorer.refresh();
+      vscode.window.showInformationMessage(`Table ${label} created on ${conn.name} / ${db}.`);
+      panel.dispose();
+    } catch (e) {
+      log.error(`newTable execute - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      post({ type: 'status', text: `Create failed: ${errMsg(e)}`, error: true });
+      vscode.window.showErrorMessage(`New Table failed: ${errMsg(e)}`);
+    }
+  });
 }
 
 /** form New Database per koneksi (dibuka lagi = tab yang sama di-reveal) */

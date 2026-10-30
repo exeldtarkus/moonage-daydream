@@ -127,6 +127,43 @@ export interface ColumnDdl {
   rebuild?(obj: DbObject, original: ColumnRow[], changed: ColumnDef[]): string;
   /** bungkus seluruh script (mis. satu transaksi) */
   wrap?(sql: string): string;
+  /** New Table: CREATE TABLE lengkap (kolom, PK, UQ, FK); tidak ada = menu New Table tidak tampil */
+  create?(obj: DbObject, cols: NewColumn[]): string;
+  /** tipe yang boleh auto increment / identity */
+  aiTypes?: string[];
+  /** pilihan ON DELETE / ON UPDATE foreign key (pertama = default, tidak ditulis) */
+  fkActions?: string[];
+}
+
+/** kolom New Table: atribut PK / AI (auto increment / identity) / UQ / FK satu kolom */
+export type NewColumn = ColumnDef & {
+  pk?: boolean;
+  ai?: boolean;
+  unique?: boolean;
+  fk?: { schema: string; table: string; column: string; onDelete?: string; onUpdate?: string };
+};
+
+/** New Table: validasi lalu script CREATE TABLE (kosong bila ada error); kolom PK dipaksa NOT NULL */
+export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): { sql: string; errors: string[] } {
+  const cols = rows.filter((r) => r.name.trim() || r.type.trim()).map((r): NewColumn => ({ ...r, name: r.name.trim(), type: r.type.trim(),
+    nullable: r.nullable && !r.pk, default: r.ai ? undefined : r.default?.trim() || undefined }));
+  const errors: string[] = [];
+  if (!obj.name.trim()) errors.push('Table name is required');
+  if (!cols.length) errors.push('Add at least one column');
+  cols.forEach((c, i) => {
+    const e = checkColumn(c) ?? checkType(c.type, ddl.types) ?? ddl.check?.(c);
+    if (e) errors.push(`${c.name || `column ${i + 1}`}: ${e}`);
+    else if (c.ai && ddl.aiTypes && !ddl.aiTypes.includes(splitType(c.type, ddl.types).base)) errors.push(`${c.name}: auto increment needs an integer type (${ddl.aiTypes.join(', ')})`);
+    if (c.fk && (!c.fk.table || !c.fk.column)) errors.push(`${c.name}: choose the referenced table and column`);
+  });
+  if (cols.filter((c) => c.ai).length > 1) errors.push('Only one auto increment column per table');
+  const seen = new Set<string>();
+  for (const c of cols) {
+    const k = c.name.toLowerCase();
+    if (k && seen.has(k)) errors.push(`Duplicate column name: ${c.name}`);
+    seen.add(k);
+  }
+  return errors.length || !ddl.create ? { sql: '', errors } : { sql: ddl.create({ ...obj, name: obj.name.trim() }, cols), errors: [] };
 }
 
 /**

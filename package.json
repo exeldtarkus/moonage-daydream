@@ -187,6 +187,12 @@
         "icon": "$(pulse)"
       },
       {
+        "command": "moonageDaydream.newTable",
+        "title": "New Table…",
+        "category": "Moonage Daydream",
+        "icon": "$(add)"
+      },
+      {
         "command": "moonageDaydream.newDatabase",
         "title": "New Database…",
         "category": "Moonage Daydream",
@@ -736,6 +742,11 @@
           "group": "2_db@1"
         },
         {
+          "command": "moonageDaydream.newTable",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(db\\.mssql|ms\\.tables)$/",
+          "group": "1_db@2"
+        },
+        {
           "command": "moonageDaydream.newDatabase",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^ms\\.databases$/",
           "group": "1_db@1"
@@ -867,6 +878,10 @@
         },
         {
           "command": "moonageDaydream.newDatabase",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.newTable",
           "when": "false"
         },
         {

@@ -5,9 +5,12 @@ import { esc } from './resultsHtml';
  * editor Columns (klik kanan tabel), seperti DBeaver: grid kolom bisa diedit (nama, tipe dari dropdown + ukuran, NOT NULL, default,
  * tambah / hapus), daftar Pending changes berisi langkah SQL yang akan dijalankan; Execute / Open in SQL Editor / Revert.
  * ext -> page: { type: 'load', cols, info, types } | { type: 'script', sql, errors, count, steps } | { type: 'status', text, error? }
- * page -> ext: { type: 'ready' | 'refresh' } | { type: 'change' | 'execute' | 'open', rows }
+ * page -> ext: { type: 'ready' | 'refresh' } | { type: 'change' | 'execute' | 'open', rows, table? }
+ * mode create (New Table): load juga membawa rows awal, tables (untuk FK), schemas, fkActions; ext -> page { type: 'fkColumns', key, columns };
+ * page -> ext { type: 'fkColumns', schema, table }
  */
-export function columnsHtml(cspSource: string, t: { conn: string; db: string; table: string }, readOnly: boolean): string {
+export function columnsHtml(cspSource: string, t: { conn: string; db: string; table: string }, readOnly: boolean, mode: 'edit' | 'create' = 'edit'): string {
+  const create = mode === 'create';
   const nonce = randomBytes(16).toString('base64');
   return `<!DOCTYPE html>
 <html>
@@ -87,6 +90,17 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
     color: var(--muted); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); }
   .badge.key { color: var(--vscode-symbolIcon-keyForeground, var(--changed)); border-color: currentColor; }
   .badge.gen { color: var(--accent); border-color: currentColor; }
+  .chip { height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; color: var(--muted); background: transparent;
+    border: 1px solid color-mix(in srgb, var(--muted) 45%, transparent); }
+  .chip[aria-pressed="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border-color: transparent; }
+  .chip.fk[aria-pressed="true"] { background: var(--vscode-charts-purple, #8a5cc2); }
+  .chip:disabled { opacity: .4; }
+  tr.fkrow td { background: var(--raise); padding: 8px 8px 10px 44px; }
+  .fkedit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .fkedit label { color: var(--muted); }
+  .newname { display: flex; align-items: center; gap: 6px; font-family: var(--mono); }
+  .newname input { font-family: var(--mono); font-size: 15px; height: 30px; }
+  #tableName { min-width: 220px; font-weight: 600; }
   .x { width: 28px; padding: 0; background: transparent; color: var(--muted); }
   .x:hover:not(:disabled) { color: var(--deleted); background: transparent; }
 
@@ -131,22 +145,23 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
     <div><h1>${esc(t.table)}</h1><p class="where">${esc(t.conn)} / ${esc(t.db)}</p></div>
   </div>
+  ${create ? '<div class="newname"><select id="tableSchema" aria-label="Schema"></select><span aria-hidden="true">.</span><input type="text" id="tableName" placeholder="table_name" aria-label="Table name" spellcheck="false" autocomplete="off" autofocus></div>' : ''}
   <div class="summary" id="summary"></div>
   <div class="actions">
     ${readOnly ? '<span class="ro">Read-only connection: columns cannot be changed</span>' : ''}
-    <button id="refresh" title="Reload columns from the server and discard unsaved changes">Refresh</button>
+    ${create ? '' : '<button id="refresh" title="Reload columns from the server and discard unsaved changes">Refresh</button>'}
     ${readOnly ? '' : '<button id="addCol">Add column</button>'}
   </div>
-  <div id="status">Loading columns…</div>
+  <div id="status">${create ? '' : 'Loading columns…'}</div>
 </header>
 <div class="grid" id="grid"></div>
 <div id="splitter" role="separator" aria-orientation="horizontal" aria-label="Resize Pending changes" tabindex="0"${readOnly ? ' hidden' : ''}></div>
 <section class="pending" id="pending"${readOnly ? ' hidden' : ''}>
   <div class="head">
-    <h2>Pending changes<span class="count" id="count"></span></h2>
-    <button id="revert" title="Discard all changes">Revert</button>
+    <h2>${create ? 'Script' : 'Pending changes'}<span class="count" id="count"></span></h2>
+    ${create ? '' : '<button id="revert" title="Discard all changes">Revert</button>'}
     <button id="openSql" title="Open the script in a SQL tab without running it">Open in SQL Editor</button>
-    ${readOnly ? '' : '<button id="execute" class="primary" title="Run these steps on the server">Execute</button>'}
+    ${readOnly ? '' : `<button id="execute" class="primary" title="Run the script on the server">${create ? 'Create' : 'Execute'}</button>`}
   </div>
   <ul id="errors"></ul>
   <ol id="preview"></ol>
@@ -154,6 +169,9 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const readOnly = ${readOnly ? 'true' : 'false'};
+const mode = '${mode}';
+let tables = [], schemas = [], fkActions = [], fkCols = {}, openFk = -1;
+const fkKey = (fk) => fk.schema + '.' + fk.table;
 const CUSTOM = '\\u0000custom';
 let orig = [], rows = [], info = { columns: [], rows: [] }, types = [], newType = '', timer;
 const $ = (id) => document.getElementById(id);
@@ -166,7 +184,7 @@ function split(type) {
   return s ? { base: s.name, args: s.args === 'values' ? (m[2] || '').trim() : (m[2] || '').replace(/\\s+/g, ''), known: true } : { base: type || '', args: '', known: false };
 }
 const same = (r) => { const o = orig.find((c) => c.name === r.orig); return o && o.name === r.name && o.type === r.type && o.nullable === r.nullable && (o.default || '') === (r.default || ''); };
-const cls = (r) => (r.deleted ? 'deleted' : !r.orig ? 'added' : same(r) ? '' : 'changed');
+const cls = (r) => (r.deleted ? 'deleted' : !r.orig ? (mode === 'create' ? '' : 'added') : same(r) ? '' : 'changed');
 const hint = { length: (s) => '1-' + s.max + (s.allowMax ? ', max' : ''), precisionScale: () => 'p,s', precision: (s) => '1-' + s.max, scale: (s) => '0-' + s.max, values: () => "'a','b'" };
 
 function typeCell(r, dis) {
@@ -191,6 +209,23 @@ function attrs(extra) {
     return '<span class="badge">' + h(k) + ': ' + h(v) + '</span>';
   }).join('');
 }
+// New Table: chip atribut PK / AI / UQ / FK (FK membuka baris editor di bawahnya)
+function chips(r, i, lock) {
+  const chip = (k, label, on, title) => '<button class="chip' + (k === 'fk' ? ' fk' : '') + '" data-chip="' + k + '" data-i="' + i + '" aria-pressed="' + !!on + '" title="' + title + '"' + lock + '>' + label + '</button>';
+  return chip('pk', 'PK', r.pk, 'Primary key') + chip('ai', 'AI', r.ai, 'Auto increment / identity') + chip('uq', 'UQ', r.unique, 'Unique')
+    + chip('fk', r.fk && r.fk.table ? 'FK → ' + h(r.fk.table + '.' + (r.fk.column || '?')) : 'FK…', !!r.fk, 'Foreign key');
+}
+function fkRow(r, i) {
+  const fk = r.fk || {};
+  const opt = (v, label, sel) => '<option value="' + h(v) + '"' + (sel ? ' selected' : '') + '>' + h(label) + '</option>';
+  const cols = fkCols[fkKey(fk)] || [];
+  const act = (k) => '<select data-fk="' + k + '" aria-label="' + (k === 'onDelete' ? 'On delete' : 'On update') + '">' + fkActions.map((a) => opt(a, a, (fk[k] || fkActions[0]) === a)).join('') + '</select>';
+  return '<tr class="fkrow" data-fkrow="' + i + '"><td colspan="8"><div class="fkedit"><b>Foreign key ' + h(r.name || '') + '</b>'
+    + '<label>references <select data-fk="table" aria-label="Referenced table">' + opt('', 'choose a table…', !fk.table) + tables.map((x) => opt(x.schema + '\u0000' + x.name, (x.schema ? x.schema + '.' : '') + x.name, fk.table === x.name && fk.schema === x.schema)).join('') + '</select></label>'
+    + '<label>column <select data-fk="column" aria-label="Referenced column">' + opt('', fk.table && !cols.length ? 'loading…' : 'choose a column…', !fk.column) + cols.map((c) => opt(c, c, fk.column === c)).join('') + '</select></label>'
+    + '<label>on delete ' + act('onDelete') + '</label><label>on update ' + act('onUpdate') + '</label>'
+    + '<button data-fkact="remove" data-i="' + i + '">Remove FK</button><button data-fkact="done" data-i="' + i + '">Done</button></div></td></tr>';
+}
 function row(r, i) {
   const lock = readOnly || r.deleted ? ' disabled' : '';
   const gen = lock || (r.generated ? ' disabled' : ''); // identity / computed: hanya nama
@@ -198,22 +233,26 @@ function row(r, i) {
   return '<tr data-i="' + i + '" class="' + cls(r) + '"><td class="mark"></td><td class="num">' + (i + 1) + '</td>'
     + '<td><input type="text" class="name" data-k="name" value="' + h(r.name) + '" placeholder="column_name" aria-label="Column name"' + lock + '></td>'
     + '<td>' + typeCell(r, gen) + '</td>'
-    + '<td><label class="switch" title="NOT NULL"><input type="checkbox" data-k="notnull" aria-label="Not null"' + (r.nullable ? '' : ' checked') + gen + '><span></span></label></td>'
-    + '<td><input type="text" class="dflt" data-k="default" value="' + h(r.default) + '" placeholder="none" aria-label="Default value"' + gen + '></td>'
-    + '<td><div class="attrs">' + attrs(extra) + '</div></td>'
+    + '<td><label class="switch" title="' + (r.pk ? 'Primary key columns are NOT NULL' : 'NOT NULL') + '"><input type="checkbox" data-k="notnull" aria-label="Not null"' + (r.nullable && !r.pk ? '' : ' checked') + (gen || (r.pk ? ' disabled' : '')) + '><span></span></label></td>'
+    + '<td><input type="text" class="dflt" data-k="default" value="' + h(r.ai ? '' : r.default) + '" placeholder="' + (r.ai ? 'auto increment' : 'none') + '" aria-label="Default value"' + (gen || (r.ai ? ' disabled' : '')) + '></td>'
+    + '<td><div class="attrs">' + (mode === 'create' ? chips(r, i, lock) : attrs(extra)) + '</div></td>'
     + '<td>' + (readOnly ? '' : '<button class="x" data-del="' + i + '" title="' + (r.deleted ? 'Keep this column' : 'Delete column') + '" aria-label="' + (r.deleted ? 'Keep' : 'Delete') + ' ' + h(r.name || 'new column') + '">' + (r.deleted ? '↺' : '✕') + '</button>') + '</td></tr>';
 }
 function render() {
   $('grid').innerHTML = '<table><thead><tr><th></th><th>#</th><th>Name</th><th>Data type</th><th>Not null</th><th>Default</th><th>Attributes</th><th></th></tr></thead><tbody>'
-    + rows.map(row).join('') + '</tbody></table>';
+    + rows.map((r, i) => row(r, i) + (i === openFk ? fkRow(r, i) : '')).join('') + '</tbody></table>';
+  if (mode === 'create') { $('summary').innerHTML = '<b>' + rows.length + '</b> column' + (rows.length === 1 ? '' : 's'); return; }
   const keys = info.rows.filter((x) => x[info.columns.indexOf('primary_key')]).length;
   $('summary').innerHTML = '<b>' + orig.length + '</b> column' + (orig.length === 1 ? '' : 's') + (keys ? ', <b>' + keys + '</b> in the primary key' : '');
 }
+const table = () => (mode === 'create' ? { schema: $('tableSchema').value, name: $('tableName').value } : undefined);
+const send = (type) => vscode.postMessage({ type, rows, table: table() });
 function changed() {
   clearTimeout(timer);
-  timer = setTimeout(() => vscode.postMessage({ type: 'change', rows }), 120);
+  timer = setTimeout(() => send('change'), 120);
 }
 function onEdit(e) {
+  if (e.target.dataset.fk) return onFk(e);
   const el = e.target, tr = el.closest('tr[data-i]');
   if (!tr || !el.dataset.k) return;
   const r = rows[+tr.dataset.i], t = split(r.type), k = el.dataset.k;
@@ -232,12 +271,37 @@ function onEdit(e) {
   changed();
 }
 $('grid').addEventListener('input', onEdit);
-$('grid').addEventListener('change', (e) => { if (e.target.dataset.k === 'base') onEdit(e); });
+$('grid').addEventListener('change', (e) => { if (e.target.dataset.k === 'base' || e.target.dataset.fk) onEdit(e); });
+function onFk(e) {
+  const el = e.target, r = rows[openFk];
+  if (!r || e.type !== 'change') return;
+  const fk = r.fk = r.fk || { schema: '', table: '', column: '' };
+  if (el.dataset.fk === 'table') {
+    const [schema, name] = el.value.split('\u0000');
+    Object.assign(fk, { schema: schema || '', table: name || '', column: '' });
+    if (fk.table && !fkCols[fkKey(fk)]) vscode.postMessage({ type: 'fkColumns', schema: fk.schema, name: fk.table });
+  } else fk[el.dataset.fk] = el.value;
+  render(); changed();
+  document.querySelector('[data-fk="' + (el.dataset.fk === 'table' ? 'column' : el.dataset.fk) + '"]')?.focus();
+}
 $('grid').addEventListener('click', (e) => {
+  const c = e.target.closest('[data-chip]'), a = e.target.closest('[data-fkact]');
+  if (c || a) {
+    const i = +(c || a).dataset.i, r = rows[i];
+    if (a) { if (a.dataset.fkact === 'remove') delete r.fk; openFk = -1; }
+    else if (c.dataset.chip === 'fk') { openFk = openFk === i ? -1 : i; if (!r.fk) r.fk = { schema: '', table: '', column: '' }; }
+    else if (c.dataset.chip === 'pk') r.pk = !r.pk;
+    else if (c.dataset.chip === 'ai') { r.ai = !r.ai; if (r.ai) r.default = ''; }
+    else if (c.dataset.chip === 'uq') r.unique = !r.unique;
+    render(); changed();
+    document.querySelector(a ? '[data-chip="fk"][data-i="' + i + '"]' : openFk === i && c.dataset.chip === 'fk' ? '[data-fk="table"]' : '[data-chip="' + c.dataset.chip + '"][data-i="' + i + '"]')?.focus();
+    return;
+  }
   const b = e.target.closest('[data-del]');
   if (!b) return;
   const i = +b.dataset.del;
   if (rows[i].orig) rows[i].deleted = !rows[i].deleted; else rows.splice(i, 1); // kolom baru langsung dibuang
+  if (openFk >= rows.length || openFk === i) openFk = -1;
   render(); changed();
 });
 $('addCol')?.addEventListener('click', () => {
@@ -246,10 +310,13 @@ $('addCol')?.addEventListener('click', () => {
   document.querySelector('tbody tr:last-child .name')?.focus();
   $('grid').scrollTop = $('grid').scrollHeight;
 });
-$('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
-$('revert').addEventListener('click', () => { rows = orig.map((c) => ({ ...c, orig: c.name })); render(); changed(); });
-$('openSql').addEventListener('click', () => vscode.postMessage({ type: 'open', rows }));
-$('execute')?.addEventListener('click', () => vscode.postMessage({ type: 'execute', rows }));
+$('refresh')?.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
+$('revert')?.addEventListener('click', () => { rows = orig.map((c) => ({ ...c, orig: c.name })); render(); changed(); });
+$('tableName')?.addEventListener('input', changed);
+$('tableSchema')?.addEventListener('change', changed);
+$('grid').addEventListener('keydown', (e) => { if (e.key === 'Escape' && openFk >= 0) { const i = openFk; openFk = -1; render(); document.querySelector('[data-chip="fk"][data-i="' + i + '"]')?.focus(); } });
+$('openSql').addEventListener('click', () => send('open'));
+$('execute')?.addEventListener('click', () => send('execute'));
 
 // tinggi panel Pending changes: geser splitter (mouse / panah atas-bawah), disimpan di state webview
 const pending = $('pending');
@@ -263,9 +330,10 @@ $('splitter').addEventListener('pointerdown', (e) => {
 });
 $('splitter').addEventListener('keydown', (e) => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); setH(pending.offsetHeight + (e.key === 'ArrowUp' ? 24 : -24)); } });
 
-const KW = /\\b(ALTER|TABLE|ADD|DROP|COLUMN|CONSTRAINT|DEFAULT|FOR|EXEC|DECLARE|SELECT|FROM|WHERE|AND|IF|IS|NOT|NULL|BEGIN|END|SET|CHANGE|MODIFY|RENAME|TO|TYPE|USING|CREATE|INSERT|INTO|PRAGMA|COMMIT)\\b/g;
+const KW = /\\b(ALTER|TABLE|ADD|DROP|COLUMN|CONSTRAINT|DEFAULT|FOR|EXEC|DECLARE|SELECT|FROM|WHERE|AND|IF|IS|NOT|NULL|BEGIN|END|SET|CHANGE|MODIFY|RENAME|TO|TYPE|USING|CREATE|INSERT|INTO|PRAGMA|COMMIT|PRIMARY|KEY|UNIQUE|FOREIGN|REFERENCES|IDENTITY|ON|DELETE|UPDATE|CASCADE|NO|ACTION)\\b/g;
 const sqlHtml = (s) => h(s).replace(/(N?'(?:[^']|'')*')|\\b([A-Z_]+)\\b/g, (m, str, w) => str ? '<span class="str">' + str + '</span>' : (KW.lastIndex = 0, KW.test(w) ? '<span class="kw">' + w + '</span>' : w));
-const what = (s) => s.kind === 'rebuild' ? 'Rebuild table <code>' + h(s.column) + '</code> (copy data to a new table)'
+const what = (s) => s.kind === 'create' ? 'Create table <code>' + h(s.column) + '</code>'
+  : s.kind === 'rebuild' ? 'Rebuild table <code>' + h(s.column) + '</code> (copy data to a new table)'
   : s.kind === 'drop' ? 'Delete <code>' + h(s.column) + '</code>'
   : s.kind === 'add' ? 'Add <code>' + h(s.column) + '</code>'
   : 'Change <code>' + h(s.column) + '</code>' + (s.to ? ' to <code>' + h(s.to) + '</code>' : '');
@@ -273,18 +341,24 @@ function status(text, error) { $('status').textContent = text; $('status').class
 window.addEventListener('message', ({ data: m }) => {
   if (m.type === 'load') {
     orig = m.cols; info = m.info; types = m.types || []; newType = m.newType || '';
-    rows = orig.map((c) => ({ ...c, orig: c.name }));
+    rows = mode === 'create' ? m.rows : orig.map((c) => ({ ...c, orig: c.name }));
+    if (mode === 'create') {
+      tables = m.tables || []; schemas = m.schemas || []; fkActions = m.fkActions || [];
+      $('tableSchema').innerHTML = schemas.map((x) => '<option' + (x === m.defaultSchema ? ' selected' : '') + '>' + h(x) + '</option>').join('');
+      $('tableSchema').hidden = !schemas.length;
+    }
     render(); status(''); changed();
   } else if (m.type === 'script') {
     $('preview').innerHTML = m.steps.length ? m.steps.map((s) => '<li class="' + s.kind + '"><p class="what">' + what(s) + '</p>'
       + (s.detail && s.detail.length ? '<ul class="detail">' + s.detail.map((d) => '<li>' + h(d) + '</li>').join('') + '</ul>' : '') + '<pre class="sql">' + sqlHtml(s.sql) + '</pre></li>').join('')
-      : m.errors.length ? '' : '<li class="empty">No pending changes. Edit a cell, add a column or delete one, and the SQL shows up here.</li>';
+      : m.errors.length ? '' : '<li class="empty">' + (mode === 'create' ? 'Name the table and its columns, and the CREATE TABLE script shows up here.' : 'No pending changes. Edit a cell, add a column or delete one, and the SQL shows up here.') + '</li>';
     $('errors').innerHTML = m.errors.map((e) => '<li>' + h(e) + '</li>').join('');
     $('count').textContent = m.count || '';
     if ($('execute')) $('execute').disabled = !m.count;
     $('openSql').disabled = !m.count;
-    $('revert').disabled = !m.count && !m.errors.length;
-  } else if (m.type === 'status') status(m.text, m.error);
+    if ($('revert')) $('revert').disabled = !m.count && !m.errors.length;
+  } else if (m.type === 'fkColumns') { fkCols[m.key] = m.columns; render(); }
+  else if (m.type === 'status') status(m.text, m.error);
 });
 vscode.postMessage({ type: 'ready' });
 </script>
