@@ -352,6 +352,9 @@ export const postgresDriver = sqlDriver({
   explain: (s, mode) => (mode === 'estimated' ? `EXPLAIN ${s}` : `EXPLAIN ANALYZE ${s}`),
   columnDdl: pgColumnDdl,
   newDatabase: pgNewDatabase,
+  // WITH (FORCE) = PostgreSQL 13+, memutus sesi lain ke database itu; satu statement (DROP DATABASE tidak boleh di dalam transaksi)
+  dropDatabase: { script: (db) => `DROP DATABASE ${quotePg(db)} WITH (FORCE);`, system: ['template0', 'template1'] },
+  dropTable: (o) => `DROP TABLE ${full(o.schema, o.name)};`,
 
   async link(conn, password, db) {
     const p = pool(conn, password, db);

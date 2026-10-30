@@ -708,6 +708,10 @@ export interface Driver {
   columnDdl?: ColumnDdl;
   /** klik kanan koneksi -> New Database…; tidak ada = menu tidak tampil */
   newDatabase?: NewDatabase;
+  /** Drop Database (klik kanan database, konfirmasi modal): script; inside = dijalankan dengan database itu sebagai database koneksi (MongoDB); system = database yang tidak boleh di-drop */
+  dropDatabase?: { script(db: string): string; inside?: boolean; system?: string[] };
+  /** Drop Table (klik kanan tabel, konfirmasi modal): script, dijalankan di database tabel */
+  dropTable?(obj: DbObject): string;
   createTableScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<string>;
   /** Run: script EXEC / CALL / SELECT dengan argumen; params = jumlah argumen (0 = langsung dijalankan) */
   runScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<{ sql: string; params: number }>;
