@@ -16,3 +16,4 @@ images/*.svg
 images/screenshots/**
 deployment/**
 logs/**
+.github/**
