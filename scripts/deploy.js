@@ -1,4 +1,4 @@
-// Publish extension ke Open VSX (https://open-vsx.org).
+// Publish extension ke Open VSX (https://open-vsx.org), lalu buat tag vX.Y.Z + GitHub Release (lampiran .vsix).
 // run: npm run deploy                 (token diminta sekali, lalu disimpan di deployment/vsx/token)
 //      npm run deploy -- --new-token  (masukkan ulang token, mis. jika expired)
 const { execSync } = require('child_process');
@@ -86,6 +86,100 @@ async function getToken() {
   return token;
 }
 
+const git = (cmd) => execSync(`git ${cmd}`, { cwd: root, encoding: 'utf8', stdio: 'pipe' }).trim();
+
+/** Tag harus menunjuk commit yang sama dengan isi .vsix, jadi worktree wajib bersih & sudah di-push. */
+function checkGitReady() {
+  if (git('status --porcelain --untracked-files=no')) {
+    fail('Ada perubahan yang belum di-commit. Commit & push dulu sebelum deploy.');
+  }
+  git('fetch -q origin');
+  const branch = git('branch --show-current');
+  if (git('rev-parse HEAD') !== git(`rev-parse origin/${branch}`)) {
+    fail(`HEAD belum sama dengan origin/${branch}. Push dulu sebelum deploy.`);
+  }
+}
+
+/** owner/repo dari field repository di package.json. */
+function githubRepo() {
+  const url = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
+  const m = /github\.com[:/](.+?)(\.git)?$/.exec(url || '');
+  if (!m) {
+    throw new Error('Field repository di package.json bukan repo GitHub.');
+  }
+  return m[1];
+}
+
+/** Token GitHub dari GITHUB_TOKEN atau git credential helper (tidak pernah dicetak). */
+function githubToken() {
+  if (process.env.GITHUB_TOKEN) {
+    return process.env.GITHUB_TOKEN;
+  }
+  const out = execSync('git credential fill', { cwd: root, input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8' });
+  const token = /^password=(.*)$/m.exec(out)?.[1];
+  if (!token) {
+    throw new Error('Token GitHub tidak ditemukan (set GITHUB_TOKEN atau simpan di git credential).');
+  }
+  return token;
+}
+
+async function githubApi(url, token, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', ...options.headers },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`GitHub API ${res.status} ${url}: ${body.message || ''} ${JSON.stringify(body.errors || '')}`);
+  }
+  return body;
+}
+
+function releaseNotes(tag, namespace) {
+  let prev = '';
+  try {
+    prev = git(`describe --tags --abbrev=0 ${tag}^`);
+  } catch (err) {
+    // Rilis pertama: belum ada tag sebelumnya, catatan berisi semua commit.
+    console.error(`[deploy] releaseNotes - tag sebelumnya tidak ada: ${err.message}`);
+  }
+  const changes = git(`log --format=%s ${prev ? `${prev}..` : ''}${tag}`).split('\n').map((s) => `- ${s}`).join('\n');
+  return [
+    `## Changes${prev ? ` since ${prev}` : ''}`,
+    changes,
+    '',
+    `- VS Code Marketplace: https://marketplace.visualstudio.com/items?itemName=${namespace}.${pkg.name}`,
+    `- Open VSX: ${registry}/extension/${namespace}/${pkg.name}`,
+    '',
+    '```',
+    `ext install ${namespace}.${pkg.name}`,
+    '```',
+  ].join('\n');
+}
+
+/** Buat tag vX.Y.Z (bila belum ada), push, lalu GitHub Release + lampiran .vsix. */
+async function createGithubRelease(namespace) {
+  const tag = `v${pkg.version}`;
+  const repo = githubRepo();
+  if (!git(`tag -l ${tag}`)) {
+    git(`tag -a ${tag} -m "${tag}"`);
+  }
+  git(`push -q origin ${tag}`);
+  log(`Tag ${tag} di-push.`);
+
+  const token = githubToken();
+  const release = await githubApi(`https://api.github.com/repos/${repo}/releases`, token, {
+    method: 'POST',
+    body: JSON.stringify({ tag_name: tag, name: tag, body: releaseNotes(tag, namespace) }),
+  });
+  await githubApi(`https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=${vsix}`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: fs.readFileSync(path.join(root, vsix)),
+  });
+  log(`GitHub Release: ${release.html_url}`);
+}
+
 async function main() {
   const namespace = pkg.publisher;
   const id = `${namespace}.${pkg.name}@${pkg.version}`;
@@ -96,6 +190,7 @@ async function main() {
     return;
   }
 
+  checkGitReady();
   const token = await getToken();
 
   if ((await apiStatus(namespace)) === 404) {
@@ -114,6 +209,13 @@ async function main() {
   log(`Publish ${vsix}...`);
   run(`npx ovsx publish ${vsix}`, token);
   log(`Selesai: ${registry}/extension/${namespace}/${pkg.name}`);
+
+  try {
+    await createGithubRelease(namespace);
+  } catch (err) {
+    // Publish sudah sukses; release bisa dibuat ulang manual, jadi jangan gagalkan deploy.
+    console.error(`[deploy] createGithubRelease - gagal membuat tag/release: ${err.message}\n${err.stack}`);
+  }
 }
 
 main().catch((err) => fail(err.message));
