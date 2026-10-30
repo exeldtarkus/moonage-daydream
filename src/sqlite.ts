@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import type { Database, SqlJsStatic } from 'sql.js';
-import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, ObjectKind, TypeSpec } from './db';
+import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, NewColumn, ObjectKind, TypeSpec } from './db';
 import { maskSql, splitStatements } from './sqlContext';
 import { driverLog } from './log';
 import { sqlDriver } from './sqlDriver';
@@ -31,6 +31,26 @@ function save(conn: ConnectionInfo, db: Database) {
   const tmp = `${conn.file}.moonage-tmp`;
   writeFileSync(tmp, db.export());
   renameSync(tmp, conn.file!);
+}
+
+/** New Database SQLite: file database kosong yang valid; file yang sudah ada tidak ditimpa */
+export async function createSqliteFile(file: string): Promise<void> {
+  if (existsSync(file)) throw new Error(`File already exists: ${file}`);
+  const SQL = await (engine ??= initSqlJs());
+  const db = new SQL.Database();
+  try {
+    save({ file } as ConnectionInfo, db);
+  } finally {
+    db.close();
+  }
+}
+
+/** nama koneksi dari nama file tanpa ekstensi; sudah dipakai -> "nama (2)", "nama (3)", ... */
+export function uniqueConnName(file: string, taken: string[]): string {
+  const base = (file.split(/[\\/]/).pop() ?? '').replace(/(.)\.[^.]*$/, '$1');
+  let name = base;
+  for (let i = 2; taken.includes(name); i++) name = `${base} (${i})`;
+  return name;
 }
 
 /**
@@ -229,7 +249,29 @@ ORDER BY p.cid;`,
   // tipe / NULL / default dikerjakan rebuild (langkah pertama); di sini hanya nama
   edit: (o, old, next) => (next.name !== old.name ? `ALTER TABLE ${quote(o.name)} RENAME COLUMN ${quote(old.name)} TO ${quote(next.name)};`
     : `-- ${quote(old.name)}: type / NULL / default changed by the table rebuild (step 1)`),
-  check: (c, old) => (!old && !c.nullable && !c.default?.trim() ? 'a new NOT NULL column needs a default (SQLite)' : undefined),
+  check(c, old, cols) {
+    // New Table: AUTOINCREMENT hanya di kolom INTEGER PRIMARY KEY tunggal (alias rowid)
+    if (cols) return (c as NewColumn).ai && !((c as NewColumn).pk && c.type.toLowerCase() === 'integer' && cols.filter((x) => x.pk).length === 1)
+      ? 'auto increment needs integer PRIMARY KEY alone (SQLite)' : undefined;
+    return !old && !c.nullable && !c.default?.trim() ? 'a new NOT NULL column needs a default (SQLite)' : undefined;
+  },
+  aiTypes: ['integer'],
+  fkActions: ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'],
+  // schema diabaikan: satu file = satu database (main)
+  create(o, cols) {
+    const act = (k: string, v?: string) => (v && v !== 'NO ACTION' ? ` ON ${k} ${v}` : '');
+    const pk = cols.filter((c) => c.pk);
+    const ai = cols.some((c) => c.ai);
+    const lines = [
+      ...cols.map((c) => `${quote(c.name)} ${c.type}${c.nullable ? '' : ' NOT NULL'}${c.default ? ` DEFAULT ${c.default}` : ''}`
+        + (c.ai ? ` CONSTRAINT ${quote(`PK_${o.name}`)} PRIMARY KEY AUTOINCREMENT` : '')),
+      ...(pk.length && !ai ? [`CONSTRAINT ${quote(`PK_${o.name}`)} PRIMARY KEY (${pk.map((c) => quote(c.name)).join(', ')})`] : []),
+      ...cols.filter((c) => c.unique).map((c) => `CONSTRAINT ${quote(`UQ_${o.name}_${c.name}`)} UNIQUE (${quote(c.name)})`),
+      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${quote(`FK_${o.name}_${name}`)} FOREIGN KEY (${quote(name)}) REFERENCES ${quote(fk!.table)} (${quote(fk!.column)})`
+        + act('DELETE', fk!.onDelete) + act('UPDATE', fk!.onUpdate)),
+    ];
+    return [`CREATE TABLE ${quote(o.name)} (`, lines.map((l) => `  ${l}`).join(',\n'), ');'].join('\n');
+  },
   rebuild: (o, original: ColumnRow[], changed) => sqliteRebuild(o, original[0]?.keep ?? '{}', original.filter((c) => !c.generated).map((c) => c.name), changed),
   wrap: (sql) => `BEGIN;\n${sql}\nCOMMIT;`,
 };

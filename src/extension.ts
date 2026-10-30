@@ -28,6 +28,7 @@ import { consulDashboardHtml } from './consulDashHtml';
 import { monitorHtml } from './monitorHtml';
 import { permissionHint } from './mssqlTree';
 import { importDbcode } from './connString';
+import { createSqliteFile, uniqueConnName } from './sqlite';
 
 let log: vscode.LogOutputChannel;
 export let conns: Connections;
@@ -864,6 +865,7 @@ const newDbPanels = new Map<string, vscode.WebviewPanel>();
 /** klik kanan koneksi / folder Databases -> New Database…: form tab, script live, Create (konfirmasi) atau Open in SQL Editor */
 function newDatabase(n?: Node) {
   if (n?.kind !== 'conn' && !(n?.kind === 'mfolder' && n.folder === 'databases')) return;
+  if (n.c.type === 'sqlite') return void newSqliteDatabase(n.c);
   if (!drivers[n.c.type].newDatabase) return void vscode.window.showInformationMessage(`New Database is not available for ${drivers[n.c.type].label} yet.`);
   const conn = n.c;
   const d = drivers[conn.type];
@@ -917,6 +919,29 @@ function newDatabase(n?: Node) {
       vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
     }
   });
+}
+
+/** SQLite tidak punya CREATE DATABASE: New Database = file database baru + koneksi baru (group sama dengan koneksi asal) */
+async function newSqliteDatabase(conn: ConnectionInfo) {
+  const uri = await vscode.window.showSaveDialog({
+    title: 'New SQLite database file',
+    defaultUri: conn.file ? vscode.Uri.file(path.dirname(conn.file)) : undefined,
+    filters: { SQLite: ['db', 'sqlite', 'sqlite3'] },
+  });
+  if (!uri) return;
+  const file = uri.fsPath;
+  if (fs.existsSync(file)) return void vscode.window.showWarningMessage(`${file} already exists; choose a new file name.`);
+  try {
+    await createSqliteFile(file);
+    const name = uniqueConnName(file, conns.list().map((c) => c.name));
+    await conns.save({ name, type: 'sqlite', host: '', port: 0, user: '', database: '', trustServerCertificate: false, file, group: conn.group }, '');
+    log.info(`newDatabase sqlite: ${file} -> ${name}`);
+    explorer.refresh();
+    vscode.window.showInformationMessage(`SQLite database ${path.basename(file)} created, connection ${name} added.`);
+  } catch (e) {
+    log.error(`newSqliteDatabase - EXCEPTION CAUGHT | ${file}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
+  }
 }
 
 /** KILL session (SQL Server) setelah konfirmasi; id dari input, divalidasi angka */

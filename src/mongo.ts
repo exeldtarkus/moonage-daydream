@@ -301,9 +301,9 @@ ${fields.map((c) => `  ${key(c.name)}: { bsonType: ${key(c.type)} }`).join(',\n'
     return [`db.createCollection(${key(o.name)}${opts});`,
       ...fields.filter((c) => c.unique).map((c) => `${coll(o)}.createIndex({ ${key(c.name)}: 1 }, { unique: true, name: ${key(`UQ_${o.name}_${c.name}`)} });`)].join('\n');
   },
-  check(c, old, create) {
+  check(c, old, cols) {
     if (c.name.includes('.') || c.name.startsWith('$')) return 'field name cannot contain "." or start with "$"';
-    if (create) {
+    if (cols) { // New Collection
       if (c.default) return 'MongoDB has no column defaults (set values when inserting)';
       return (c as NewColumn).pk && c.name !== '_id' ? 'only _id is the primary key in MongoDB' : undefined;
     }

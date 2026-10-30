@@ -121,8 +121,8 @@ export interface ColumnDdl {
   add(obj: DbObject, col: ColumnDef): string;
   edit(obj: DbObject, old: ColumnDef, next: ColumnDef): string;
   drop(obj: DbObject, name: string): string;
-  /** validasi tambahan per database (old kosong = kolom baru, create = New Table); undefined = valid */
-  check?(c: ColumnDef, old?: ColumnDef, create?: boolean): string | undefined;
+  /** validasi tambahan per database (old kosong = kolom baru; cols = semua kolom New Table, ada = mode New Table); undefined = valid */
+  check?(c: ColumnDef, old?: ColumnDef, cols?: NewColumn[]): string | undefined;
   /** SQLite: ubah tipe / NULL / default lewat rebuild tabel (changed memakai nama kolom asal); dijalankan sebelum langkah lain */
   rebuild?(obj: DbObject, original: ColumnRow[], changed: ColumnDef[]): string;
   /** bungkus seluruh script (mis. satu transaksi) */
@@ -151,7 +151,7 @@ export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): {
   if (!obj.name.trim()) errors.push('Table name is required');
   if (!cols.length) errors.push('Add at least one column');
   cols.forEach((c, i) => {
-    const e = checkColumn(c) ?? checkType(c.type, ddl.types) ?? ddl.check?.(c, undefined, true);
+    const e = checkColumn(c) ?? checkType(c.type, ddl.types) ?? ddl.check?.(c, undefined, cols);
     if (e) errors.push(`${c.name || `column ${i + 1}`}: ${e}`);
     else if (c.ai && !ddl.aiTypes) errors.push(`${c.name}: auto increment is not supported here`);
     else if (c.fk && !ddl.fkActions) errors.push(`${c.name}: foreign keys are not supported here`);
