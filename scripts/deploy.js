@@ -1,6 +1,6 @@
 // Publish extension ke Open VSX (https://open-vsx.org), lalu buat tag vX.Y.Z + GitHub Release (lampiran .vsix).
-// run: npm run deploy                 (token diminta sekali, lalu disimpan di deployment/vsx/token)
-//      npm run deploy -- --new-token  (masukkan ulang token, mis. jika expired)
+// run: npm run deploy:token           (token diminta sekali, lalu disimpan di deployment/vsx/token)
+//      npm run deploy:token -- --new-token  (masukkan ulang token, mis. jika expired)
 const { execSync } = require('child_process');
 const fs = require('fs');
 const https = require('https');
