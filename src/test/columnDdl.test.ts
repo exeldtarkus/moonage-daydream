@@ -150,12 +150,12 @@ test('columns editor: Show result -> editable columns (name, type, null, default
     rows: [[1, 'id', 'int', 'NO', null, '1, 1', null, 'PK'], [2, 'qty', 'int', 'NO', '((0))', null, null, ''], [3, 'total', 'int', 'YES', null, null, '([qty]*(2))', '']] };
   const { cols, info } = showColumns(rs);
   assert.deepEqual(cols, [
-    { name: 'id', type: 'int', nullable: false, generated: true },
+    { name: 'id', type: 'int', nullable: false, generated: true, ai: true, pk: true },
     { name: 'qty', type: 'int', nullable: false, default: '((0))' },
     { name: 'total', type: 'int', nullable: true, generated: true },
   ]);
-  assert.deepEqual(info.columns, ['identity', 'computed', 'primary_key']);
-  assert.deepEqual(info.rows[0], ['1, 1', null, 'PK']);
+  assert.deepEqual(info.columns, ['identity', 'computed']);
+  assert.deepEqual(info.rows[0], ['1, 1', null]);
 });
 
 const orig = [
@@ -291,7 +291,7 @@ test('columns editor: Show keep (attributes carried by CHANGE COLUMN) goes to th
   const rs = { columns: ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'identity', 'comment', 'keep'],
     rows: [[1, 'id', 'int', 'NO', null, 'auto_increment', '', ''], [2, 'title', 'varchar(50)', 'YES', null, null, 'x', "COMMENT 'x'"]] };
   const { cols, info } = showColumns(rs);
-  assert.deepEqual(cols, [{ name: 'id', type: 'int', nullable: false, generated: true }, { name: 'title', type: 'varchar(50)', nullable: true, keep: "COMMENT 'x'" }]);
+  assert.deepEqual(cols, [{ name: 'id', type: 'int', nullable: false, generated: true, ai: true }, { name: 'title', type: 'varchar(50)', nullable: true, keep: "COMMENT 'x'" }]);
   assert.deepEqual(info.columns, ['identity', 'comment']);
   const r = columnChanges(my, mt, cols, [{ ...cols[0], orig: 'id' }, { ...cols[1], orig: 'title', type: 'varchar(60)' }, { name: 'n', type: 'int', nullable: true }]);
   assert.equal(r.sql, `ALTER TABLE ${MT} CHANGE COLUMN \`title\` \`title\` varchar(60) NULL COMMENT 'x';\nALTER TABLE ${MT} ADD COLUMN \`n\` int NULL;`);
@@ -428,7 +428,7 @@ test('SQLite Columns editor end to end on a real file: rename, rebuild, drop, ad
     const cols = await load();
     const strip = (x: ColumnRow) => ({ ...x, keep: undefined });
     assert.deepEqual(cols.map(strip), [
-      { name: 'id', type: 'INTEGER', nullable: true, keep: undefined },
+      { name: 'id', type: 'INTEGER', nullable: true, keep: undefined, pk: true },
       { name: 'name', type: 'TEXT', nullable: false, default: "'none'", keep: undefined },
       { name: 'qty', type: 'INTEGER', nullable: true, default: '0', keep: undefined },
       { name: 'price', type: 'REAL', nullable: true, keep: undefined },

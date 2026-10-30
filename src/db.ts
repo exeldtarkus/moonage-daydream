@@ -105,7 +105,14 @@ export interface Column {
 export type ColumnDef = Pick<Column, 'name' | 'type' | 'nullable' | 'default'> & {
   /** MySQL: atribut kolom yang ikut ditulis ulang di CHANGE COLUMN (COLLATE, ON UPDATE, COMMENT) */
   keep?: string;
+  /** auto increment / identity */
+  ai?: boolean;
+  /** MySQL: ekspresi generated (AS (...) VIRTUAL / STORED) yang dibawa saat kolom dipindah */
+  gen?: string;
 };
+
+/** foreign key satu kolom; name = nama constraint yang ada (untuk drop) */
+export interface ColumnFk { schema: string; table: string; column: string; onDelete?: string; onUpdate?: string; name?: string }
 
 /** script kolom tabel (klik kanan tabel): show dijalankan langsung, lainnya dibuka di tab tanpa dijalankan */
 export interface ColumnDdl {
@@ -138,9 +145,8 @@ export interface ColumnDdl {
 /** kolom New Table: atribut PK / AI (auto increment / identity) / UQ / FK satu kolom */
 export type NewColumn = ColumnDef & {
   pk?: boolean;
-  ai?: boolean;
   unique?: boolean;
-  fk?: { schema: string; table: string; column: string; onDelete?: string; onUpdate?: string };
+  fk?: ColumnFk;
 };
 
 /** New Table: validasi lalu script CREATE TABLE (kosong bila ada error); kolom PK dipaksa NOT NULL */
@@ -225,23 +231,35 @@ export function objContext(kind: ObjectKind, f: { def: boolean; ms: boolean; col
   return `${kind}${f.def ? '.def' : ''}${f.ms ? '.ms' : ''}${f.cols && kind === 'table' ? '.cols' : ''}`;
 }
 
-/** baris editor Columns: orig = nama kolom asal (kosong = kolom baru), deleted = ditandai hapus */
-export type ColumnRow = ColumnDef & { orig?: string; deleted?: boolean; generated?: boolean };
+/** baris editor Columns: orig = nama kolom asal (kosong = kolom baru), deleted = ditandai hapus; pkName / uqName = nama constraint yang ada */
+export type ColumnRow = NewColumn & { orig?: string; deleted?: boolean; generated?: boolean; pkName?: string; uqName?: string; uqIndex?: boolean };
 
 /** hasil ColumnDdl.show -> kolom yang bisa diedit + info read-only (alias wajib: column_name, data_type, nullable YES/NO, default_value) */
 export function showColumns(rs: Pick<ResultSet, 'columns' | 'rows'>): { cols: ColumnRow[]; info: { columns: string[]; rows: unknown[][] } } {
   const at = (k: string) => rs.columns.indexOf(k);
-  const core = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'keep'];
+  // alias atribut (PK / AI / UQ / FK, gen) dipetakan ke field baris, bukan info read-only
+  const core = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'keep', 'ai', 'primary_key', 'pk_name', 'uq_name', 'uq_index',
+    'fk_name', 'fk_schema', 'fk_table', 'fk_column', 'fk_delete', 'fk_update', 'gen'];
   const extra = rs.columns.map((c, i) => [c, i] as const).filter(([c]) => !core.includes(c));
+  const filled = (v: unknown) => v !== null && v !== undefined && v !== '' && v !== 'NO' && v !== 0 && v !== '0';
   // identity / computed / generated terisi = nilai dibuat server: hanya nama yang bisa diubah
   const gen = ['identity', 'computed', 'generated'].map(at).filter((i) => i >= 0);
   return {
     cols: rs.rows.map((r) => {
+      const v = (k: string) => (at(k) >= 0 && filled(r[at(k)]) ? String(r[at(k)]) : undefined);
       const d = r[at('default_value')];
+      const fk = v('fk_table') && { ...(v('fk_name') ? { name: v('fk_name') } : {}), schema: v('fk_schema') ?? '', table: v('fk_table')!, column: v('fk_column') ?? '',
+        ...(v('fk_delete') ? { onDelete: v('fk_delete') } : {}), ...(v('fk_update') ? { onUpdate: v('fk_update') } : {}) };
       return { name: String(r[at('column_name')]), type: String(r[at('data_type')]), nullable: r[at('nullable')] === 'YES',
         ...(d !== null && d !== undefined && d !== '' ? { default: String(d) } : {}),
-        ...(at('keep') >= 0 && r[at('keep')] ? { keep: String(r[at('keep')]) } : {}),
-        ...(gen.some((i) => r[i] !== null && r[i] !== undefined && r[i] !== '') ? { generated: true } : {}) };
+        ...(v('keep') ? { keep: v('keep') } : {}),
+        ...(gen.some((i) => r[i] !== null && r[i] !== undefined && r[i] !== '') ? { generated: true } : {}),
+        // SQL Server identity: AI tampil menyala (tetap hanya rename)
+        ...(v('ai') || v('identity') ? { ai: true } : {}),
+        ...(v('primary_key') ? { pk: true } : {}), ...(v('pk_name') ? { pkName: v('pk_name') } : {}),
+        ...(v('uq_name') ? { unique: true, uqName: v('uq_name') } : {}), ...(v('uq_index') ? { uqIndex: true } : {}),
+        ...(fk ? { fk } : {}),
+        ...(v('gen') ? { gen: v('gen') } : {}) };
     }),
     info: { columns: extra.map(([c]) => c), rows: rs.rows.map((r) => extra.map(([, i]) => r[i])) },
   };
