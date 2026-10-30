@@ -1,0 +1,45 @@
+{
+    // Satu objek JSON saja (sebelumnya ada 3 objek berturut-turut sehingga sebagian warna tidak diterapkan).
+    // Tema cokelat #A08470; teks gelap #15202b di atas latar cokelat, teks terang di atas latar gelap.
+    "workbench.colorCustomizations": {
+        // --- Title Bar (Bagian Paling Atas) ---
+        "titleBar.activeBackground": "#a08470",
+        "titleBar.activeForeground": "#15202b",
+        "titleBar.inactiveBackground": "#a08470",
+        "titleBar.inactiveForeground": "#15202bcc",
+        "commandCenter.foreground": "#15202b",
+        "commandCenter.activeForeground": "#15202b",
+        "commandCenter.inactiveForeground": "#15202bcc",
+        "commandCenter.border": "#15202b66",
+
+        // --- Activity Bar (Bar Samping Ikon Explorer, Search, dll) ---
+        "activityBar.background": "#b49e8f",
+        "activityBar.activeBackground": "#b49e8f",
+        "activityBar.foreground": "#15202b",
+        "activityBar.inactiveForeground": "#15202bb3",
+        "activityBarTop.background": "#b49e8f",
+        "activityBarTop.activeBackground": "#b49e8f",
+        "activityBarTop.foreground": "#15202b",
+        "activityBarTop.inactiveForeground": "#15202bb3",
+
+        // --- Activity Bar Badge (Bulatan Notifikasi Angka) ---
+        "activityBarBadge.background": "#4d735c",
+        "activityBarBadge.foreground": "#ffffff",
+
+        // --- Status Bar (Bar Paling Bawah) ---
+        "statusBar.background": "#a08470",
+        "statusBar.foreground": "#15202b",
+        "statusBar.noFolderBackground": "#a08470",
+        "statusBar.noFolderForeground": "#15202b",
+        "statusBar.debuggingBackground": "#a08470",
+        "statusBar.debuggingForeground": "#15202b",
+        "statusBarItem.hoverBackground": "#856b58",
+        "statusBarItem.hoverForeground": "#ffffff",
+        "statusBarItem.remoteBackground": "#40604d",
+        "statusBarItem.remoteForeground": "#ffffff",
+        "statusBarItem.remoteHoverForeground": "#ffffff",
+
+        "sash.hoverBorder": "#b49e8f"
+    },
+    "peacock.color": "#A08470"
+}

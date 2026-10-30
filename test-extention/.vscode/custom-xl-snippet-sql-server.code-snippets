@@ -1,0 +1,65 @@
+{
+  "SQL Select From": {
+    "scope": "sql",
+    "prefix": "sf",
+    "body": [
+      "SELECT  ${2:*}",
+      "FROM    ${1:table_name};"
+    ],
+    "description": "Template standar SELECT"
+  },
+
+  "SQL Select Where": {
+    "scope": "sql",
+    "prefix": "sw1",
+    "body": [
+      "SELECT  ${2:*}",
+      "FROM    ${1:table_name}",
+      "WHERE   ${3:condition};"
+    ],
+    "description": "Template standar SELECT with where"
+  },
+
+  "SQL Insert": {
+    "scope": "sql",
+    "prefix": "ins",
+    "body": [
+      "INSERT INTO ${1:table_name} (${2:column1, column2})",
+      "VALUES (${3:value1, value2});"
+    ],
+    "description": "Template standar INSERT"
+  },
+
+  "SQL Update": {
+    "scope": "sql",
+    "prefix": "upd",
+    "body": [
+      "UPDATE ${1:table_name}",
+      "SET    ${2:column} = ${3:value}",
+      "WHERE  ${4:condition};"
+    ],
+    "description": "Template standar UPDATE"
+  },
+
+  "SQL Delete": {
+    "scope": "sql",
+    "prefix": "del",
+    "body": [
+      "DELETE FROM ${1:table_name}",
+      "WHERE  ${2:condition};"
+    ],
+    "description": "Template standar DELETE"
+  },
+
+  "SQL Select Join": {
+    "scope": "sql",
+    "prefix": "selj",
+    "body": [
+      "SELECT t1.${3:col}, t2.${4:col}",
+      "FROM   ${1:table1} t1",
+      "JOIN   ${2:table2} t2 ON t1.${5:id} = t2.${6:t1_id}",
+      "WHERE  ${7:condition};"
+    ],
+    "description": "Template SELECT dengan JOIN"
+  }
+}
