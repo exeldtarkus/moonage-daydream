@@ -301,5 +301,6 @@ export const sqliteDriver = sqlDriver({
     return rows.filter((r) => r.pk > 0).sort((a, b) => a.pk - b.pk).map((r) => r.name);
   },
   selectTop: (_db, obj, n) => `SELECT * FROM ${quote(obj.name)} LIMIT ${n};`,
+  dropTable: (o) => `DROP TABLE ${quote(o.name)};`, // index & trigger tabel ikut terhapus
   close: async () => undefined, // tidak ada koneksi yang di-cache
 });
