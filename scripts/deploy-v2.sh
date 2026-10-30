@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rilis lewat GitHub Actions (.github/workflows/release.yml): pilih versi -> package.json -> commit + push -> tag vX.Y.Z -> push tag.
-# Workflow yang publish ke Open VSX (trusted publishing) dan membuat GitHub Release; script ini menunggu dan menampilkan hasilnya.
+# Workflow yang publish ke Open VSX + VS Code Marketplace (trusted publishing) dan membuat GitHub Release; script ini menunggu dan menampilkan hasilnya.
 # run: npm run deploy            (cadangan publish dari laptop dengan token: npm run deploy:token)
 #      bash scripts/deploy-v2.sh --self-test
 set -euo pipefail
@@ -110,7 +110,8 @@ for _ in $(seq 1 120); do
     if [[ "$conclusion" == success ]]; then
       say "Open VSX: https://open-vsx.org/extension/$publisher/$name/$version"
       say "Release:  https://github.com/$repo/releases/tag/$tag"
-      say "VS Code Marketplace: upload $name-$version.vsix from the Release manually (https://marketplace.visualstudio.com/manage)"
+      say "VS Code Marketplace: https://marketplace.visualstudio.com/items?itemName=$publisher.$name (appears after Marketplace verification, a few minutes)"
+      say "  if the step \"Publish to VS Code Marketplace\" in the run is red, upload $name-$version.vsix from the Release at https://marketplace.visualstudio.com/manage"
       exit 0
     fi
     die "Workflow failed; open the run above for the log."

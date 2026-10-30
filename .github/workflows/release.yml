@@ -1,7 +1,8 @@
-# Publish ke Open VSX lewat trusted publishing (OIDC, tanpa token tersimpan) saat tag vX.Y.Z di-push,
+# Publish ke Open VSX + VS Code Marketplace lewat trusted publishing (OIDC, tanpa token tersimpan) saat tag vX.Y.Z di-push,
 # lalu buat GitHub Release dengan lampiran .vsix.
-# Daftarkan workflow ini di open-vsx.org -> Settings -> Extensions -> moonage-daydream -> Trusted Publishers:
-#   GitHub, exeldtarkus / moonage-daydream, workflow filename: release.yml
+# Trusted publisher yang didaftarkan (GitHub, exeldtarkus / moonage-daydream, workflow filename: release.yml):
+#   - Open VSX: open-vsx.org -> Settings -> Trusted Publishers (environment kosong atau production)
+#   - VS Code Marketplace: marketplace.visualstudio.com/manage -> publisher exeltarkus -> Trusted Publishing (environment production)
 # Aman dijalankan bersama `npm run deploy`: versi yang sudah ada di Open VSX / release yang sudah ada dilewati.
 name: Release
 
@@ -11,7 +12,7 @@ on:
 
 permissions:
   contents: write # GitHub Release
-  id-token: write # OIDC token untuk Open VSX trusted publishing
+  id-token: write # OIDC token untuk trusted publishing Open VSX + VS Code Marketplace
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,7 +20,10 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # 24.04 tetap: ubuntu-latest pindah ke 26.04 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
+    # harus sama dengan Environment di trusted publishing VS Code Marketplace (Open VSX tanpa environment tetap cocok)
+    environment: production
     env:
       TAG: ${{ github.ref_name }}
     steps:
@@ -93,3 +97,10 @@ jobs:
             echo '```'
           } > release-notes.md
           gh release create "$TAG" "$VSIX" --title "$TAG" --notes-file release-notes.md
+
+      # setelah Release: bila Marketplace menolak, Open VSX + GitHub Release tetap jadi (upload .vsix manual dari Release)
+      - name: Publish to VS Code Marketplace (trusted publishing)
+        continue-on-error: true
+        env:
+          VSIX: ${{ steps.meta.outputs.vsix }}
+        run: npx --yes @vscode/vsce@4.1.0 publish -i "$VSIX" --oidc
