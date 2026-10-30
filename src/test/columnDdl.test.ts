@@ -465,3 +465,59 @@ test('SQLite Columns editor end to end on a real file: rename, rebuild, drop, ad
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------- MongoDB ----------
+const mg = drivers.mongodb.columnDdl!;
+const mc = { schema: 'db', name: 'or"ders' };
+const MC = 'db.getCollection("or\\"ders")';
+
+test('column ddl: MongoDB basics (BSON types, no transaction note, every script is valid mongosh text)', async () => {
+  const { parseShell } = await import('../mongo');
+  assert.equal(mg.newType, 'string');
+  assert.match(mg.note!, /no schema/i);
+  const names = mg.types.map((x) => x.name);
+  for (const n of ['string', 'int', 'long', 'double', 'decimal', 'bool', 'date', 'objectId', 'array', 'object', 'binData', 'null']) assert.ok(names.includes(n), n);
+  assert.equal(new Set(names).size, names.length);
+  const show = mg.show(mc);
+  assert.ok(show.startsWith(`${MC}.aggregate([`), show);
+  assert.match(show, /\$sample: \{ size: 100 \}/);
+  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'present', 'identity']) assert.match(show, new RegExp(`${col}:`), col);
+  for (const sql of [show, mg.add(mc, { name: 'note', type: 'string', nullable: false, default: '"x"' }), mg.drop(mc, 'price'),
+    mg.edit(mc, { name: 'qty', type: 'string', nullable: true }, { name: 'quantity', type: 'int', nullable: false, default: '0' })]) {
+    assert.ok(parseShell(sql).length > 0, sql);
+  }
+});
+
+test('column ddl: MongoDB Add / Delete = updateMany with $set / $unset', () => {
+  assert.equal(mg.add(mc, { name: 'note', type: 'string', nullable: true }), `${MC}.updateMany({ "note": { $exists: false } }, { $set: { "note": null } });`);
+  assert.equal(mg.add(mc, { name: 'qty', type: 'int', nullable: false, default: 'NumberInt(0)' }), `${MC}.updateMany({ "qty": { $exists: false } }, { $set: { "qty": NumberInt(0) } });`);
+  assert.equal(mg.drop(mc, 'price'), `${MC}.updateMany({ "price": { $exists: true } }, { $unset: { "price": "" } });`);
+});
+
+test('column ddl: MongoDB Edit = $rename, $convert pipeline (failed conversion -> null), fill default', () => {
+  const old = { name: 'qty', type: 'string', nullable: true };
+  assert.match(mg.edit(mc, old, { ...old }), /^\/\/ no changes/);
+  assert.equal(mg.edit(mc, old, { name: 'quantity', type: 'int', nullable: false, default: '0' }), [
+    `${MC}.updateMany({ "qty": { $exists: true } }, { $rename: { "qty": "quantity" } });`,
+    `${MC}.updateMany({ "quantity": { $exists: true } }, [{ $set: { "quantity": { $convert: { input: "$quantity", to: "int", onError: null, onNull: null } } } }]);`,
+    `${MC}.updateMany({ $or: [{ "quantity": { $exists: false } }, { "quantity": null }] }, { $set: { "quantity": 0 } });`,
+  ].join('\n'));
+  // default saja (boleh null): hanya dokumen tanpa field
+  assert.equal(mg.edit(mc, old, { ...old, default: '"n/a"' }), `${MC}.updateMany({ "qty": { $exists: false } }, { $set: { "qty": "n/a" } });`);
+  // NOT NULL -> NULL: tidak ada constraint, tidak ada perintah
+  assert.match(mg.edit(mc, { ...old, nullable: false }, old), /^\/\/ .*no constraint/);
+});
+
+test('columns editor: MongoDB validation (convertible type, field name, Not null needs a default); untouched mixed types are fine', () => {
+  const orig = [{ name: '_id', type: 'objectId', nullable: false, generated: true }, { name: 'tag', type: 'int|string', nullable: true }];
+  const base = (): ColumnRow[] => orig.map((c) => ({ ...c, orig: c.name }));
+  assert.deepEqual(columnChanges(mg, mc, orig, base()).errors, []);
+  const e = (rows: ColumnRow[]) => columnChanges(mg, mc, orig, rows).errors;
+  assert.deepEqual(e([...base(), { name: 'a.b', type: 'string', nullable: true }]), ['new column 3: field name cannot contain "." or start with "$"']);
+  assert.deepEqual(e([...base(), { name: 'n', type: 'int', nullable: false }]), ['new column 3: Not null needs a default (value for documents without the field)']);
+  const rows = base();
+  rows[1] = { ...rows[1], type: 'array' };
+  assert.deepEqual(e(rows), ['tag: cannot convert existing values to array (use string, int, long, double, decimal, bool, date or objectId)']);
+  rows[1] = { ...rows[1], type: 'string', nullable: false };
+  assert.deepEqual(e(rows), ['tag: Not null needs a default (value for documents without the field)']);
+});

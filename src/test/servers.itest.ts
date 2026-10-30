@@ -306,3 +306,35 @@ test('MongoDB: shell queries, auto limit, cancel, explorer, export', async () =>
   await assert.rejects(d.session(c, PW), /not supported/);
   await assert.rejects(run('db.item.bogus()'), /bogus/);
 });
+
+test('MongoDB: Columns editor (sampled fields, rename, $convert, fill default, add, unset)', async () => {
+  const c: ConnectionInfo = { name: 'it-mongodb-cols', type: 'mongodb', host: '127.0.0.1', port: 27018, user: 'root', database: 'shop', trustServerCertificate: false, authSource: 'admin' };
+  conns.push(c);
+  const d = drivers.mongodb;
+  const ddl = d.columnDdl!;
+  const run = (sql: string) => d.run(c, PW, sql);
+  await run(`db.column_lab.drop();
+    db.column_lab.insertMany([{ name: 'apple', qty: '5', price: 1.5, flag: true }, { name: 'banana', qty: 'x', price: null }, { name: 'cherry', qty: '12', price: 9.99, flag: false }]);`);
+  const o = { schema: 'db', name: 'column_lab' };
+  const load = async () => showColumns((await run(ddl.show(o))).resultSets[0]);
+  const { cols, info } = await load();
+  const by = (n: string) => cols.find((x) => x.name === n)!;
+  assert.deepEqual(cols.map((x) => x.name), ['_id', 'name', 'qty', 'price', 'flag']);
+  assert.deepEqual(by('_id'), { name: '_id', type: 'objectId', nullable: false, generated: true });
+  assert.deepEqual(by('qty'), { name: 'qty', type: 'string', nullable: false });
+  assert.equal(by('price').nullable, true, 'null value');
+  assert.equal(info.rows[cols.indexOf(by('flag'))][info.columns.indexOf('present')], '67%');
+
+  const rows: ColumnRow[] = cols.map((x) => ({ ...x, orig: x.name }));
+  Object.assign(rows.find((x) => x.orig === 'qty')!, { name: 'quantity', type: 'int' });
+  Object.assign(rows.find((x) => x.orig === 'flag')!, { nullable: false, default: 'false' });
+  Object.assign(rows.find((x) => x.orig === 'price')!, { deleted: true });
+  rows.push({ name: 'note', type: 'string', nullable: true, default: '"n/a"' });
+  const r = columnChanges(ddl, o, cols, rows);
+  assert.deepEqual(r.errors, []);
+  await run(r.sql);
+  const docs = (await run('db.column_lab.find({}, { _id: 0 }).sort({ name: 1 })')).resultSets[0];
+  assert.deepEqual(docs.columns, ['name', 'flag', 'quantity', 'note']);
+  assert.deepEqual(docs.rows, [['apple', true, 5, 'n/a'], ['banana', false, null, 'n/a'], ['cherry', false, 12, 'n/a']], "'x' cannot be converted -> null");
+  await run('db.column_lab.drop()');
+});

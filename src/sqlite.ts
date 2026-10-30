@@ -229,7 +229,7 @@ ORDER BY p.cid;`,
   // tipe / NULL / default dikerjakan rebuild (langkah pertama); di sini hanya nama
   edit: (o, old, next) => (next.name !== old.name ? `ALTER TABLE ${quote(o.name)} RENAME COLUMN ${quote(old.name)} TO ${quote(next.name)};`
     : `-- ${quote(old.name)}: type / NULL / default changed by the table rebuild (step 1)`),
-  check: (c, added) => (added && !c.nullable && !c.default?.trim() ? 'a new NOT NULL column needs a default (SQLite)' : undefined),
+  check: (c, old) => (!old && !c.nullable && !c.default?.trim() ? 'a new NOT NULL column needs a default (SQLite)' : undefined),
   rebuild: (o, original: ColumnRow[], changed) => sqliteRebuild(o, original[0]?.keep ?? '{}', original.filter((c) => !c.generated).map((c) => c.name), changed),
   wrap: (sql) => `BEGIN;\n${sql}\nCOMMIT;`,
 };

@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { BSON, Binary, Decimal128, Double, Int32, Long, MongoClient, ObjectId } from 'mongodb';
 import type { AbstractCursor, Db, Document, MongoClientOptions } from 'mongodb';
 import { MAX_ROWS, connectMs, typedOptions } from './db';
-import type { ConnectionInfo, Driver, QueryResult, ResultSet } from './db';
+import type { ColumnDdl, ConnectionInfo, Driver, QueryResult, ResultSet, TypeSpec } from './db';
 
 /** satu perintah shell yang direkam: db.<collection>.<method>(args) atau db.<method>(args), plus chain cursor */
 export interface Op {
@@ -240,6 +240,65 @@ async function run(conn: ConnectionInfo, password: string, text: string, signal?
   return out;
 }
 
+const coll = (o: { name: string }) => `db.getCollection(${JSON.stringify(o.name)})`;
+const key = (name: string) => JSON.stringify(name);
+
+/** tipe BSON yang bisa dituju $convert */
+const CONVERTIBLE = ['string', 'int', 'long', 'double', 'decimal', 'bool', 'date', 'objectId'];
+const NOT_NULL_DEFAULT = 'Not null needs a default (value for documents without the field)';
+
+/**
+ * editor Columns MongoDB: "kolom" = field level atas dari sampel dokumen; Add / Edit / Delete = updateMany ke dokumen yang ada.
+ * shortcut: hanya field level atas (bukan field bersarang), tipe dari sampel 100 dokumen.
+ */
+export const mongoColumnDdl: ColumnDdl = {
+  separator: '\n',
+  newType: 'string',
+  note: 'MongoDB has no schema: each step updates the existing documents (updateMany), without a transaction. Steps before a failing step stay applied.',
+  types: [
+    ...CONVERTIBLE.map((name): TypeSpec => ({ name, group: 'BSON', note: 'existing values converted with $convert; failures become null' })),
+    ...['array', 'object', 'binData', 'null'].map((name): TypeSpec => ({ name, group: 'BSON (no conversion)', note: 'only for new fields' })),
+  ],
+  // total dokumen sampel = jumlah dokumen yang punya _id (selalu ada)
+  show: (o) => `db.getCollection(${JSON.stringify(o.name)}).aggregate([
+  { $sample: { size: 100 } },
+  { $project: { kv: { $objectToArray: "$$ROOT" } } },
+  { $unwind: { path: "$kv", includeArrayIndex: "pos" } },
+  { $group: { _id: "$kv.k", types: { $addToSet: { $type: "$kv.v" } }, n: { $sum: 1 }, pos: { $min: "$pos" } } },
+  { $group: { _id: null, fields: { $push: "$$ROOT" }, total: { $max: "$n" } } },
+  { $unwind: "$fields" },
+  { $replaceWith: { $mergeObjects: ["$fields", { total: "$total" }] } },
+  { $sort: { pos: 1, _id: 1 } },
+  { $project: { _id: 0, ordinal: { $add: ["$pos", 1] }, column_name: "$_id",
+    data_type: { $let: { vars: { t: { $setDifference: ["$types", ["null"]] } }, in: { $cond: [{ $eq: [{ $size: "$$t" }, 0] }, "null",
+      { $reduce: { input: "$$t", initialValue: "", in: { $concat: ["$$value", { $cond: [{ $eq: ["$$value", ""] }, "", "|"] }, "$$this"] } } }] } } },
+    nullable: { $cond: [{ $and: [{ $eq: ["$n", "$total"] }, { $not: [{ $in: ["null", "$types"] }] }] }, "NO", "YES"] },
+    default_value: { $literal: null },
+    present: { $concat: [{ $toString: { $round: [{ $multiply: [{ $divide: ["$n", "$total"] }, 100] }, 0] } }, "%"] },
+    identity: { $cond: [{ $eq: ["$_id", "_id"] }, "auto", null] } } }
+]);`,
+  add: (o, c) => `${coll(o)}.updateMany({ ${key(c.name)}: { $exists: false } }, { $set: { ${key(c.name)}: ${c.default?.trim() || 'null'} } });`,
+  drop: (o, name) => `${coll(o)}.updateMany({ ${key(name)}: { $exists: true } }, { $unset: { ${key(name)}: "" } });`,
+  edit(o, old, next) {
+    const [k, ty, d] = [key(next.name), next.type.trim(), next.default?.trim() || ''];
+    const steps = [
+      ...(next.name !== old.name ? [`${coll(o)}.updateMany({ ${key(old.name)}: { $exists: true } }, { $rename: { ${key(old.name)}: ${k} } });`] : []),
+      ...(ty !== old.type ? [`${coll(o)}.updateMany({ ${k}: { $exists: true } }, [{ $set: { ${k}: { $convert: { input: ${JSON.stringify(`$${next.name}`)}, to: ${JSON.stringify(ty)}, onError: null, onNull: null } } } }]);`] : []),
+      // Not null / Default = nilai untuk dokumen tanpa field (Not null: juga yang null); tidak ada constraint
+      ...(d && (d !== (old.default?.trim() || '') || (!next.nullable && old.nullable))
+        ? [`${coll(o)}.updateMany(${next.nullable ? `{ ${k}: { $exists: false } }` : `{ $or: [{ ${k}: { $exists: false } }, { ${k}: null }] }`}, { $set: { ${k}: ${d} } });`] : []),
+    ];
+    if (steps.length) return steps.join('\n');
+    return next.nullable !== old.nullable || d !== (old.default?.trim() || '') ? `// ${key(old.name)}: MongoDB has no constraint, documents unchanged` : `// no changes to ${key(old.name)}`;
+  },
+  check(c, old) {
+    if (c.name.includes('.') || c.name.startsWith('$')) return 'field name cannot contain "." or start with "$"';
+    if (old && c.type !== old.type && !CONVERTIBLE.includes(c.type)) return `cannot convert existing values to ${c.type} (use ${CONVERTIBLE.slice(0, -1).join(', ')} or ${CONVERTIBLE.at(-1)})`;
+    if (!c.nullable && !c.default && (!old || old.nullable)) return NOT_NULL_DEFAULT;
+    return undefined;
+  },
+};
+
 export const mongoDriver: Driver = {
   label: 'MongoDB',
   defaultPort: 27017,
@@ -249,6 +308,7 @@ export const mongoDriver: Driver = {
   defaultDb: 'test',
   testSql: 'db.getMongo()',
   transactions: false,
+  columnDdl: mongoColumnDdl,
   explain: (s, mode) => `${s}.explain(${JSON.stringify(mode === 'estimated' ? 'queryPlanner' : 'executionStats')})`,
   autoLimitable: (stmts) => {
     if (stmts.length !== 1) return false;

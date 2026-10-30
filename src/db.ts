@@ -121,8 +121,8 @@ export interface ColumnDdl {
   add(obj: DbObject, col: ColumnDef): string;
   edit(obj: DbObject, old: ColumnDef, next: ColumnDef): string;
   drop(obj: DbObject, name: string): string;
-  /** validasi tambahan per database (added = kolom baru); undefined = valid */
-  check?(c: ColumnDef, added: boolean): string | undefined;
+  /** validasi tambahan per database (old kosong = kolom baru); undefined = valid */
+  check?(c: ColumnDef, old?: ColumnDef): string | undefined;
   /** SQLite: ubah tipe / NULL / default lewat rebuild tabel (changed memakai nama kolom asal); dijalankan sebelum langkah lain */
   rebuild?(obj: DbObject, original: ColumnRow[], changed: ColumnDef[]): string;
   /** bungkus seluruh script (mis. satu transaksi) */
@@ -229,8 +229,9 @@ function diffColumn(a: ColumnDef, b: ColumnDef): string[] {
 export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow[], rows: ColumnRow[]): { sql: string; errors: string[]; count: number; steps: ColumnStep[] } {
   const live = rows.filter((r) => !r.deleted && (r.orig || r.name.trim() || r.type.trim()));
   const clean = (r: ColumnRow): ColumnDef => ({ name: r.name.trim(), type: r.type.trim(), nullable: r.nullable, ...(r.default?.trim() ? { default: r.default.trim() } : {}) });
+  const old = (r: ColumnRow) => original.find((c) => c.name === r.orig)!;
   const errors = live.flatMap((r) => {
-    const e = checkColumn(r) ?? checkType(r.type, ddl.types) ?? ddl.check?.(clean(r), !r.orig);
+    const e = checkColumn(r) ?? checkType(r.type, ddl.types) ?? ddl.check?.(clean(r), r.orig ? old(r) : undefined);
     return e ? [`${r.orig ?? `new column ${rows.indexOf(r) + 1}`}: ${e}`] : [];
   });
   const seen = new Set<string>();
@@ -240,7 +241,6 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
     seen.add(k);
   }
   if (errors.length) return { sql: '', errors, count: 0, steps: [] };
-  const old = (r: ColumnRow) => original.find((c) => c.name === r.orig)!;
   // SQLite: perubahan selain nama dikerjakan satu rebuild tabel di awal (nama asal), rename / drop / add sesudahnya
   const rebuilt = ddl.rebuild ? live.filter((r) => r.orig && diffColumn(old(r), clean(r)).length) : [];
   const steps: ColumnStep[] = [
