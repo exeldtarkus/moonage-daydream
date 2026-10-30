@@ -360,6 +360,8 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
     explain: (s, mode) => (mode === 'estimated' ? `EXPLAIN ${s}` : analyze(s)),
     columnDdl: myColumnDdl,
     newDatabase: myNewDatabase,
+    dropDatabase: { script: (db) => `DROP DATABASE ${quoteMy(db)};`, system: ['mysql', 'information_schema', 'performance_schema', 'sys'] },
+    dropTable: (o) => `DROP TABLE ${myTbl(o)};`,
 
     async link(conn, password, db) {
       const p = pool(conn, password, db);
