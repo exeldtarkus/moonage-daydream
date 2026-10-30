@@ -151,6 +151,12 @@
         "icon": "$(play)"
       },
       {
+        "command": "moonageDaydream.editColumns",
+        "title": "Columns",
+        "category": "Moonage Daydream",
+        "icon": "$(table)"
+      },
+      {
         "command": "moonageDaydream.scriptAs",
         "title": "Script as…",
         "category": "Moonage Daydream",
@@ -515,12 +521,12 @@
       "view/item/context": [
         {
           "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?(\\.cols)?$/",
           "group": "inline"
         },
         {
           "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?(\\.cols)?$/",
           "group": "1_query"
         },
         {
@@ -699,8 +705,13 @@
           "group": "inline@2"
         },
         {
+          "command": "moonageDaydream.editColumns",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^table(\\.\\w+)*\\.cols$/",
+          "group": "2_script@2"
+        },
+        {
           "command": "moonageDaydream.scriptAs",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view|procedure|function|trigger)\\.def\\.ms$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view|procedure|function|trigger)\\.def\\.ms(\\.cols)?$/",
           "group": "2_script@3"
         },
         {
@@ -832,6 +843,10 @@
         },
         {
           "command": "moonageDaydream.selectTop",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.editColumns",
           "when": "false"
         },
         {

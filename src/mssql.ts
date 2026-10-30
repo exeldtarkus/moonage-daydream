@@ -1,6 +1,6 @@
 import * as sql from 'mssql';
 import { MAX_ROWS, connectMs, typedOptions } from './db';
-import type { Column, ConnectionInfo, Driver, ListKind, ObjectKind, ProcParam, QueryResult, ResultSet, Session, Sink } from './db';
+import type { Column, ColumnDdl, ColumnDef, ConnectionInfo, TypeSpec, Driver, ListKind, ObjectKind, ProcParam, QueryResult, ResultSet, Session, Sink } from './db';
 import { driverLog } from './log';
 import { maskSql, readOnly, splitStatements } from './sqlContext';
 
@@ -137,7 +137,7 @@ export function scriptAs(action: 'select' | 'insert' | 'update' | 'delete' | 'dr
 export interface TableMeta {
   schema: string;
   name: string;
-  columns: (Column & { collation?: string; identity?: { seed: string; increment: string }; computed?: { definition: string; persisted: boolean };
+  columns: (Omit<Column, 'default'> & { collation?: string; identity?: { seed: string; increment: string }; computed?: { definition: string; persisted: boolean };
     default?: { name: string; definition: string } })[];
   keys: { name: string; primary: boolean; clustered: boolean; columns: { name: string; desc: boolean }[] }[];
   checks: { name: string; definition: string }[];
@@ -165,6 +165,103 @@ export function createTableScript(t: TableMeta): string {
       + `${ix.included.length ? ` INCLUDE (${ix.included.map(q).join(', ')})` : ''}${ix.filter ? ` WHERE ${ix.filter}` : ''};`),
   ].join('\n');
 }
+
+/** Show / Add / Edit / Delete Column (klik kanan tabel); tab terikat ke database tabel, jadi nama dua bagian */
+const tbl = (o: { schema: string; name: string }) => `${q(o.schema)}.${q(o.name)}`;
+const dfName = (o: { name: string }, col: string) => q(`DF_${o.name}_${col}`);
+/** default constraint kolom dicari saat dijalankan (nama buatan server tidak diketahui) lalu di-drop */
+const dropDefault = (o: { schema: string; name: string }, col: string) => [
+  `DECLARE @df sysname = (SELECT name FROM sys.default_constraints WHERE parent_object_id = OBJECT_ID(${lit(tbl(o))})`,
+  `  AND parent_column_id = COLUMNPROPERTY(OBJECT_ID(${lit(tbl(o))}), ${lit(col)}, 'ColumnId'));`,
+  // EXEC (...) tidak menerima pemanggilan fungsi: perintah disusun di variabel
+  `IF @df IS NOT NULL BEGIN DECLARE @drop nvarchar(max) = ${lit(`ALTER TABLE ${tbl(o)} DROP CONSTRAINT `)} + QUOTENAME(@df); EXEC sp_executesql @drop; END;`,
+].join('\n');
+const colDef = (c: ColumnDef) => `${q(c.name)} ${c.type.trim()} ${c.nullable ? 'NULL' : 'NOT NULL'}`;
+const dflt = (d?: string) => (d?.trim() ? d.trim() : undefined);
+/** (x) apa adanya bila kurung luar menutup di akhir (format sys.default_constraints: ((0))), selain itu dibungkus */
+export function wrapped(d: string): string {
+  let depth = 0;
+  for (let i = 0; i < d.length; i++) {
+    depth += d[i] === '(' ? 1 : d[i] === ')' ? -1 : 0;
+    if (depth === 0) return i === d.length - 1 && d[0] === '(' ? d : `(${d})`;
+  }
+  return `(${d})`;
+}
+
+/** tipe data bawaan SQL Server (docs "Data types (Transact-SQL)"), urut dropdown editor Columns */
+export const MS_TYPES: TypeSpec[] = [
+  ...['bigint', 'int', 'smallint', 'tinyint', 'bit'].map((name) => ({ name, group: 'Exact numbers' })),
+  { name: 'decimal', group: 'Exact numbers', args: 'precisionScale', max: 38, def: '18,2' },
+  { name: 'numeric', group: 'Exact numbers', args: 'precisionScale', max: 38, def: '18,2' },
+  { name: 'money', group: 'Exact numbers' },
+  { name: 'smallmoney', group: 'Exact numbers' },
+  { name: 'float', group: 'Approximate numbers', args: 'precision', max: 53 },
+  { name: 'real', group: 'Approximate numbers' },
+  { name: 'date', group: 'Date and time' },
+  { name: 'time', group: 'Date and time', args: 'scale', max: 7 },
+  { name: 'datetime2', group: 'Date and time', args: 'scale', max: 7 },
+  { name: 'datetimeoffset', group: 'Date and time', args: 'scale', max: 7 },
+  { name: 'datetime', group: 'Date and time' },
+  { name: 'smalldatetime', group: 'Date and time' },
+  { name: 'char', group: 'Text', args: 'length', max: 8000, def: '10' },
+  { name: 'varchar', group: 'Text', args: 'length', max: 8000, allowMax: true, def: '100' },
+  { name: 'text', group: 'Text', note: 'deprecated, use varchar(max)' },
+  { name: 'nchar', group: 'Unicode text', args: 'length', max: 4000, def: '10' },
+  { name: 'nvarchar', group: 'Unicode text', args: 'length', max: 4000, allowMax: true, def: '100' },
+  { name: 'ntext', group: 'Unicode text', note: 'deprecated, use nvarchar(max)' },
+  { name: 'sysname', group: 'Unicode text', note: 'nvarchar(128) NOT NULL' },
+  { name: 'binary', group: 'Binary', args: 'length', max: 8000, def: '16' },
+  { name: 'varbinary', group: 'Binary', args: 'length', max: 8000, allowMax: true, def: 'max' },
+  { name: 'image', group: 'Binary', note: 'deprecated, use varbinary(max)' },
+  { name: 'uniqueidentifier', group: 'Other' },
+  { name: 'xml', group: 'Other' },
+  { name: 'json', group: 'Other', note: 'SQL Server 2025 / Azure SQL' },
+  { name: 'vector', group: 'Other', args: 'length', max: 1998, def: '3', note: 'dimensions; SQL Server 2025 / Azure SQL' },
+  { name: 'sql_variant', group: 'Other' },
+  { name: 'hierarchyid', group: 'Other' },
+  { name: 'geometry', group: 'Other' },
+  { name: 'geography', group: 'Other' },
+  { name: 'rowversion', group: 'Other', note: 'set by the server, one per table' },
+];
+
+export const msColumnDdl: ColumnDdl = {
+  separator: '\nGO\n',
+  types: MS_TYPES,
+  show: (o) => `SELECT c.column_id AS ordinal, c.name AS column_name,
+  t.name + CASE WHEN t.name IN ('varchar', 'char', 'varbinary', 'binary') THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length AS varchar(10))) + ')'
+    WHEN t.name IN ('nvarchar', 'nchar') THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length / 2 AS varchar(10))) + ')'
+    WHEN t.name IN ('decimal', 'numeric') THEN '(' + CAST(c.precision AS varchar(10)) + ',' + CAST(c.scale AS varchar(10)) + ')'
+    WHEN t.name IN ('datetime2', 'time', 'datetimeoffset') THEN '(' + CAST(c.scale AS varchar(10)) + ')' ELSE '' END AS data_type,
+  IIF(c.is_nullable = 1, 'YES', 'NO') AS nullable, d.definition AS default_value,
+  IIF(c.is_identity = 1, CONCAT(CAST(ic.seed_value AS varchar(40)), ', ', CAST(ic.increment_value AS varchar(40))), NULL) AS [identity],
+  cc.definition AS computed, IIF(pk.column_id IS NULL, '', 'PK') AS primary_key, c.collation_name AS collation
+FROM sys.columns c
+JOIN sys.types t ON t.user_type_id = c.user_type_id
+LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id
+LEFT JOIN sys.identity_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+LEFT JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
+OUTER APPLY (SELECT TOP 1 x.column_id FROM sys.indexes i JOIN sys.index_columns x ON x.object_id = i.object_id AND x.index_id = i.index_id
+  WHERE i.object_id = c.object_id AND i.is_primary_key = 1 AND x.column_id = c.column_id) pk
+WHERE c.object_id = OBJECT_ID(${lit(tbl(o))})
+ORDER BY c.column_id;`,
+  add: (o, c) => `ALTER TABLE ${tbl(o)} ADD ${colDef(c)}${dflt(c.default) ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(dflt(c.default)!)}` : ''};`,
+  drop: (o, name) => `${dropDefault(o, name)}\nALTER TABLE ${tbl(o)} DROP COLUMN ${q(name)};`,
+  edit(o, old, next) {
+    const renamed = next.name !== old.name;
+    const altered = next.type.trim() !== old.type || next.nullable !== old.nullable;
+    const [was, now] = [dflt(old.default), dflt(next.default)];
+    // default terikat menolak ALTER COLUMN tipe (error 5074): drop dulu lalu pasang lagi
+    const redefault = was !== now || (!!was && altered);
+    // satu langkah per batch (GO): ALTER setelah sp_rename memakai nama baru
+    const steps = [
+      ...(redefault && was ? [dropDefault(o, old.name)] : []),
+      ...(renamed ? [`EXEC sp_rename ${lit(`${tbl(o)}.${q(old.name)}`)}, ${lit(next.name)}, 'COLUMN';`] : []),
+      ...(altered ? [`ALTER TABLE ${tbl(o)} ALTER COLUMN ${colDef(next)};`] : []),
+      ...(redefault && now ? [`ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${dfName(o, next.name)} DEFAULT ${wrapped(now)} FOR ${q(next.name)};`] : []),
+    ];
+    return steps.length ? steps.join('\nGO\n') : `-- no changes to ${q(old.name)}`;
+  },
+};
 
 /** SQL Server Agent: jalankan / hentikan job */
 export const jobScript = (action: 'start' | 'stop', job: string) => `EXEC msdb.dbo.sp_${action}_job @job_name = ${lit(job)};`;
@@ -238,6 +335,7 @@ export function fmtType(type: string, maxLength: number, precision: number, scal
     return `${type}(${type.startsWith('n') ? maxLength / 2 : maxLength})`;
   }
   if (type === 'decimal' || type === 'numeric') return `${type}(${precision},${scale})`;
+  if (type === 'datetime2' || type === 'time' || type === 'datetimeoffset') return `${type}(${scale})`;
   return type;
 }
 
@@ -502,16 +600,18 @@ export const mssqlDriver: Driver = {
     return rows.map((r) => r.name);
   },
   async columns(conn, password, db, obj) {
-    const rows = await select<{ name: string; type: string; max_length: number; precision: number; scale: number; is_nullable: boolean; is_identity: boolean; is_computed: boolean }>(
+    const rows = await select<{ name: string; type: string; max_length: number; precision: number; scale: number; is_nullable: boolean; is_identity: boolean; is_computed: boolean; df: string | null }>(
       conn, password,
       // all_columns: termasuk kolom view / tabel sistem (sys.objects dll.), sys.columns hanya objek user
-      `SELECT c.name, t.name AS type, c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed FROM ${q(db)}.sys.all_columns c
-        JOIN ${q(db)}.sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID(@full) ORDER BY c.column_id`,
+      `SELECT c.name, t.name AS type, c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed, d.definition AS df FROM ${q(db)}.sys.all_columns c
+        JOIN ${q(db)}.sys.types t ON t.user_type_id = c.user_type_id LEFT JOIN ${q(db)}.sys.default_constraints d ON d.object_id = c.default_object_id WHERE c.object_id = OBJECT_ID(@full) ORDER BY c.column_id`,
       { full: `${q(db)}.${q(obj.schema)}.${q(obj.name)}` },
     );
-    return rows.map((r) => ({ name: r.name, type: fmtType(r.type, r.max_length, r.precision, r.scale), nullable: r.is_nullable,
+    return rows.map((r) => ({ name: r.name, type: fmtType(r.type, r.max_length, r.precision, r.scale), nullable: r.is_nullable, ...(r.df ? { default: r.df } : {}),
       ...(r.is_identity || r.is_computed || r.type === 'timestamp' ? { generated: true } : {}) }));
   },
+
+  columnDdl: msColumnDdl,
 
   selectTop(db, obj, n) {
     return `SELECT TOP ${n} * FROM ${q(db)}.${q(obj.schema)}.${q(obj.name)};`;

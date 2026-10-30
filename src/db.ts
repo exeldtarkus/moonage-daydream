@@ -97,6 +97,140 @@ export interface Column {
   nullable: boolean;
   /** nilai dibuat server (SQL Server identity / computed / rowversion): tidak diisi di INSERT / UPDATE */
   generated?: boolean;
+  /** definisi default kolom (mis. ((0))); hanya driver dengan columnDdl yang mengisi */
+  default?: string;
+}
+
+/** kolom yang ditambah / diubah lewat Add / Edit Column */
+export type ColumnDef = Pick<Column, 'name' | 'type' | 'nullable' | 'default'>;
+
+/** script kolom tabel (klik kanan tabel): show dijalankan langsung, lainnya dibuka di tab tanpa dijalankan */
+export interface ColumnDdl {
+  /** pemisah langkah script (SQL Server: GO) */
+  separator: string;
+  /** tipe bawaan untuk dropdown (urut tampil, dikelompokkan per group) */
+  types: TypeSpec[];
+  show(obj: DbObject): string;
+  add(obj: DbObject, col: ColumnDef): string;
+  edit(obj: DbObject, old: ColumnDef, next: ColumnDef): string;
+  drop(obj: DbObject, name: string): string;
+}
+
+/**
+ * tipe data bawaan untuk dropdown editor Columns. args = ukuran di dalam kurung: length (n / max bila allowMax),
+ * precisionScale (p,s), precision (p), scale (detik pecahan); max = batas atas; tanpa args = tanpa ukuran.
+ */
+export interface TypeSpec {
+  name: string;
+  group: string;
+  args?: 'length' | 'precisionScale' | 'precision' | 'scale';
+  max?: number;
+  allowMax?: boolean;
+  /** ukuran awal saat tipe dipilih di dropdown */
+  def?: string;
+  note?: string;
+}
+
+/** 'decimal(10, 2)' -> { base: 'decimal', args: '10,2' }; known = ada di daftar (selain itu tipe custom / user-defined, apa adanya) */
+export function splitType(type: string, specs: TypeSpec[]): { base: string; args: string; known: boolean } {
+  const m = /^\s*([\w ]+?)\s*(?:\((.*)\))?\s*$/.exec(type);
+  const spec = m && specs.find((x) => x.name === m[1].toLowerCase());
+  if (!m || !spec) return { base: type.trim(), args: '', known: false };
+  return { base: spec.name, args: (m[2] ?? '').replace(/\s+/g, ''), known: true };
+}
+
+/** ukuran tipe sesuai aturan TypeSpec; undefined = valid (tipe custom tidak dicek, server yang menolak) */
+export function checkType(type: string, specs: TypeSpec[]): string | undefined {
+  const { base, args, known } = splitType(type, specs);
+  const spec = specs.find((x) => x.name === base);
+  if (!known || !spec || !args) return undefined;
+  const int = (v: string | undefined, lo: number, hi: number) => v !== undefined && /^\d+$/.test(v) && +v >= lo && +v <= hi;
+  const max = spec.max ?? 0;
+  switch (spec.args) {
+    case undefined: return `${base} has no size`;
+    case 'length': return (spec.allowMax && args.toLowerCase() === 'max') || int(args, 1, max) ? undefined : `${base}: length 1-${max}${spec.allowMax ? ' or max' : ''}`;
+    case 'precision': return int(args, 1, max) ? undefined : `${base}: precision 1-${max}`;
+    case 'scale': return int(args, 0, max) ? undefined : `${base}: fractional seconds 0-${max}`;
+    case 'precisionScale': {
+      const [p, sc, extra] = args.split(',');
+      return extra === undefined && int(p, 1, max) && (sc === undefined || int(sc, 0, +p)) ? undefined : `${base}: precision 1-${max}, scale 0-precision`;
+    }
+  }
+}
+
+/** validasi input Add / Edit Column; undefined = valid */
+export function checkColumn(c: ColumnDef): string | undefined {
+  if (!c.name.trim()) return 'Column name is required';
+  if (!c.type.trim()) return 'Data type is required';
+  return undefined;
+}
+
+/** contextValue objek di explorer: .def = Show / Edit, .ms = SQL Server (Script as), .cols = editor Columns */
+export function objContext(kind: ObjectKind, f: { def: boolean; ms: boolean; cols: boolean }): string {
+  return `${kind}${f.def ? '.def' : ''}${f.ms ? '.ms' : ''}${f.cols && kind === 'table' ? '.cols' : ''}`;
+}
+
+/** baris editor Columns: orig = nama kolom asal (kosong = kolom baru), deleted = ditandai hapus */
+export type ColumnRow = ColumnDef & { orig?: string; deleted?: boolean; generated?: boolean };
+
+/** hasil ColumnDdl.show -> kolom yang bisa diedit + info read-only (alias wajib: column_name, data_type, nullable YES/NO, default_value) */
+export function showColumns(rs: Pick<ResultSet, 'columns' | 'rows'>): { cols: ColumnRow[]; info: { columns: string[]; rows: unknown[][] } } {
+  const at = (k: string) => rs.columns.indexOf(k);
+  const core = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value'];
+  const extra = rs.columns.map((c, i) => [c, i] as const).filter(([c]) => !core.includes(c));
+  // identity / computed / generated terisi = nilai dibuat server: hanya nama yang bisa diubah
+  const gen = ['identity', 'computed', 'generated'].map(at).filter((i) => i >= 0);
+  return {
+    cols: rs.rows.map((r) => {
+      const d = r[at('default_value')];
+      return { name: String(r[at('column_name')]), type: String(r[at('data_type')]), nullable: r[at('nullable')] === 'YES',
+        ...(d !== null && d !== undefined && d !== '' ? { default: String(d) } : {}),
+        ...(gen.some((i) => r[i] !== null && r[i] !== undefined && r[i] !== '') ? { generated: true } : {}) };
+    }),
+    info: { columns: extra.map(([c]) => c), rows: rs.rows.map((r) => extra.map(([, i]) => r[i])) },
+  };
+}
+
+const sameCol = (a: ColumnDef, b: ColumnDef) => a.name === b.name && a.type.trim() === b.type.trim() && a.nullable === b.nullable
+  && (a.default?.trim() || '') === (b.default?.trim() || '');
+
+/** editor Columns -> script (hapus, ubah, tambah; satu langkah per batch); errors = input tidak valid, script kosong */
+/** satu langkah di daftar Pending changes */
+export interface ColumnStep { kind: 'drop' | 'edit' | 'add'; column: string; to?: string; sql: string; detail?: string[] }
+
+/** perubahan kolom selain nama, untuk dibaca user: tipe, NULL, default */
+function diffColumn(a: ColumnDef, b: ColumnDef): string[] {
+  const nul = (n: boolean) => (n ? 'NULL' : 'NOT NULL');
+  const [da, db] = [a.default?.trim() || '', b.default?.trim() || ''];
+  return [
+    ...(a.type.trim() !== b.type.trim() ? [`${a.type} → ${b.type}`] : []),
+    ...(a.nullable !== b.nullable ? [`${nul(a.nullable)} → ${nul(b.nullable)}`] : []),
+    ...(da === db ? [] : !db ? [`default ${da} removed`] : !da ? [`default ${db} added`] : [`default ${da} → ${db}`]),
+  ];
+}
+
+export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnDef[], rows: ColumnRow[]): { sql: string; errors: string[]; count: number; steps: ColumnStep[] } {
+  const live = rows.filter((r) => !r.deleted && (r.orig || r.name.trim() || r.type.trim()));
+  const errors = live.flatMap((r) => {
+    const e = checkColumn(r) ?? checkType(r.type, ddl.types);
+    return e ? [`${r.orig ?? `new column ${rows.indexOf(r) + 1}`}: ${e}`] : [];
+  });
+  const seen = new Set<string>();
+  for (const r of live) {
+    const k = r.name.trim().toLowerCase();
+    if (k && seen.has(k)) errors.push(`Duplicate column name: ${r.name.trim()}`);
+    seen.add(k);
+  }
+  if (errors.length) return { sql: '', errors, count: 0, steps: [] };
+  const clean = (r: ColumnRow): ColumnDef => ({ name: r.name.trim(), type: r.type.trim(), nullable: r.nullable, ...(r.default?.trim() ? { default: r.default.trim() } : {}) });
+  const old = (r: ColumnRow) => original.find((c) => c.name === r.orig)!;
+  const steps: ColumnStep[] = [
+    ...rows.filter((r) => r.deleted && r.orig).map((r): ColumnStep => ({ kind: 'drop', column: r.orig!, sql: ddl.drop(obj, r.orig!) })),
+    ...live.filter((r) => r.orig && !sameCol(old(r), clean(r))).map((r): ColumnStep => ({ kind: 'edit', column: r.orig!,
+      ...(clean(r).name !== r.orig ? { to: clean(r).name } : {}), sql: ddl.edit(obj, old(r), clean(r)), detail: diffColumn(old(r), clean(r)) })),
+    ...live.filter((r) => !r.orig).map((r): ColumnStep => ({ kind: 'add', column: clean(r).name, sql: ddl.add(obj, clean(r)) })),
+  ];
+  return { sql: steps.map((x) => x.sql).join(ddl.separator), errors: [], count: steps.length, steps };
 }
 
 /** penerima baris export All Data; row() boleh mengembalikan Promise (backpressure) */
@@ -165,6 +299,8 @@ export interface Driver {
   /** Edit: script yang mengubah objek (CREATE OR ALTER / CREATE OR REPLACE / DROP + CREATE), tidak dijalankan otomatis */
   editScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject, kind: ObjectKind): Promise<string>;
   /** Script as CREATE untuk tabel (lengkap: identity, computed, default, constraint, FK, index); tidak ada = kolom + PK saja */
+  /** Show / Add / Edit / Delete Column untuk tabel; tidak ada = menu kolom tidak tampil */
+  columnDdl?: ColumnDdl;
   createTableScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<string>;
   /** Run: script EXEC / CALL / SELECT dengan argumen; params = jumlah argumen (0 = langsung dijalankan) */
   runScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<{ sql: string; params: number }>;

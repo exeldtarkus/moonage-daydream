@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, PAGE_ROWS, QueryResult, ResultSet, Session, address, confirmAutoCommit, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnDef, ColumnRow, ConnectionInfo, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -16,6 +16,7 @@ import { CONN_COLORS, colorLabel, isConnColor } from './connColor';
 import type { ConnColor } from './connColor';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
+import { columnsHtml } from './columnsHtml';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
@@ -106,6 +107,17 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
     }, 1000);
     ctx.subscriptions.push({ dispose: () => clearInterval(poll) });
+    // npm run dev: koneksi Docker lokal untuk test manual (file ter-ignore git, [{ conn, password }]); hanya ditambah bila belum ada
+    const seed = path.join(ctx.extensionPath, 'docs', 'main', 'temp', 'dev-connections.json');
+    if (fs.existsSync(seed)) {
+      try {
+        for (const s of JSON.parse(fs.readFileSync(seed, 'utf8')) as { conn: ConnectionInfo; password: string }[]) {
+          if (!conns.get(s.conn.name)) void conns.save(s.conn, s.password).then(() => { log.info(`dev connection added: ${s.conn.name}`); explorer.refresh(); });
+        }
+      } catch (e) {
+        log.error(`dev-connections - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      }
+    }
   }
   ctx.subscriptions.push(
     log,
@@ -269,6 +281,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.editObject', (n?: Node) => objectScript(n, 'edit')),
     vscode.commands.registerCommand('moonageDaydream.runProcedure', (n?: Node) => objectScript(n, 'run')),
     vscode.commands.registerCommand('moonageDaydream.scriptAs', scriptAsCommand),
+    vscode.commands.registerCommand('moonageDaydream.editColumns', columnsEditor),
     vscode.commands.registerCommand('moonageDaydream.startJob', (n?: Node) => jobCommand(n, 'start')),
     vscode.commands.registerCommand('moonageDaydream.stopJob', (n?: Node) => jobCommand(n, 'stop')),
     vscode.commands.registerCommand('moonageDaydream.activityMonitor', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', ACTIVITY_SQL, true)),
@@ -683,6 +696,67 @@ async function scriptAsCommand(n?: Node) {
     log.error(`scriptAs ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.db} / ${n.obj.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`Script as ${action} failed: ${errMsg(e)}`);
   }
+}
+
+/** editor Columns per tabel (satu tab per koneksi / database / tabel) */
+const columnPanels = new Map<string, vscode.WebviewPanel>();
+
+/**
+ * klik kanan tabel -> Columns: grid kolom bisa diedit, script ALTER tampil di SQL preview (seperti DBeaver);
+ * Execute menjalankan script setelah konfirmasi, Open in SQL Editor = tab SQL tanpa dijalankan.
+ */
+function columnsEditor(n?: Node) {
+  if (n?.kind !== 'obj' || !drivers[n.c.type].columnDdl) return;
+  const { c: conn, db, obj } = n;
+  const d = drivers[conn.type];
+  const ddl = d.columnDdl!;
+  const table = `${obj.schema ? `${obj.schema}.` : ''}${obj.name}`;
+  const key = `${conn.name}\u0000${db}\u0000${table}`;
+  const open = columnPanels.get(key);
+  if (open) return open.reveal();
+  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.columns', `Columns: ${table}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
+  columnPanels.set(key, panel);
+  panel.onDidDispose(() => columnPanels.delete(key));
+  panel.webview.html = columnsHtml(panel.webview.cspSource, { conn: conn.name, db, table }, !!conn.readOnly);
+  const c = { ...conn, database: db }; // script memakai nama dua bagian: dijalankan di database tabel
+  let original: ColumnDef[] = [];
+  const post = (m: unknown) => void panel.webview.postMessage(m);
+  async function load() {
+    try {
+      post({ type: 'status', text: 'Loading…' });
+      const rs = (await d.run(c, await conns.password(conn.name), ddl.show(obj))).resultSets[0];
+      const { cols, info } = showColumns(rs ?? { columns: [], rows: [] });
+      original = cols;
+      post({ type: 'load', cols, info, types: ddl.types });
+    } catch (e) {
+      log.error(`columnsEditor load - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${table}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      post({ type: 'status', text: `Load failed: ${errMsg(e)}`, error: true });
+    }
+  }
+  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[] }) => {
+    if (m.type === 'ready' || m.type === 'refresh') return load();
+    const r = columnChanges(ddl, obj, original, m.rows ?? []);
+    if (m.type === 'change') return post({ type: 'script', ...r });
+    if (!r.sql) return;
+    if (m.type === 'open') return openScript(conn, db, r.sql);
+    if (m.type !== 'execute' || conn.readOnly) return;
+    const drops = (m.rows ?? []).filter((x) => x.deleted && x.orig).map((x) => x.orig);
+    const ok = await vscode.window.showWarningMessage(`Apply ${r.count} column change(s) to ${table} on ${conn.name} / ${db}?`,
+      { modal: true, detail: `${drops.length ? `Deleted columns lose their data: ${drops.join(', ')}.\n` : ''}The script in SQL preview is executed and committed.` }, 'Execute');
+    if (!ok) return;
+    try {
+      post({ type: 'status', text: 'Executing…' });
+      await d.run(c, await conns.password(conn.name), r.sql);
+      log.info(`columnsEditor execute: ${conn.name} / ${db} / ${table}: ${r.count} change(s)`);
+      await load();
+      post({ type: 'status', text: `Saved ${r.count} change(s)` });
+      explorer.refresh();
+    } catch (e) {
+      log.error(`columnsEditor execute - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${table}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      post({ type: 'status', text: `Execute failed: ${errMsg(e)}`, error: true });
+      vscode.window.showErrorMessage(`Columns: execute failed: ${errMsg(e)}`);
+    }
+  });
 }
 
 /** SQL Server Agent: start / stop job setelah konfirmasi */
