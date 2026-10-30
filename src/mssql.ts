@@ -248,6 +248,7 @@ ORDER BY c.column_id;`,
   add: (o, c) => `ALTER TABLE ${tbl(o)} ADD ${colDef(c)}${dflt(c.default) ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(dflt(c.default)!)}` : ''};`,
   drop: (o, name) => `${dropDefault(o, name)}\nALTER TABLE ${tbl(o)} DROP COLUMN ${q(name)};`,
   aiTypes: ['bigint', 'int', 'smallint', 'tinyint'],
+  nameMax: 128,
   fkActions: ['NO ACTION', 'CASCADE', 'SET NULL', 'SET DEFAULT'],
   create(o, cols) {
     const pk = cols.filter((c) => c.pk);

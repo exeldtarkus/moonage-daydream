@@ -185,7 +185,7 @@ ORDER BY ordinal_position;`,
   aiTypes: [...INTS, ...INTS.map((x) => `${x} unsigned`)],
   // InnoDB menolak SET DEFAULT
   fkActions: ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL'],
-  check: (c) => ((c as NewColumn).ai && !(c as NewColumn).pk && !(c as NewColumn).unique ? 'auto increment needs PK or UQ (MySQL)' : undefined),
+  aiNeedsKey: true,
   create(o, cols) {
     const act = (k: string, v?: string) => (v && v !== 'NO ACTION' ? ` ON ${k} ${v}` : '');
     const pk = cols.filter((c) => c.pk);

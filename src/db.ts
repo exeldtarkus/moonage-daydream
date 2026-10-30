@@ -140,6 +140,14 @@ export interface ColumnDdl {
   aiTypes?: string[];
   /** pilihan ON DELETE / ON UPDATE foreign key (pertama = default, tidak ditulis) */
   fkActions?: string[];
+  /** MySQL: auto increment harus PK / UQ */
+  aiNeedsKey?: boolean;
+  /** panjang maksimum nama constraint (byte): SQL Server 128, MySQL 64, PostgreSQL 63 */
+  nameMax?: number;
+  /** pasang / lepas auto increment / identity di kolom yang ada (tidak ada = hanya kolom baru) */
+  setAi?(obj: DbObject, col: ColumnDef, on: boolean): string;
+  /** MySQL: DROP PRIMARY KEY + ADD PRIMARY KEY (...) dalam satu statement */
+  replacePk?(obj: DbObject, cols: string[]): string;
 }
 
 /** kolom New Table: atribut PK / AI (auto increment / identity) / UQ / FK satu kolom */
@@ -156,15 +164,13 @@ export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): {
   const errors: string[] = [];
   if (!obj.name.trim()) errors.push('Table name is required');
   if (!cols.length) errors.push('Add at least one column');
+  const bad = new Set<NewColumn>();
   cols.forEach((c, i) => {
     const e = checkColumn(c) ?? checkType(c.type, ddl.types) ?? ddl.check?.(c, undefined, cols);
-    if (e) errors.push(`${c.name || `column ${i + 1}`}: ${e}`);
-    else if (c.ai && !ddl.aiTypes) errors.push(`${c.name}: auto increment is not supported here`);
-    else if (c.fk && !ddl.fkActions) errors.push(`${c.name}: foreign keys are not supported here`);
-    else if (c.ai && ddl.aiTypes && !ddl.aiTypes.includes(splitType(c.type, ddl.types).base)) errors.push(`${c.name}: auto increment needs an integer type (${ddl.aiTypes.join(', ')})`);
-    if (c.fk && ddl.fkActions && (!c.fk.table || !c.fk.column)) errors.push(`${c.name}: choose the referenced table and column`);
+    if (e) { errors.push(`${c.name || `column ${i + 1}`}: ${e}`); bad.add(c); }
   });
-  if (cols.filter((c) => c.ai).length > 1) errors.push('Only one auto increment column per table');
+  errors.push(...checkRows(ddl, obj, cols.filter((c) => !bad.has(c))));
+  if (bad.size && cols.filter((c) => c.ai).length > 1 && !errors.includes('Only one auto increment column per table')) errors.push('Only one auto increment column per table');
   const seen = new Set<string>();
   for (const c of cols) {
     const k = c.name.toLowerCase();
@@ -172,6 +178,37 @@ export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): {
     seen.add(k);
   }
   return errors.length || !ddl.create ? { sql: '', errors } : { sql: ddl.create({ ...obj, name: obj.name.trim() }, cols), errors: [] };
+}
+
+/**
+ * validasi atribut kolom (New Table dan editor Columns): AI (tipe, jumlah, key, kolom lama), FK (tujuan, SET NULL), panjang nama constraint baru.
+ * rows sudah di-trim, baris yang dihapus tidak ikut; original = kolom dari Show (editor Columns).
+ */
+export function checkRows(ddl: ColumnDdl, obj: DbObject, rows: (NewColumn & { orig?: string })[], original?: ColumnRow[]): string[] {
+  const errors: string[] = [];
+  const old = (r: { orig?: string }) => (r.orig ? original?.find((c) => c.name === r.orig) : undefined);
+  const long = (n: string) => (ddl.nameMax && Buffer.byteLength(n, 'utf8') > ddl.nameMax ? [`${n}: constraint name too long (max ${ddl.nameMax})`] : []);
+  for (const r of rows) {
+    const o = old(r);
+    if (r.ai && !ddl.aiTypes) errors.push(`${r.name}: auto increment is not supported here`);
+    // tipe dicek bila AI baru dinyalakan atau tipenya berubah (identity lama bertipe numeric(18,0) tetap boleh)
+    else if (r.ai && (!o?.ai || o.type !== r.type) && !ddl.aiTypes!.includes(splitType(r.type, ddl.types).base)) errors.push(`${r.name}: auto increment needs an integer type (${ddl.aiTypes!.join(', ')})`);
+    else if (r.ai && ddl.aiNeedsKey && !r.pk && !r.unique) errors.push(`${r.name}: auto increment needs PK or UQ (MySQL)`);
+    if (o && !ddl.setAi && !!r.ai !== !!o.ai) errors.push(`${r.name}: identity can only be set on a new column`);
+    if (r.fk && !ddl.fkActions) errors.push(`${r.name}: foreign keys are not supported here`);
+    else if (r.fk && (!r.fk.table || !r.fk.column)) errors.push(`${r.name}: choose the referenced table and column`);
+    else if (r.fk) for (const [k, label] of [['onDelete', 'DELETE'], ['onUpdate', 'UPDATE']] as const) {
+      if (r.fk[k] === 'SET NULL' && !r.nullable) errors.push(`${r.name}: ON ${label} SET NULL needs a nullable column`);
+    }
+    if (r.unique && !o?.unique) errors.push(...long(`UQ_${obj.name}_${r.name}`));
+    if (r.fk && !o?.fk) errors.push(...long(`FK_${obj.name}_${r.name}`));
+  }
+  if (rows.filter((r) => r.ai).length > 1) errors.push('Only one auto increment column per table');
+  // nama PK baru hanya bila susunan PK berubah; MySQL (replacePk) tanpa nama
+  const pkNow = rows.filter((r) => r.pk).map((r) => r.orig ?? `\u0000${r.name}`).join('\u0001');
+  const pkOld = (original ?? []).filter((c) => c.pk).map((c) => c.name).join('\u0001');
+  if (!ddl.replacePk && pkNow && (!original || pkNow !== pkOld)) errors.push(...long(`PK_${obj.name}`));
+  return errors;
 }
 
 /**

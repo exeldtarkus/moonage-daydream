@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { showColumns } from '../db';
+import { checkRows, drivers, showColumns, type ColumnDdl } from '../db';
 
 const COLS = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'ai', 'primary_key', 'pk_name', 'uq_name', 'uq_index',
   'fk_name', 'fk_schema', 'fk_table', 'fk_column', 'fk_delete', 'fk_update', 'gen', 'keys'];
@@ -31,4 +31,37 @@ test('showColumns: SQL Server identity stays rename-only but shows AI on; genera
   assert.ok(info.columns.includes('identity'));
   assert.equal(cols[1].gen, 'AS (qty * price) VIRTUAL');
   assert.equal(cols[1].generated, undefined);
+});
+
+const ms = drivers.mssql.columnDdl!;
+const stub: ColumnDdl = { ...ms, aiTypes: ['int'] };
+const ot = { schema: 'dbo', name: 'order_item' };
+
+test('checkRows: SET NULL on a NOT NULL FK column is rejected', () => {
+  assert.deepEqual(checkRows(stub, ot, [{ name: 'order_id', type: 'int', nullable: false, fk: { schema: 'dbo', table: 'orders', column: 'id', onDelete: 'SET NULL' } }]),
+    ['order_id: ON DELETE SET NULL needs a nullable column']);
+  assert.deepEqual(checkRows(stub, ot, [{ name: 'order_id', type: 'int', nullable: false, fk: { schema: 'dbo', table: 'orders', column: 'id', onUpdate: 'SET NULL' } }]),
+    ['order_id: ON UPDATE SET NULL needs a nullable column']);
+  assert.deepEqual(checkRows(stub, ot, [{ name: 'order_id', type: 'int', nullable: true, fk: { schema: 'dbo', table: 'orders', column: 'id', onDelete: 'SET NULL' } }]), []);
+});
+
+test('checkRows: identity on an existing column only when setAi exists', () => {
+  const rows = [{ name: 'qty', orig: 'qty', type: 'int', nullable: false, ai: true }];
+  const original = [{ name: 'qty', type: 'int', nullable: false }];
+  assert.deepEqual(checkRows({ ...stub, setAi: undefined }, ot, rows, original), ['qty: identity can only be set on a new column']);
+  assert.deepEqual(checkRows({ ...stub, setAi: () => '' }, ot, rows, original), []);
+});
+
+test('checkRows: generated constraint names respect nameMax (bytes)', () => {
+  const e = checkRows({ ...stub, nameMax: 63 }, { schema: 'dbo', name: 't'.repeat(60) }, [{ name: 'c', type: 'int', nullable: true, unique: true }]);
+  assert.equal(e.length, 1);
+  assert.match(e[0], /^UQ_t{60}_c: constraint name too long \(max 63\)$/);
+  assert.equal(ms.nameMax, 128);
+});
+
+test('checkRows: MySQL AI needs a key through aiNeedsKey (also for existing columns in the Columns editor)', () => {
+  const my = drivers.mysql.columnDdl!;
+  assert.equal(my.aiNeedsKey, true);
+  assert.deepEqual(checkRows(my, { schema: '', name: 't' }, [{ name: 'n', type: 'int', nullable: false, ai: true }]), ['n: auto increment needs PK or UQ (MySQL)']);
+  assert.deepEqual(checkRows(my, { schema: '', name: 't' }, [{ name: 'n', type: 'int', nullable: false, ai: true, pk: true }]), []);
 });
