@@ -736,6 +736,11 @@
           "group": "2_db@1"
         },
         {
+          "command": "moonageDaydream.newDatabase",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^ms\\.databases$/",
+          "group": "1_db@1"
+        },
+        {
           "command": "moonageDaydream.activityMonitor",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
           "group": "3_server@1"

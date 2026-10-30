@@ -776,16 +776,21 @@ async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
   }
 }
 
-/** klik kanan koneksi -> New Database…: nama, pilihan bertahap (quick pick), lalu Execute (konfirmasi) atau Open in SQL Editor */
+/** klik kanan koneksi / folder Databases -> New Database…: nama, pilihan bertahap (quick pick), lalu Execute (konfirmasi) atau Open in SQL Editor */
 async function newDatabase(n?: Node) {
-  if (n?.kind !== 'conn' || !drivers[n.c.type].newDatabase) return;
+  if ((n?.kind !== 'conn' && !(n?.kind === 'mfolder' && n.folder === 'databases')) || !drivers[n.c.type].newDatabase) return;
   const conn = n.c;
   const d = drivers[conn.type];
   const nd = d.newDatabase!;
   const name = (await vscode.window.showInputBox({ title: `New Database on ${conn.name}`, prompt: 'Database name', validateInput: (v) => checkDbName(v, nd.maxName) }))?.trim();
   if (!name) return;
   const picks: Record<string, string> = {};
-  const run = async (sql: string) => d.run(conn, await conns.password(conn.name), sql);
+  // daftar pilihan bisa ribuan baris (collation SQL Server ~5500): stream tanpa batas MAX_ROWS
+  const run = async (sql: string) => {
+    const rows: unknown[][] = [];
+    await d.stream(conn, await conns.password(conn.name), sql, undefined, { columns: () => undefined, row: (v) => { rows.push(v); } });
+    return { resultSets: [{ rows }] };
+  };
   for (const [i, o] of nd.options.entries()) {
     let items: Awaited<ReturnType<typeof o.items>>;
     try {

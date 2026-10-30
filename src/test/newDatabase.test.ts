@@ -41,6 +41,8 @@ test('menus: New Database on SQL Server connections only (for now), command titl
     && new RegExp(/viewItem =~ \/(.+?)\/(?:\s|$)/.exec(it.when ?? '')![1]).test(viewItem));
   assert.ok(shown('conn.mssql.on') && shown('conn.mssql.off'));
   assert.ok(!shown('conn.consul.on'));
+  assert.ok(shown('ms.databases'), 'right-click the Databases folder (SQL Server)');
+  assert.ok(!shown('ms.systemDatabases'), 'not on System Databases');
   assert.ok(pkg.contributes.commands.some((c: { command: string; title: string }) => c.command === 'moonageDaydream.newDatabase' && c.title === 'New Database…'));
   for (const t of Object.keys(drivers) as (keyof typeof drivers)[]) {
     if (drivers[t].newDatabase) assert.ok(shown(t === 'mssql' ? 'conn.mssql.on' : ['mysql', 'mariadb', 'postgres'].includes(t) ? 'conn.live.on' : 'conn.on'), `${t} has the menu`);
