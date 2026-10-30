@@ -384,6 +384,8 @@ export interface Driver {
   /** explorer (read-only, query ke katalog) */
   databases(conn: ConnectionInfo, password: string): Promise<string[]>;
   objects(conn: ConnectionInfo, password: string, db: string, kind: ListKind): Promise<DbObject[]>;
+  /** schema di database (tanpa schema sistem), untuk New Table; tidak ada = schema = database (MySQL) / dari tabel yang ada */
+  schemas?(conn: ConnectionInfo, password: string, db: string): Promise<string[]>;
   columns(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<Column[]>;
   /** definisi view / procedure / function (teks CREATE ...); tidak ada = Show / Edit tidak tersedia */
   definition?(conn: ConnectionInfo, password: string, db: string, obj: DbObject, kind?: ObjectKind): Promise<string>;

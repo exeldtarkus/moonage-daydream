@@ -808,7 +808,15 @@ function newTable(n?: Node) {
         log.error(`newTable tables - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
         post({ type: 'status', text: `Could not list tables for foreign keys: ${errMsg(e)}`, error: true });
       }
-      const schemas = [...new Set([d.defaultSchema, ...tables.map((x) => x.schema)].filter(Boolean))].sort();
+      let schemas = [...new Set([d.defaultSchema, ...tables.map((x) => x.schema)].filter(Boolean))].sort();
+      if (d.schemas) {
+        try {
+          schemas = await d.schemas(c, await conns.password(conn.name), db);
+        } catch (e) {
+          // daftar schema dari server gagal (mis. izin): pakai schema dari tabel yang ada
+          log.error(`newTable schemas - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        }
+      }
       const intType = ddl.aiTypes?.find((x) => /^int(eger)?$/.test(x)) ?? ddl.newType;
       return post({ type: 'load', cols: [], info: { columns: [], rows: [] }, types: ddl.types, newType: ddl.newType, tables, schemas, defaultSchema: d.defaultSchema,
         fkActions: ddl.fkActions ?? [], rows: [{ name: 'id', type: intType, nullable: false, default: '', pk: true, ai: !!ddl.aiTypes }] });

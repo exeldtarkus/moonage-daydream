@@ -321,6 +321,9 @@ export const msNewDatabase: NewDatabase = {
   },
 };
 
+/** schema database untuk New Table: tanpa schema sistem dan schema role db_* (schema_id >= 16384) */
+export const msSchemasSql = (db: string) => `SELECT name FROM ${q(db)}.sys.schemas WHERE schema_id < 16384 AND name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest') ORDER BY name`;
+
 /** SQL Server Agent: jalankan / hentikan job */
 export const jobScript = (action: 'start' | 'stop', job: string) => `EXEC msdb.dbo.sp_${action}_job @job_name = ${lit(job)};`;
 
@@ -643,6 +646,9 @@ export const mssqlDriver: Driver = {
     return rows.map((r) => r.name);
   },
 
+  async schemas(conn, password, db) {
+    return (await select<{ name: string }>(conn, password, msSchemasSql(db))).map((r) => r.name);
+  },
   objects(conn, password, db, kind) {
     return select(conn, password, `SELECT s.name AS [schema], o.name FROM ${q(db)}.sys.${CATALOG[kind]} o
       JOIN ${q(db)}.sys.schemas s ON s.schema_id = o.schema_id WHERE o.is_ms_shipped = 0 ORDER BY s.name, o.name`);

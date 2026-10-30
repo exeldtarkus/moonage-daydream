@@ -151,6 +151,8 @@ const KIND: Record<ListKind, string> = {
   view: `SELECT table_schema AS schema, table_name AS name FROM information_schema.views WHERE table_schema ${SYSTEM} ORDER BY 1, 2`,
   procedure: `SELECT DISTINCT routine_schema AS schema, routine_name AS name FROM information_schema.routines WHERE routine_schema ${SYSTEM} ORDER BY 1, 2`,
 };
+/** schema database untuk New Table: tanpa pg_* (katalog, toast, temp) dan information_schema */
+export const PG_SCHEMAS_SQL = `SELECT nspname AS name FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' ORDER BY 1`;
 const full = (schema: string, name: string) => `${quotePg(schema)}.${quotePg(name)}`;
 
 /** literal string PostgreSQL (standard_conforming_strings: backslash bukan escape) */
@@ -255,6 +257,7 @@ export const postgresDriver = sqlDriver({
     return (await select<{ name: string }>(conn, password, undefined, 'SELECT datname AS name FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1')).map((r) => r.name);
   },
   objects: (conn, password, db, kind) => select(conn, password, db, KIND[kind]),
+  schemas: async (conn, password, db) => (await select<{ name: string }>(conn, password, db, PG_SCHEMAS_SQL)).map((r) => r.name),
   columns: (conn, password, db, obj) => select(conn, password, db,
     `SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, NOT a.attnotnull AS nullable FROM pg_attribute a
       WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum`, [full(obj.schema, obj.name)]),

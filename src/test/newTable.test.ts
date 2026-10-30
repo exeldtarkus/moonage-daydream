@@ -4,6 +4,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createTable, drivers, type NewColumn } from '../db';
 import { columnsHtml } from '../columnsHtml';
+import { msSchemasSql } from '../mssql';
+import { PG_SCHEMAS_SQL } from '../postgres';
 
 const ms = drivers.mssql.columnDdl!;
 const t = { schema: 'dbo', name: 'order]item' };
@@ -70,4 +72,16 @@ test('menus: New Table on SQL Server databases and the Tables folder', () => {
   assert.ok(shown('db.mssql') && shown('ms.tables'));
   assert.ok(!shown('db.live') && !shown('conn.mssql.on'));
   assert.ok(pkg.contributes.commands.some((c: { command: string; title: string }) => c.command === 'moonageDaydream.newTable' && c.title === 'New Table…'));
+});
+
+test('new table: schema list comes from the server (empty / user schemas too), system schemas left out', () => {
+  assert.ok(drivers.mssql.schemas && drivers.postgres.schemas);
+  assert.equal(drivers.mysql.schemas, undefined, 'MySQL: schema = database');
+  const ms = msSchemasSql('sh]op');
+  assert.match(ms, /FROM \[sh]]op\]\.sys\.schemas/);
+  assert.match(ms, /schema_id < 16384/, 'db_* role schemas left out');
+  assert.match(ms, /NOT IN \('sys', 'INFORMATION_SCHEMA', 'guest'\)/);
+  assert.match(PG_SCHEMAS_SQL, /FROM pg_namespace/);
+  assert.match(PG_SCHEMAS_SQL, /NOT LIKE 'pg\\_%'/);
+  assert.match(PG_SCHEMAS_SQL, /<> 'information_schema'/);
 });
