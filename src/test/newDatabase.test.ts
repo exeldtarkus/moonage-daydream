@@ -103,3 +103,22 @@ test('menus: New Database also on MySQL / MariaDB / PostgreSQL connections (conn
   const items: { command: string; when?: string }[] = pkg.contributes.menus['view/item/context'];
   assert.ok(items.some((it) => it.command === 'moonageDaydream.newDatabase' && new RegExp(/viewItem =~ \/(.+?)\/(?:\s|$)/.exec(it.when ?? '')![1]).test('conn.live.on')));
 });
+
+const pgd = drivers.postgres.newDatabase!;
+test('new database: PostgreSQL = owner, encoding, template, locale; encoding / locale use template0', async () => {
+  assert.equal(pgd.maxName, 63);
+  assert.deepEqual(pgd.fields.map((f) => [f.key, f.kind]), [['owner', 'choice'], ['encoding', 'choice'], ['template', 'choice'], ['locale', 'choice']]);
+  const sqls: string[] = [];
+  const run = async (sql: string) => (sqls.push(sql), { resultSets: [{ rows: [['x']] }] });
+  for (const f of pgd.fields) await f.items!(run);
+  assert.match(sqls[0], /FROM pg_roles/);
+  assert.match(sqls[1], /pg_encoding_to_char/);
+  assert.match(sqls[2], /datistemplate/);
+  assert.match(sqls[3], /FROM pg_collation/);
+  assert.deepEqual(newDatabaseScript(pgd, 'sh"op', {}), { sql: 'CREATE DATABASE "sh""op";', errors: [] });
+  assert.equal(newDatabaseScript(pgd, 'shop', { owner: "app'user", encoding: 'UTF8', locale: 'C.UTF-8' }).sql,
+    `CREATE DATABASE "shop" WITH OWNER = "app'user" TEMPLATE = template0 ENCODING = 'UTF8' LC_COLLATE = 'C.UTF-8' LC_CTYPE = 'C.UTF-8';`);
+  assert.equal(newDatabaseScript(pgd, 'shop', { template: 'my_tpl' }).sql, 'CREATE DATABASE "shop" WITH TEMPLATE = "my_tpl";');
+  assert.deepEqual(newDatabaseScript(pgd, 'shop', { template: 'my_tpl', encoding: 'LATIN1' }).errors, ['A different encoding or locale needs template0 (or leave Template empty)']);
+  assert.deepEqual(newDatabaseScript(pgd, 'shop', { encoding: "UTF8'" }).errors, ["Invalid encoding: UTF8'"]);
+});
