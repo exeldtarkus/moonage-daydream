@@ -727,7 +727,7 @@ function columnsEditor(n?: Node) {
       const rs = (await d.run(c, await conns.password(conn.name), ddl.show(obj))).resultSets[0];
       const { cols, info } = showColumns(rs ?? { columns: [], rows: [] });
       original = cols;
-      post({ type: 'load', cols, info, types: ddl.types });
+      post({ type: 'load', cols, info, types: ddl.types, newType: ddl.newType });
     } catch (e) {
       log.error(`columnsEditor load - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${table}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Load failed: ${errMsg(e)}`, error: true });
@@ -742,7 +742,7 @@ function columnsEditor(n?: Node) {
     if (m.type !== 'execute' || conn.readOnly) return;
     const drops = (m.rows ?? []).filter((x) => x.deleted && x.orig).map((x) => x.orig);
     const ok = await vscode.window.showWarningMessage(`Apply ${r.count} column change(s) to ${table} on ${conn.name} / ${db}?`,
-      { modal: true, detail: `${drops.length ? `Deleted columns lose their data: ${drops.join(', ')}.\n` : ''}The script in SQL preview is executed and committed.` }, 'Execute');
+      { modal: true, detail: `${drops.length ? `Deleted columns lose their data: ${drops.join(', ')}.\n` : ''}The script in SQL preview is executed and committed.${ddl.note ? `\n${ddl.note}` : ''}` }, 'Execute');
     if (!ok) return;
     try {
       post({ type: 'status', text: 'Executing…' });

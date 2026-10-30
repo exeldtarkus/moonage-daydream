@@ -1,6 +1,6 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
-import type { ConnectionInfo, Driver, ListKind, ObjectKind, ProcParam } from './db';
+import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, ObjectKind, ProcParam, TypeSpec } from './db';
 import { connectMs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
@@ -118,6 +118,81 @@ export function myRunScript(db: string, name: string, type: 'PROCEDURE' | 'FUNCT
 }
 
 /** PROCEDURE / FUNCTION dari information_schema.routines */
+/** literal string MySQL; shortcut: anggap backslash escape aktif (tanpa NO_BACKSLASH_ESCAPES), cukup untuk nama tabel */
+const litMy = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
+const INTS = ['tinyint', 'smallint', 'mediumint', 'int', 'bigint'];
+
+/** tipe data bawaan MySQL 8.4 / MariaDB 11 (satu daftar untuk keduanya), urut dropdown editor Columns */
+export const MY_TYPES: TypeSpec[] = [
+  { name: 'tinyint', group: 'Integer', args: 'length', max: 255, note: 'tinyint(1) = boolean; other display widths are deprecated' },
+  ...INTS.slice(1).map((name) => ({ name, group: 'Integer' })),
+  ...INTS.map((name) => ({ name: `${name} unsigned`, group: 'Integer' })),
+  { name: 'decimal', group: 'Fixed / floating point', args: 'precisionScale', max: 65, def: '10,2', note: 'scale up to 30' },
+  { name: 'float', group: 'Fixed / floating point', args: 'precisionScale', max: 255, note: 'float(M,D) is deprecated' },
+  { name: 'double', group: 'Fixed / floating point', args: 'precisionScale', max: 255, note: 'double(M,D) is deprecated' },
+  { name: 'bit', group: 'Fixed / floating point', args: 'length', max: 64, def: '1' },
+  { name: 'char', group: 'Text', args: 'length', max: 255, def: '10' },
+  { name: 'varchar', group: 'Text', args: 'length', max: 65535, def: '100', note: 'row size limit 65535 bytes' },
+  ...['tinytext', 'text', 'mediumtext', 'longtext'].map((name) => ({ name, group: 'Text' })),
+  { name: 'enum', group: 'Text', args: 'values', def: "'a','b'", note: "list of values, e.g. 'a','b'" },
+  { name: 'set', group: 'Text', args: 'values', def: "'a','b'", note: "list of values, e.g. 'a','b'" },
+  { name: 'binary', group: 'Binary', args: 'length', max: 255, def: '16' },
+  { name: 'varbinary', group: 'Binary', args: 'length', max: 65535, def: '255' },
+  ...['tinyblob', 'blob', 'mediumblob', 'longblob'].map((name) => ({ name, group: 'Binary' })),
+  { name: 'date', group: 'Date and time' },
+  { name: 'time', group: 'Date and time', args: 'scale', max: 6 },
+  { name: 'datetime', group: 'Date and time', args: 'scale', max: 6 },
+  { name: 'timestamp', group: 'Date and time', args: 'scale', max: 6 },
+  { name: 'year', group: 'Date and time', args: 'length', max: 4, note: 'MariaDB shows year(4)' },
+  { name: 'json', group: 'Other', note: 'MariaDB: alias of longtext with a JSON check' },
+  ...['geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geometrycollection'].map((name) => ({ name, group: 'Spatial' })),
+  { name: 'uuid', group: 'MariaDB', note: 'MariaDB 10.7+' },
+  { name: 'inet4', group: 'MariaDB', note: 'MariaDB 10.10+' },
+  { name: 'inet6', group: 'MariaDB', note: 'MariaDB 10.5+' },
+];
+
+const myTbl = (o: { schema: string; name: string }) => (o.schema ? `${quoteMy(o.schema)}.${quoteMy(o.name)}` : quoteMy(o.name));
+const myCol = (c: ColumnDef, collate = '', rest = '') => `${quoteMy(c.name)} ${c.type.trim()}${collate ? ` ${collate}` : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}`
+  + `${c.default?.trim() ? ` DEFAULT ${c.default.trim()}` : ''}${rest ? ` ${rest}` : ''}`;
+
+export const myColumnDdl: ColumnDdl = {
+  separator: '\n',
+  newType: 'varchar(100)',
+  note: 'MySQL / MariaDB DDL commits implicitly: steps before a failing step stay applied (no rollback).',
+  types: MY_TYPES,
+  // tipe integer tanpa display width (MariaDB: int(11)) kecuali tinyint(1); default MySQL dikembalikan ke bentuk ekspresi SQL
+  show: (o) => `SELECT ordinal_position AS ordinal, column_name AS column_name,
+  CASE WHEN data_type IN (${INTS.map(litMy).join(', ')}) AND column_type NOT LIKE '%zerofill%' AND column_type NOT LIKE 'tinyint(1)%'
+    THEN CONCAT(data_type, IF(column_type LIKE '%unsigned', ' unsigned', '')) ELSE column_type END AS data_type,
+  is_nullable AS nullable,
+  CASE WHEN column_default IS NULL THEN NULL
+    WHEN VERSION() LIKE '%MariaDB%' THEN NULLIF(column_default, 'NULL')
+    WHEN extra LIKE '%DEFAULT_GENERATED%' THEN IF(column_default LIKE 'current_timestamp%', column_default, CONCAT('(', column_default, ')'))
+    WHEN data_type IN (${[...INTS, 'decimal', 'float', 'double', 'bit', 'year'].map(litMy).join(', ')}) THEN column_default
+    ELSE QUOTE(column_default) END AS default_value,
+  IF(extra LIKE '%auto_increment%', 'auto_increment', NULL) AS \`identity\`,
+  NULLIF(generation_expression, '') AS \`generated\`,
+  IF(column_key = 'PRI', 'PK', '') AS primary_key,
+  collation_name AS \`collation\`,
+  column_comment AS \`comment\`,
+  CONCAT_WS(' ', CONCAT('COLLATE ', collation_name), IF(extra LIKE '%on update%', SUBSTRING(extra, LOCATE('on update', extra)), NULL),
+    IF(column_comment = '', NULL, CONCAT('COMMENT ', QUOTE(column_comment)))) AS keep
+FROM information_schema.columns
+WHERE table_schema = ${litMy(o.schema)} AND table_name = ${litMy(o.name)}
+ORDER BY ordinal_position;`,
+  add: (o, c) => `ALTER TABLE ${myTbl(o)} ADD COLUMN ${myCol(c)};`,
+  drop: (o, name) => `ALTER TABLE ${myTbl(o)} DROP COLUMN ${quoteMy(name)};`,
+  edit(o, old, next) {
+    const altered = next.type.trim() !== old.type || next.nullable !== old.nullable || (next.default?.trim() || '') !== (old.default?.trim() || '');
+    // rename saja: RENAME COLUMN tidak menyentuh atribut lain (auto_increment, generated, comment)
+    if (!altered) return next.name !== old.name ? `ALTER TABLE ${myTbl(o)} RENAME COLUMN ${quoteMy(old.name)} TO ${quoteMy(next.name)};` : `-- no changes to ${quoteMy(old.name)}`;
+    // CHANGE COLUMN menulis ulang seluruh definisi: collation (hanya untuk tipe teks), ON UPDATE, COMMENT dibawa
+    const m = /^COLLATE (\S+)\s*(.*)$/.exec(old.keep ?? '');
+    const text = /^\s*((var)?char|(tiny|medium|long)?text|enum|set)\b/i.test(next.type);
+    return `ALTER TABLE ${myTbl(o)} CHANGE COLUMN ${quoteMy(old.name)} ${myCol(next, m && text ? `COLLATE ${m[1]}` : '', m ? m[2] : old.keep ?? '')};`;
+  },
+};
+
 async function routineType(conn: ConnectionInfo, password: string, db: string, name: string): Promise<'PROCEDURE' | 'FUNCTION'> {
   const rows = await select<{ t: string }>(conn, password, 'SELECT routine_type AS t FROM information_schema.routines WHERE routine_schema = ? AND routine_name = ?', [db, name]);
   if (!rows[0]) throw new Error(`Routine ${db}.${name} not found`);
@@ -147,6 +222,7 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
     defaultDb: 'mysql',
     testSql: 'SELECT @@hostname AS server, DATABASE() AS db',
     explain: (s, mode) => (mode === 'estimated' ? `EXPLAIN ${s}` : analyze(s)),
+    columnDdl: myColumnDdl,
 
     async link(conn, password, db) {
       const p = pool(conn, password, db);

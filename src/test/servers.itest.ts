@@ -1,7 +1,7 @@
 // Test driver ke server sungguhan (Docker, lihat scripts/test-servers.sh): database "shop" sementara, boleh ditulis.
 import { test, after } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { drivers } from '../db';
+import { columnChanges, drivers, showColumns, type ColumnRow } from '../db';
 import type { ConnectionInfo, DbType } from '../db';
 import { updateScript } from '../sqlContext';
 
@@ -130,6 +130,53 @@ for (const s of SERVERS) {
     assert.match(v, /CREATE OR REPLACE/);
     await run(v);
     assert.equal(String(await one('SELECT COUNT(*) FROM cheap')), '9', 'view replaced, same rows');
+  });
+
+  test(`${d.label}: Columns editor script (show, rename, change, add, drop) on the server`, { skip: !d.columnDdl }, async () => {
+    const ddl = d.columnDdl!;
+    await run(`DROP TABLE IF EXISTS column_lab; CREATE TABLE column_lab (
+      id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'none' COMMENT 'the title',
+      qty INT UNSIGNED NOT NULL DEFAULT 0, price DECIMAL(10,2) NULL, flag TINYINT(1) NOT NULL DEFAULT 1, kind ENUM('a b','c') NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+      total DECIMAL(12,2) AS (qty * price));
+      INSERT INTO column_lab (title, qty, price) VALUES ('apple', 5, 1.50);`);
+    const o = { schema: 'shop', name: 'column_lab' };
+    const load = async () => showColumns((await run(ddl.show(o))).resultSets[0]).cols;
+    const cols = await load();
+    const by = (cs: ColumnRow[], n: string) => cs.find((x) => x.name === n)!;
+    assert.deepEqual(by(cols, 'id'), { name: 'id', type: 'int', nullable: false, generated: true });
+    assert.deepEqual(by(cols, 'title'), { name: 'title', type: 'varchar(50)', nullable: false, default: "'none'", keep: "COLLATE utf8mb4_bin COMMENT 'the title'" });
+    assert.deepEqual(by(cols, 'qty'), { name: 'qty', type: 'int unsigned', nullable: false, default: '0' });
+    assert.equal(by(cols, 'flag').type, 'tinyint(1)');
+    assert.deepEqual(by(cols, 'kind'), { name: 'kind', type: "enum('a b','c')", nullable: true });
+    assert.match(String(by(cols, 'created_at').default), /^current_timestamp\(3\)$/i);
+    assert.match(String(by(cols, 'updated_at').keep), /^on update current_timestamp/i);
+    assert.ok(by(cols, 'total').generated);
+
+    const rows: ColumnRow[] = cols.map((x) => ({ ...x, orig: x.name }));
+    const edit = (n: string, ch: Partial<ColumnRow>) => Object.assign(rows.find((x) => x.orig === n)!, ch);
+    edit('id', { name: 'item_id' });
+    edit('title', { type: 'varchar(80)' });
+    edit('qty', { default: '1' });
+    edit('flag', { deleted: true });
+    edit('total', { name: 'total2' });
+    edit('updated_at', { nullable: true, default: 'NULL' });
+    rows.push({ name: 'note', type: 'varchar(20)', nullable: false, default: "'x'" });
+    const r = columnChanges(ddl, o, cols, rows);
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.count, 7);
+    await run(r.sql);
+
+    const after = await load();
+    assert.deepEqual(after.map((x) => x.name), ['item_id', 'title', 'qty', 'price', 'kind', 'created_at', 'updated_at', 'total2', 'note']);
+    assert.ok(by(after, 'item_id').generated, 'auto_increment kept by RENAME COLUMN');
+    assert.deepEqual(by(after, 'title'), { ...by(cols, 'title'), type: 'varchar(80)' }, 'collation + comment kept by CHANGE COLUMN');
+    assert.equal(by(after, 'qty').default, '1');
+    assert.match(String(by(after, 'updated_at').keep), /^on update current_timestamp/i, 'ON UPDATE kept');
+    assert.ok(by(after, 'total2').generated);
+    assert.deepEqual(by(after, 'note'), { name: 'note', type: 'varchar(20)', nullable: false, default: "'x'", keep: by(after, 'note').keep });
+    assert.equal(String(await one('SELECT COUNT(*) FROM column_lab WHERE note = \'x\' AND qty = 5')), '1', 'data kept');
+    await run('DROP TABLE column_lab');
   });
 
   test(`${d.label}: explorer, primary key, explain, export stream, UPDATE script`, async () => {

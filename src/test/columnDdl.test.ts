@@ -222,3 +222,75 @@ test('menus: right-click table has one Columns item, other menus kept', () => {
   assert.ok(pkg.contributes.commands.some((x: { command: string; title: string }) => x.command === 'moonageDaydream.editColumns' && x.title === 'Columns'));
   for (const c of ['showColumns', 'addColumn', 'editColumn', 'deleteColumn']) assert.ok(!pkg.contributes.commands.some((x: { command: string }) => x.command === `moonageDaydream.${c}`), `${c} removed`);
 });
+
+// ---------- MySQL / MariaDB ----------
+const my = drivers.mysql.columnDdl!;
+const mt = { schema: 'sh`op', name: "or'ders" };
+const MT = '`sh``op`.`or\'ders`';
+
+test('column ddl: MySQL and MariaDB share the same column script, new columns start as varchar(100)', () => {
+  assert.equal(drivers.mariadb.columnDdl, my);
+  assert.equal(my.newType, 'varchar(100)');
+  assert.equal(ms.newType, 'nvarchar(100)');
+  assert.match(my.note!, /implicit/i, 'confirm mentions DDL commits implicitly');
+  assert.equal(my.separator, '\n');
+});
+
+test('column ddl: MySQL Show reads information_schema.columns of the table, defaults as SQL expressions (MySQL / MariaDB)', () => {
+  const sql = my.show(mt);
+  assert.match(sql, /FROM information_schema\.columns/);
+  assert.ok(sql.includes("table_schema = 'sh`op' AND table_name = 'or''ders'"), sql);
+  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'identity', 'generated', 'primary_key', 'collation', 'comment', 'keep']) assert.match(sql, new RegExp(`AS \`?${col}\\b`), col);
+  assert.match(sql, /VERSION\(\) LIKE '%MariaDB%'/, 'MariaDB column_default is already an expression');
+  assert.match(sql, /ORDER BY ordinal_position/);
+});
+
+test('column ddl: MySQL Add / Delete', () => {
+  assert.equal(my.add(mt, { name: 'note', type: 'varchar(100)', nullable: true }), `ALTER TABLE ${MT} ADD COLUMN \`note\` varchar(100) NULL;`);
+  assert.equal(my.add(mt, { name: 'q`ty', type: 'int', nullable: false, default: '0' }), `ALTER TABLE ${MT} ADD COLUMN \`q\`\`ty\` int NOT NULL DEFAULT 0;`);
+  assert.equal(my.drop(mt, 'price'), `ALTER TABLE ${MT} DROP COLUMN \`price\`;`);
+});
+
+test('column ddl: MySQL Edit = RENAME COLUMN for a rename only, CHANGE COLUMN otherwise (collation / on update / comment kept)', () => {
+  const old = { name: 'title', type: 'varchar(50)', nullable: true, keep: "COLLATE utf8mb4_bin COMMENT 'it''s'" };
+  assert.match(my.edit(mt, old, { ...old }), /^-- no changes/);
+  // rename saja: atribut lain (auto_increment, generated, comment) tetap
+  assert.equal(my.edit(mt, old, { ...old, name: 'name' }), `ALTER TABLE ${MT} RENAME COLUMN \`title\` TO \`name\`;`);
+  assert.equal(my.edit(mt, old, { name: 'name', type: 'varchar(80)', nullable: false, default: "'x'" }),
+    `ALTER TABLE ${MT} CHANGE COLUMN \`title\` \`name\` varchar(80) COLLATE utf8mb4_bin NOT NULL DEFAULT 'x' COMMENT 'it''s';`);
+  // tipe bukan teks: COLLATE tidak dibawa
+  assert.equal(my.edit(mt, old, { ...old, type: 'int' }), `ALTER TABLE ${MT} CHANGE COLUMN \`title\` \`title\` int NULL COMMENT 'it''s';`);
+  const ts = { name: 'at', type: 'timestamp', nullable: false, default: 'CURRENT_TIMESTAMP', keep: 'on update CURRENT_TIMESTAMP' };
+  assert.equal(my.edit(mt, ts, { ...ts, default: undefined }), `ALTER TABLE ${MT} CHANGE COLUMN \`at\` \`at\` timestamp NOT NULL on update CURRENT_TIMESTAMP;`);
+});
+
+test('MySQL / MariaDB data types: complete list, grouped, size rules', () => {
+  const names = my.types.map((x) => x.name);
+  for (const n of ['tinyint', 'smallint', 'mediumint', 'int', 'bigint', 'int unsigned', 'bigint unsigned', 'decimal', 'float', 'double', 'bit',
+    'char', 'varchar', 'tinytext', 'text', 'mediumtext', 'longtext', 'binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob',
+    'enum', 'set', 'date', 'time', 'datetime', 'timestamp', 'year', 'json', 'geometry', 'point', 'uuid', 'inet6']) assert.ok(names.includes(n), n);
+  assert.equal(new Set(names).size, names.length, 'no duplicates');
+  assert.ok(my.types.every((x) => x.group), 'every type has a group');
+  for (const ty of ['int', 'int unsigned', 'tinyint(1)', 'varchar(65535)', 'char(255)', 'decimal(65,30)', 'float(7,4)', 'datetime(6)', 'bit(64)', 'year(4)', "enum('a b','c')", "set('x')"]) {
+    assert.equal(checkType(ty, my.types), undefined, ty);
+  }
+  assert.match(checkType('varchar(65536)', my.types)!, /varchar: length 1-65535/);
+  assert.match(checkType('char(256)', my.types)!, /char: length 1-255/);
+  assert.match(checkType('decimal(66,2)', my.types)!, /decimal: precision 1-65/);
+  assert.match(checkType('datetime(7)', my.types)!, /datetime: fractional seconds 0-6/);
+  assert.match(checkType('int(11)', my.types)!, /int has no size/);
+  assert.match(checkType('enum()', my.types)!, /enum: list of values/);
+  // nilai enum dengan spasi tidak diubah
+  assert.deepEqual(splitType("enum('a b', 'c')", my.types), { base: 'enum', args: "'a b', 'c'", known: true });
+  assert.deepEqual(splitType('INT UNSIGNED', my.types), { base: 'int unsigned', args: '', known: true });
+});
+
+test('columns editor: Show keep (attributes carried by CHANGE COLUMN) goes to the column, not to the info grid', () => {
+  const rs = { columns: ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'identity', 'comment', 'keep'],
+    rows: [[1, 'id', 'int', 'NO', null, 'auto_increment', '', ''], [2, 'title', 'varchar(50)', 'YES', null, null, 'x', "COMMENT 'x'"]] };
+  const { cols, info } = showColumns(rs);
+  assert.deepEqual(cols, [{ name: 'id', type: 'int', nullable: false, generated: true }, { name: 'title', type: 'varchar(50)', nullable: true, keep: "COMMENT 'x'" }]);
+  assert.deepEqual(info.columns, ['identity', 'comment']);
+  const r = columnChanges(my, mt, cols, [{ ...cols[0], orig: 'id' }, { ...cols[1], orig: 'title', type: 'varchar(60)' }, { name: 'n', type: 'int', nullable: true }]);
+  assert.equal(r.sql, `ALTER TABLE ${MT} CHANGE COLUMN \`title\` \`title\` varchar(60) NULL COMMENT 'x';\nALTER TABLE ${MT} ADD COLUMN \`n\` int NULL;`);
+});

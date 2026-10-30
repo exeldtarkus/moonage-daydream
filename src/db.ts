@@ -102,7 +102,10 @@ export interface Column {
 }
 
 /** kolom yang ditambah / diubah lewat Add / Edit Column */
-export type ColumnDef = Pick<Column, 'name' | 'type' | 'nullable' | 'default'>;
+export type ColumnDef = Pick<Column, 'name' | 'type' | 'nullable' | 'default'> & {
+  /** MySQL: atribut kolom yang ikut ditulis ulang di CHANGE COLUMN (COLLATE, ON UPDATE, COMMENT) */
+  keep?: string;
+};
 
 /** script kolom tabel (klik kanan tabel): show dijalankan langsung, lainnya dibuka di tab tanpa dijalankan */
 export interface ColumnDdl {
@@ -110,6 +113,10 @@ export interface ColumnDdl {
   separator: string;
   /** tipe bawaan untuk dropdown (urut tampil, dikelompokkan per group) */
   types: TypeSpec[];
+  /** tipe awal kolom baru (Add column) */
+  newType: string;
+  /** catatan tambahan di konfirmasi Execute (mis. DDL implicit commit) */
+  note?: string;
   show(obj: DbObject): string;
   add(obj: DbObject, col: ColumnDef): string;
   edit(obj: DbObject, old: ColumnDef, next: ColumnDef): string;
@@ -118,12 +125,12 @@ export interface ColumnDdl {
 
 /**
  * tipe data bawaan untuk dropdown editor Columns. args = ukuran di dalam kurung: length (n / max bila allowMax),
- * precisionScale (p,s), precision (p), scale (detik pecahan); max = batas atas; tanpa args = tanpa ukuran.
+ * precisionScale (p,s), precision (p), scale (detik pecahan), values (daftar nilai enum / set); max = batas atas; tanpa args = tanpa ukuran.
  */
 export interface TypeSpec {
   name: string;
   group: string;
-  args?: 'length' | 'precisionScale' | 'precision' | 'scale';
+  args?: 'length' | 'precisionScale' | 'precision' | 'scale' | 'values';
   max?: number;
   allowMax?: boolean;
   /** ukuran awal saat tipe dipilih di dropdown */
@@ -136,14 +143,17 @@ export function splitType(type: string, specs: TypeSpec[]): { base: string; args
   const m = /^\s*([\w ]+?)\s*(?:\((.*)\))?\s*$/.exec(type);
   const spec = m && specs.find((x) => x.name === m[1].toLowerCase());
   if (!m || !spec) return { base: type.trim(), args: '', known: false };
-  return { base: spec.name, args: (m[2] ?? '').replace(/\s+/g, ''), known: true };
+  // nilai enum / set bisa berisi spasi
+  return { base: spec.name, args: spec.args === 'values' ? (m[2] ?? '').trim() : (m[2] ?? '').replace(/\s+/g, ''), known: true };
 }
 
 /** ukuran tipe sesuai aturan TypeSpec; undefined = valid (tipe custom tidak dicek, server yang menolak) */
 export function checkType(type: string, specs: TypeSpec[]): string | undefined {
   const { base, args, known } = splitType(type, specs);
   const spec = specs.find((x) => x.name === base);
-  if (!known || !spec || !args) return undefined;
+  if (!known || !spec) return undefined;
+  if (spec.args === 'values') return args ? undefined : `${base}: list of values, e.g. ('a','b')`;
+  if (!args) return undefined;
   const int = (v: string | undefined, lo: number, hi: number) => v !== undefined && /^\d+$/.test(v) && +v >= lo && +v <= hi;
   const max = spec.max ?? 0;
   switch (spec.args) {
@@ -176,7 +186,7 @@ export type ColumnRow = ColumnDef & { orig?: string; deleted?: boolean; generate
 /** hasil ColumnDdl.show -> kolom yang bisa diedit + info read-only (alias wajib: column_name, data_type, nullable YES/NO, default_value) */
 export function showColumns(rs: Pick<ResultSet, 'columns' | 'rows'>): { cols: ColumnRow[]; info: { columns: string[]; rows: unknown[][] } } {
   const at = (k: string) => rs.columns.indexOf(k);
-  const core = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value'];
+  const core = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'keep'];
   const extra = rs.columns.map((c, i) => [c, i] as const).filter(([c]) => !core.includes(c));
   // identity / computed / generated terisi = nilai dibuat server: hanya nama yang bisa diubah
   const gen = ['identity', 'computed', 'generated'].map(at).filter((i) => i >= 0);
@@ -185,6 +195,7 @@ export function showColumns(rs: Pick<ResultSet, 'columns' | 'rows'>): { cols: Co
       const d = r[at('default_value')];
       return { name: String(r[at('column_name')]), type: String(r[at('data_type')]), nullable: r[at('nullable')] === 'YES',
         ...(d !== null && d !== undefined && d !== '' ? { default: String(d) } : {}),
+        ...(at('keep') >= 0 && r[at('keep')] ? { keep: String(r[at('keep')]) } : {}),
         ...(gen.some((i) => r[i] !== null && r[i] !== undefined && r[i] !== '') ? { generated: true } : {}) };
     }),
     info: { columns: extra.map(([c]) => c), rows: rs.rows.map((r) => extra.map(([, i]) => r[i])) },

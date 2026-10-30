@@ -226,6 +226,7 @@ export const MS_TYPES: TypeSpec[] = [
 
 export const msColumnDdl: ColumnDdl = {
   separator: '\nGO\n',
+  newType: 'nvarchar(100)',
   types: MS_TYPES,
   show: (o) => `SELECT c.column_id AS ordinal, c.name AS column_name,
   t.name + CASE WHEN t.name IN ('varchar', 'char', 'varbinary', 'binary') THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length AS varchar(10))) + ')'

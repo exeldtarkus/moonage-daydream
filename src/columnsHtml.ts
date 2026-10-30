@@ -155,7 +155,7 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
 const vscode = acquireVsCodeApi();
 const readOnly = ${readOnly ? 'true' : 'false'};
 const CUSTOM = '\\u0000custom';
-let orig = [], rows = [], info = { columns: [], rows: [] }, types = [], timer;
+let orig = [], rows = [], info = { columns: [], rows: [] }, types = [], newType = '', timer;
 const $ = (id) => document.getElementById(id);
 const h = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const spec = (base) => types.find((x) => x.name === base);
@@ -163,11 +163,11 @@ const spec = (base) => types.find((x) => x.name === base);
 function split(type) {
   const m = /^\\s*([\\w ]+?)\\s*(?:\\((.*)\\))?\\s*$/.exec(type || '');
   const s = m && spec(m[1].toLowerCase());
-  return s ? { base: s.name, args: (m[2] || '').replace(/\\s+/g, ''), known: true } : { base: type || '', args: '', known: false };
+  return s ? { base: s.name, args: s.args === 'values' ? (m[2] || '').trim() : (m[2] || '').replace(/\\s+/g, ''), known: true } : { base: type || '', args: '', known: false };
 }
 const same = (r) => { const o = orig.find((c) => c.name === r.orig); return o && o.name === r.name && o.type === r.type && o.nullable === r.nullable && (o.default || '') === (r.default || ''); };
 const cls = (r) => (r.deleted ? 'deleted' : !r.orig ? 'added' : same(r) ? '' : 'changed');
-const hint = { length: (s) => '1-' + s.max + (s.allowMax ? ', max' : ''), precisionScale: () => 'p,s', precision: (s) => '1-' + s.max, scale: (s) => '0-' + s.max };
+const hint = { length: (s) => '1-' + s.max + (s.allowMax ? ', max' : ''), precisionScale: () => 'p,s', precision: (s) => '1-' + s.max, scale: (s) => '0-' + s.max, values: () => "'a','b'" };
 
 function typeCell(r, dis) {
   const t = split(r.type);
@@ -176,7 +176,7 @@ function typeCell(r, dis) {
     .map((x) => '<option value="' + h(x.name) + '"' + (t.known && t.base === x.name ? ' selected' : '') + (x.note ? ' title="' + h(x.note) + '"' : '') + '>' + h(x.name) + '</option>').join('') + '</optgroup>').join('')
     + '<option value="' + CUSTOM + '"' + (t.known ? '' : ' selected') + '>Custom type…</option>';
   const s = t.known && spec(t.base);
-  const extra = !t.known ? '<input type="text" class="custom" data-k="custom" value="' + h(r.type) + '" placeholder="e.g. dbo.Phone" aria-label="Custom type"' + dis + '>'
+  const extra = !t.known ? '<input type="text" class="custom" data-k="custom" value="' + h(r.type) + '" placeholder="user-defined type" aria-label="Custom type"' + dis + '>'
     : s && s.args ? '<input type="text" class="size" data-k="size" value="' + h(t.args) + '" placeholder="' + hint[s.args](s) + '" aria-label="Size of ' + h(s.name) + '"' + dis + '>' : '';
   return '<div class="type"><select data-k="base" aria-label="Data type"' + dis + '>' + opts + '</select>' + extra + '</div>';
 }
@@ -241,7 +241,7 @@ $('grid').addEventListener('click', (e) => {
   render(); changed();
 });
 $('addCol')?.addEventListener('click', () => {
-  rows.push({ name: '', type: 'nvarchar(100)', nullable: true, default: '' });
+  rows.push({ name: '', type: newType, nullable: true, default: '' });
   render(); changed();
   document.querySelector('tbody tr:last-child .name')?.focus();
   $('grid').scrollTop = $('grid').scrollHeight;
@@ -271,7 +271,7 @@ const what = (s) => s.kind === 'drop' ? 'Delete <code>' + h(s.column) + '</code>
 function status(text, error) { $('status').textContent = text; $('status').className = error ? 'err' : ''; }
 window.addEventListener('message', ({ data: m }) => {
   if (m.type === 'load') {
-    orig = m.cols; info = m.info; types = m.types || [];
+    orig = m.cols; info = m.info; types = m.types || []; newType = m.newType || '';
     rows = orig.map((c) => ({ ...c, orig: c.name }));
     render(); status(''); changed();
   } else if (m.type === 'script') {
