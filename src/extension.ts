@@ -783,9 +783,11 @@ const newTablePanels = new Map<string, vscode.WebviewPanel>();
 
 /** klik kanan database / folder Tables -> New Table…: grid kolom + chip PK / AI / UQ / FK, script CREATE TABLE live, Create (konfirmasi) */
 function newTable(n?: Node) {
-  if (n?.kind !== 'db' && !(n?.kind === 'mfolder' && n.folder === 'tables')) return;
+  if (n?.kind !== 'db' && !(n?.kind === 'mfolder' && n.folder === 'tables') && !(n?.kind === 'folder' && n.objKind === 'table')) return;
   const db = n.db;
-  if (!db || !drivers[n.c.type].columnDdl?.create) return;
+  if (!db) return;
+  // menu dipasang per kelompok koneksi (conn.live = MySQL / MariaDB / PostgreSQL): driver yang belum didukung diberi tahu
+  if (!drivers[n.c.type].columnDdl?.create) return void vscode.window.showInformationMessage(`New Table is not available for ${drivers[n.c.type].label} yet.`);
   const conn = n.c;
   const d = drivers[conn.type];
   const ddl = d.columnDdl!;
@@ -859,7 +861,8 @@ const newDbPanels = new Map<string, vscode.WebviewPanel>();
 
 /** klik kanan koneksi / folder Databases -> New Database…: form tab, script live, Create (konfirmasi) atau Open in SQL Editor */
 function newDatabase(n?: Node) {
-  if ((n?.kind !== 'conn' && !(n?.kind === 'mfolder' && n.folder === 'databases')) || !drivers[n.c.type].newDatabase) return;
+  if (n?.kind !== 'conn' && !(n?.kind === 'mfolder' && n.folder === 'databases')) return;
+  if (!drivers[n.c.type].newDatabase) return void vscode.window.showInformationMessage(`New Database is not available for ${drivers[n.c.type].label} yet.`);
   const conn = n.c;
   const d = drivers[conn.type];
   const nd = d.newDatabase!;

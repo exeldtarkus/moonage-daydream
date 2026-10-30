@@ -79,3 +79,27 @@ test('menus: New Database on SQL Server connections and the Databases folder, co
   assert.ok(!shown('ms.systemDatabases'), 'not on System Databases');
   assert.ok(pkg.contributes.commands.some((c: { command: string; title: string }) => c.command === 'moonageDaydream.newDatabase' && c.title === 'New Database…'));
 });
+
+const my = drivers.mysql.newDatabase!;
+test('new database: MySQL / MariaDB = character set + collation (from the server), name up to 64', async () => {
+  assert.equal(drivers.mariadb.newDatabase, my, 'MariaDB shares it');
+  assert.equal(my.maxName, 64);
+  assert.deepEqual(my.fields.map((f) => [f.key, f.kind]), [['charset', 'choice'], ['collation', 'choice']]);
+  const sqls: string[] = [];
+  const run = async (sql: string) => (sqls.push(sql), { resultSets: [{ rows: [['utf8mb4', 'UTF-8 Unicode']] }] });
+  assert.deepEqual((await my.fields[0].items!(run))[1], { value: 'utf8mb4', label: 'UTF-8 Unicode' });
+  await my.fields[1].items!(run);
+  assert.match(sqls[0], /information_schema\.character_sets/);
+  assert.match(sqls[1], /information_schema\.collations/);
+  assert.deepEqual(newDatabaseScript(my, 'sh`op', {}), { sql: 'CREATE DATABASE `sh``op`;', errors: [] });
+  assert.equal(newDatabaseScript(my, 'shop', { charset: 'utf8mb4', collation: 'utf8mb4_0900_ai_ci' }).sql, 'CREATE DATABASE `shop` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;');
+  assert.deepEqual(newDatabaseScript(my, 'shop', { charset: 'latin1', collation: 'utf8mb4_bin' }).errors, ['Collation utf8mb4_bin does not belong to character set latin1']);
+  assert.deepEqual(newDatabaseScript(my, 'shop', { charset: 'x y' }).errors, ['Invalid character set: x y']);
+  assert.deepEqual(newDatabaseScript(my, 'a'.repeat(65), {}).errors, ['Database name is at most 64 characters']);
+});
+
+test('menus: New Database also on MySQL / MariaDB / PostgreSQL connections (conn.live)', () => {
+  const pkg = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
+  const items: { command: string; when?: string }[] = pkg.contributes.menus['view/item/context'];
+  assert.ok(items.some((it) => it.command === 'moonageDaydream.newDatabase' && new RegExp(/viewItem =~ \/(.+?)\/(?:\s|$)/.exec(it.when ?? '')![1]).test('conn.live.on')));
+});

@@ -78,7 +78,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         return Object.assign(new vscode.TreeItem(n.db, C), { iconPath: new vscode.ThemeIcon('database'), contextValue: isMs(n.c) ? 'db.mssql' : monitorKit(n.c.type) ? 'db.live' : 'db' });
       case 'folder': {
         const f = FOLDERS.find((x) => x.objKind === n.objKind)!;
-        return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder') });
+        return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder'), contextValue: `folder.${n.objKind}` });
       }
       case 'kv': {
         const folder = n.key.endsWith('/');

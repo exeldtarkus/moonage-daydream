@@ -1,6 +1,6 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
-import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, ObjectKind, ProcParam, TypeSpec } from './db';
+import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, NewColumn, NewDatabase, ObjectKind, ProcParam, TypeSpec } from './db';
 import { connectMs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
@@ -182,6 +182,22 @@ WHERE table_schema = ${litMy(o.schema)} AND table_name = ${litMy(o.name)}
 ORDER BY ordinal_position;`,
   add: (o, c) => `ALTER TABLE ${myTbl(o)} ADD COLUMN ${myCol(c)};`,
   drop: (o, name) => `ALTER TABLE ${myTbl(o)} DROP COLUMN ${quoteMy(name)};`,
+  aiTypes: [...INTS, ...INTS.map((x) => `${x} unsigned`)],
+  // InnoDB menolak SET DEFAULT
+  fkActions: ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL'],
+  check: (c) => ((c as NewColumn).ai && !(c as NewColumn).pk && !(c as NewColumn).unique ? 'auto increment needs PK or UQ (MySQL)' : undefined),
+  create(o, cols) {
+    const act = (k: string, v?: string) => (v && v !== 'NO ACTION' ? ` ON ${k} ${v}` : '');
+    const pk = cols.filter((c) => c.pk);
+    const lines = [
+      ...cols.map((c) => `${myCol(c)}${c.ai ? ' AUTO_INCREMENT' : ''}`),
+      ...(pk.length ? [`PRIMARY KEY (${pk.map((c) => quoteMy(c.name)).join(', ')})`] : []),
+      ...cols.filter((c) => c.unique).map((c) => `UNIQUE KEY ${quoteMy(`UQ_${o.name}_${c.name}`)} (${quoteMy(c.name)})`),
+      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${quoteMy(`FK_${o.name}_${name}`)} FOREIGN KEY (${quoteMy(name)}) REFERENCES ${myTbl({ schema: fk!.schema, name: fk!.table })} (${quoteMy(fk!.column)})`
+        + act('DELETE', fk!.onDelete) + act('UPDATE', fk!.onUpdate)),
+    ];
+    return [`CREATE TABLE ${myTbl(o)} (`, lines.map((l) => `  ${l}`).join(',\n'), ');'].join('\n');
+  },
   edit(o, old, next) {
     const altered = next.type.trim() !== old.type || next.nullable !== old.nullable || (next.default?.trim() || '') !== (old.default?.trim() || '');
     // rename saja: RENAME COLUMN tidak menyentuh atribut lain (auto_increment, generated, comment)
@@ -191,6 +207,28 @@ ORDER BY ordinal_position;`,
     const text = /^\s*((var)?char|(tiny|medium|long)?text|enum|set)\b/i.test(next.type);
     return `ALTER TABLE ${myTbl(o)} CHANGE COLUMN ${quoteMy(old.name)} ${myCol(next, m && text ? `COLLATE ${m[1]}` : '', m ? m[2] : old.keep ?? '')};`;
   },
+};
+
+/** New Database MySQL / MariaDB: character set + collation (kosong = default server) */
+export const myNewDatabase: NewDatabase = {
+  maxName: 64,
+  fields: [
+    { key: 'charset', label: 'Character set', kind: 'choice', async items(run) {
+      const rows = (await run('SELECT character_set_name, description FROM information_schema.character_sets ORDER BY 1')).resultSets[0]?.rows ?? [];
+      return [{ value: '', label: '(server default)' }, ...rows.map(([v, d]) => ({ value: String(v), label: String(d ?? '') }))];
+    } },
+    { key: 'collation', label: 'Collation', kind: 'choice', async items(run) {
+      const rows = (await run('SELECT collation_name, character_set_name FROM information_schema.collations ORDER BY 1')).resultSets[0]?.rows ?? [];
+      return [{ value: '', label: '(default of the character set)' }, ...rows.map(([v, cs]) => ({ value: String(v), label: String(cs ?? '') }))];
+    } },
+  ],
+  check: (v) => [
+    v.charset && !/^\w+$/.test(v.charset) ? `Invalid character set: ${v.charset}` : undefined,
+    v.collation && !/^\w+$/.test(v.collation) ? `Invalid collation: ${v.collation}` : undefined,
+    // nama collation diawali nama character set-nya (utf8mb4_bin)
+    v.charset && v.collation && /^\w+$/.test(v.collation) && !v.collation.startsWith(`${v.charset}_`) ? `Collation ${v.collation} does not belong to character set ${v.charset}` : undefined,
+  ].filter((e): e is string => !!e),
+  script: (name, v) => `CREATE DATABASE ${quoteMy(name)}${v.charset ? ` CHARACTER SET ${v.charset}` : ''}${v.collation ? ` COLLATE ${v.collation}` : ''};`,
 };
 
 async function routineType(conn: ConnectionInfo, password: string, db: string, name: string): Promise<'PROCEDURE' | 'FUNCTION'> {
@@ -223,6 +261,7 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
     testSql: 'SELECT @@hostname AS server, DATABASE() AS db',
     explain: (s, mode) => (mode === 'estimated' ? `EXPLAIN ${s}` : analyze(s)),
     columnDdl: myColumnDdl,
+    newDatabase: myNewDatabase,
 
     async link(conn, password, db) {
       const p = pool(conn, password, db);

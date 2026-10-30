@@ -70,7 +70,7 @@ test('menus: New Table on SQL Server databases and the Tables folder', () => {
   const shown = (viewItem: string) => items.some((it) => it.command === 'moonageDaydream.newTable'
     && new RegExp(/viewItem =~ \/(.+?)\/(?:\s|$)/.exec(it.when ?? '')![1]).test(viewItem));
   assert.ok(shown('db.mssql') && shown('ms.tables'));
-  assert.ok(!shown('db.live') && !shown('conn.mssql.on'));
+  assert.ok(!shown('conn.mssql.on'));
   assert.ok(pkg.contributes.commands.some((c: { command: string; title: string }) => c.command === 'moonageDaydream.newTable' && c.title === 'New Table…'));
 });
 
@@ -84,4 +84,47 @@ test('new table: schema list comes from the server (empty / user schemas too), s
   assert.match(PG_SCHEMAS_SQL, /FROM pg_namespace/);
   assert.match(PG_SCHEMAS_SQL, /NOT LIKE 'pg\\_%'/);
   assert.match(PG_SCHEMAS_SQL, /<> 'information_schema'/);
+});
+
+const myd = drivers.mysql.columnDdl!;
+test('new table: MySQL CREATE TABLE with AUTO_INCREMENT, PRIMARY KEY, UNIQUE KEY, FK constraint', () => {
+  assert.equal(drivers.mariadb.columnDdl, myd);
+  const r = createTable(myd, { schema: 'shop', name: 'order`item' }, [
+    { ...id },
+    { name: 'order_id', type: 'int unsigned', nullable: false, fk: { schema: 'shop', table: 'orders', column: 'id', onDelete: 'CASCADE', onUpdate: 'NO ACTION' } },
+    { name: 'sku', type: 'varchar(40)', nullable: false, unique: true },
+    { name: 'qty', type: 'int', nullable: false, default: '0' },
+    { name: 'note', type: 'text', nullable: true },
+  ]);
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.sql, [
+    'CREATE TABLE `shop`.`order``item` (',
+    '  `id` int NOT NULL AUTO_INCREMENT,',
+    '  `order_id` int unsigned NOT NULL,',
+    '  `sku` varchar(40) NOT NULL,',
+    '  `qty` int NOT NULL DEFAULT 0,',
+    '  `note` text NULL,',
+    '  PRIMARY KEY (`id`),',
+    '  UNIQUE KEY `UQ_order``item_sku` (`sku`),',
+    '  CONSTRAINT `FK_order``item_order_id` FOREIGN KEY (`order_id`) REFERENCES `shop`.`orders` (`id`) ON DELETE CASCADE',
+    ');',
+  ].join('\n'));
+  // tanpa schema (database kosong): nama satu bagian, dijalankan di database itu
+  assert.match(createTable(myd, { schema: '', name: 't' }, [id]).sql, /^CREATE TABLE `t` \(/);
+});
+
+test('new table: MySQL auto increment must be a key, integer types incl. unsigned, FK actions without SET DEFAULT', () => {
+  assert.deepEqual(createTable(myd, { schema: '', name: 't' }, [{ name: 'n', type: 'bigint unsigned', nullable: false, ai: true }]).errors,
+    ['n: auto increment needs PK or UQ (MySQL)']);
+  assert.deepEqual(createTable(myd, { schema: '', name: 't' }, [{ name: 'n', type: 'bigint unsigned', nullable: false, ai: true, unique: true }]).errors, []);
+  assert.ok(myd.aiTypes!.includes('int unsigned') && myd.aiTypes!.includes('tinyint'));
+  assert.deepEqual(myd.fkActions, ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL']);
+});
+
+test('menus: New Table on MySQL / MariaDB / PostgreSQL databases and their Tables folder', () => {
+  const pkg = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
+  const items: { command: string; when?: string }[] = pkg.contributes.menus['view/item/context'];
+  const shown = (v: string) => items.some((it) => it.command === 'moonageDaydream.newTable' && new RegExp(/viewItem =~ \/(.+?)\/(?:\s|$)/.exec(it.when ?? '')![1]).test(v));
+  assert.ok(shown('db.live') && shown('folder.table'));
+  assert.ok(!shown('folder.view'));
 });
