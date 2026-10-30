@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { checkColumn, checkType, columnChanges, splitType, type ColumnRow, drivers, objContext, showColumns } from '../db';
 import { columnsHtml } from '../columnsHtml';
 import { MS_TYPES, fmtType, wrapped } from '../mssql';
+import { sqliteDriver, sqliteRebuild } from '../sqlite';
 
 const ms = drivers.mssql.columnDdl!;
 const t = { schema: 'dbo', name: "or]ders" };
@@ -351,4 +353,115 @@ test('PostgreSQL data types: complete list, grouped, size rules', () => {
   assert.match(checkType('timestamp(7)', pg.types)!, /timestamp: fractional seconds 0-6/);
   assert.match(checkType('integer(4)', pg.types)!, /integer has no size/);
   assert.ok(pg.types.find((x) => x.name === 'serial')!.note!.match(/add/i), 'serial is only for new columns');
+});
+
+// ---------- SQLite ----------
+const lite = drivers.sqlite.columnDdl!;
+const lt = { schema: 'main', name: 'it"em' };
+const LT = '"it""em"';
+
+test('column ddl: SQLite basics (one transaction around the script, note mentions the rebuild)', () => {
+  assert.equal(lite.newType, 'text');
+  assert.match(lite.note!, /one transaction/i);
+  assert.match(lite.note!, /rebuild/i);
+  assert.equal(lite.wrap!('X;'), 'BEGIN;\nX;\nCOMMIT;');
+  const sql = lite.show(lt);
+  assert.match(sql, /pragma_table_xinfo\('it"em'\)/);
+  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'primary_key', 'generated', 'keep']) assert.match(sql, new RegExp(`AS ${col}\\b`), col);
+});
+
+test('column ddl: SQLite Add / Delete / rename, NOT NULL column needs a default', () => {
+  assert.equal(lite.add(lt, { name: 'note', type: 'text', nullable: true }), `ALTER TABLE ${LT} ADD COLUMN "note" text;`);
+  assert.equal(lite.add(lt, { name: 'qty', type: 'integer', nullable: false, default: '0' }), `ALTER TABLE ${LT} ADD COLUMN "qty" integer NOT NULL DEFAULT 0;`);
+  assert.equal(lite.drop(lt, 'price'), `ALTER TABLE ${LT} DROP COLUMN "price";`);
+  const old = { name: 'qty', type: 'integer', nullable: true };
+  assert.equal(lite.edit(lt, old, { ...old, name: 'quantity' }), `ALTER TABLE ${LT} RENAME COLUMN "qty" TO "quantity";`);
+  assert.match(lite.edit(lt, old, { ...old, type: 'real' }), /^-- "qty": .*rebuild/);
+  const e = columnChanges(lite, lt, [], [{ name: 'n', type: 'integer', nullable: false }]).errors;
+  assert.deepEqual(e, ['new column 1: a new NOT NULL column needs a default (SQLite)']);
+});
+
+test('SQLite rebuild: only the changed column definitions are rewritten, other constraints / options kept', () => {
+  const create = `CREATE TABLE "item" (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL DEFAULT 'a, (b)' COLLATE NOCASE,
+    qty INTEGER CONSTRAINT q_nn NOT NULL DEFAULT (0) CHECK (qty >= 0), [price] REAL, UNIQUE (name), FOREIGN KEY (qty) REFERENCES other(id)) STRICT`;
+  const bundle = JSON.stringify({ create, extras: ['CREATE INDEX ix_item_qty ON item (qty)', 'CREATE TRIGGER t1 AFTER INSERT ON item BEGIN SELECT 1; END'] });
+  const sql = sqliteRebuild({ schema: 'main', name: 'item' }, bundle, ['id', 'name', 'qty', 'price'],
+    [{ name: 'qty', type: 'bigint', nullable: true, default: '1' }, { name: 'name', type: 'varchar(80)', nullable: false, default: "'x'" }, { name: 'price', type: 'numeric', nullable: false }]);
+  assert.equal(sql, [
+    `CREATE TABLE "item__moonage_new" (id INTEGER PRIMARY KEY AUTOINCREMENT, name varchar(80) COLLATE NOCASE NOT NULL DEFAULT 'x',
+    qty bigint CHECK (qty >= 0) DEFAULT 1, [price] numeric NOT NULL, UNIQUE (name), FOREIGN KEY (qty) REFERENCES other(id)) STRICT;`,
+    'INSERT INTO "item__moonage_new" ("id", "name", "qty", "price") SELECT "id", "name", "qty", "price" FROM "item";',
+    'DROP TABLE "item";',
+    // legacy: RENAME TO tidak memeriksa ulang view yang menunjuk tabel lama (sudah di-drop)
+    'PRAGMA legacy_alter_table = ON;',
+    'ALTER TABLE "item__moonage_new" RENAME TO "item";',
+    'PRAGMA legacy_alter_table = OFF;',
+    'CREATE INDEX ix_item_qty ON item (qty);',
+    'CREATE TRIGGER t1 AFTER INSERT ON item BEGIN SELECT 1; END;',
+  ].join('\n'));
+});
+
+test('SQLite data types: affinities + common names, size rules', () => {
+  const names = lite.types.map((x) => x.name);
+  for (const n of ['integer', 'real', 'text', 'blob', 'numeric', 'int', 'bigint', 'boolean', 'varchar', 'char', 'decimal', 'double', 'date', 'datetime']) assert.ok(names.includes(n), n);
+  assert.equal(new Set(names).size, names.length, 'no duplicates');
+  assert.ok(lite.types.every((x) => x.group && x.note), 'group + affinity note');
+  for (const ty of ['INTEGER', 'varchar(255)', 'decimal(10,2)', 'text', 'my_type']) assert.equal(checkType(ty, lite.types), undefined, ty);
+});
+
+test('SQLite Columns editor end to end on a real file: rename, rebuild, drop, add; index / trigger / view kept; failure leaves the file unchanged', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'moonage-cols-'));
+  try {
+    const file = join(dir, 'lab.db');
+    writeFileSync(file, '');
+    const c = { name: 'lite', type: 'sqlite' as const, host: '', port: 0, user: '', database: '', trustServerCertificate: false, file };
+    const run = (sql: string) => sqliteDriver.run(c, '', sql);
+    await run(`CREATE TABLE item (id INTEGER PRIMARY KEY, name TEXT NOT NULL DEFAULT 'none' COLLATE NOCASE, qty INTEGER DEFAULT 0 CHECK (qty >= 0),
+        price REAL, flag INTEGER, total REAL GENERATED ALWAYS AS (qty * price) VIRTUAL);
+      CREATE INDEX ix_item_name ON item (name);
+      CREATE TABLE log (n INTEGER);
+      CREATE TRIGGER item_ins AFTER INSERT ON item BEGIN INSERT INTO log VALUES (1); END;
+      CREATE VIEW cheap AS SELECT id, name FROM item WHERE price < 5;
+      INSERT INTO item (name, qty, price) VALUES ('apple', 5, 1.5), ('banana', 0, NULL);`);
+    const o = { schema: 'main', name: 'item' };
+    const load = async () => showColumns((await run(lite.show(o))).resultSets[0]).cols;
+    const cols = await load();
+    const strip = (x: ColumnRow) => ({ ...x, keep: undefined });
+    assert.deepEqual(cols.map(strip), [
+      { name: 'id', type: 'INTEGER', nullable: true, keep: undefined },
+      { name: 'name', type: 'TEXT', nullable: false, default: "'none'", keep: undefined },
+      { name: 'qty', type: 'INTEGER', nullable: true, default: '0', keep: undefined },
+      { name: 'price', type: 'REAL', nullable: true, keep: undefined },
+      { name: 'flag', type: 'INTEGER', nullable: true, keep: undefined },
+      { name: 'total', type: 'REAL', nullable: true, generated: true, keep: undefined },
+    ]);
+    const rows: ColumnRow[] = cols.map((x) => ({ ...x, orig: x.name }));
+    const edit = (n: string, ch: Partial<ColumnRow>) => Object.assign(rows.find((x) => x.orig === n)!, ch);
+    edit('name', { name: 'title', type: 'varchar(80)' });
+    edit('qty', { type: 'bigint', default: '1' });
+    edit('flag', { deleted: true });
+    rows.push({ name: 'note', type: 'text', nullable: false, default: "'x'" });
+    const r = columnChanges(lite, o, cols, rows);
+    assert.deepEqual(r.errors, []);
+    assert.deepEqual(r.steps.map((s) => [s.kind, s.column]), [['rebuild', 'item'], ['drop', 'flag'], ['edit', 'name'], ['edit', 'qty'], ['add', 'note']]);
+    await run(r.sql);
+    const after = await load();
+    assert.deepEqual(after.map((x) => `${x.name} ${x.type} ${x.nullable} ${x.default ?? ''}`),
+      ['id INTEGER true ', "title varchar(80) false 'none'", 'qty bigint true 1', 'price REAL true ', 'total REAL true ', "note TEXT false 'x'"]);
+    const one = async (sql: string) => (await run(sql)).resultSets[0]?.rows;
+    assert.deepEqual(await one("SELECT name FROM sqlite_master WHERE type IN ('index', 'trigger', 'view') ORDER BY name"), [['cheap'], ['item_ins'], ['ix_item_name']]);
+    assert.deepEqual(await one('SELECT id, title, qty, total, note FROM item ORDER BY id'), [[1, 'apple', 5, 7.5, 'x'], [2, 'banana', 0, null, 'x']]);
+    assert.deepEqual(await one('SELECT title FROM cheap'), [['apple']]);
+    assert.deepEqual(await one("SELECT title FROM item WHERE title = 'APPLE'"), [['apple']], 'COLLATE NOCASE kept');
+
+    // gagal di tengah (price NULL -> NOT NULL): tidak ada yang berubah
+    const bad = after.map((x): ColumnRow => ({ ...x, orig: x.name }));
+    Object.assign(bad.find((x) => x.orig === 'qty')!, { name: 'q' });
+    Object.assign(bad.find((x) => x.orig === 'price')!, { nullable: false });
+    const before = readFileSync(file);
+    await assert.rejects(run(columnChanges(lite, o, after, bad).sql), /NOT NULL/);
+    assert.ok(readFileSync(file).equals(before), 'file unchanged after a failing script');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

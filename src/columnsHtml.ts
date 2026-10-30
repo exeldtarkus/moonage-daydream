@@ -263,9 +263,10 @@ $('splitter').addEventListener('pointerdown', (e) => {
 });
 $('splitter').addEventListener('keydown', (e) => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); setH(pending.offsetHeight + (e.key === 'ArrowUp' ? 24 : -24)); } });
 
-const KW = /\\b(ALTER|TABLE|ADD|DROP|COLUMN|CONSTRAINT|DEFAULT|FOR|EXEC|DECLARE|SELECT|FROM|WHERE|AND|IF|IS|NOT|NULL|BEGIN|END|SET|CHANGE|MODIFY|RENAME|TO|TYPE|USING)\\b/g;
+const KW = /\\b(ALTER|TABLE|ADD|DROP|COLUMN|CONSTRAINT|DEFAULT|FOR|EXEC|DECLARE|SELECT|FROM|WHERE|AND|IF|IS|NOT|NULL|BEGIN|END|SET|CHANGE|MODIFY|RENAME|TO|TYPE|USING|CREATE|INSERT|INTO|PRAGMA|COMMIT)\\b/g;
 const sqlHtml = (s) => h(s).replace(/(N?'(?:[^']|'')*')|\\b([A-Z_]+)\\b/g, (m, str, w) => str ? '<span class="str">' + str + '</span>' : (KW.lastIndex = 0, KW.test(w) ? '<span class="kw">' + w + '</span>' : w));
-const what = (s) => s.kind === 'drop' ? 'Delete <code>' + h(s.column) + '</code>'
+const what = (s) => s.kind === 'rebuild' ? 'Rebuild table <code>' + h(s.column) + '</code> (copy data to a new table)'
+  : s.kind === 'drop' ? 'Delete <code>' + h(s.column) + '</code>'
   : s.kind === 'add' ? 'Add <code>' + h(s.column) + '</code>'
   : 'Change <code>' + h(s.column) + '</code>' + (s.to ? ' to <code>' + h(s.to) + '</code>' : '');
 function status(text, error) { $('status').textContent = text; $('status').className = error ? 'err' : ''; }

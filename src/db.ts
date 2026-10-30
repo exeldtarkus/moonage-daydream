@@ -121,6 +121,12 @@ export interface ColumnDdl {
   add(obj: DbObject, col: ColumnDef): string;
   edit(obj: DbObject, old: ColumnDef, next: ColumnDef): string;
   drop(obj: DbObject, name: string): string;
+  /** validasi tambahan per database (added = kolom baru); undefined = valid */
+  check?(c: ColumnDef, added: boolean): string | undefined;
+  /** SQLite: ubah tipe / NULL / default lewat rebuild tabel (changed memakai nama kolom asal); dijalankan sebelum langkah lain */
+  rebuild?(obj: DbObject, original: ColumnRow[], changed: ColumnDef[]): string;
+  /** bungkus seluruh script (mis. satu transaksi) */
+  wrap?(sql: string): string;
 }
 
 /**
@@ -207,7 +213,7 @@ const sameCol = (a: ColumnDef, b: ColumnDef) => a.name === b.name && a.type.trim
 
 /** editor Columns -> script (hapus, ubah, tambah; satu langkah per batch); errors = input tidak valid, script kosong */
 /** satu langkah di daftar Pending changes */
-export interface ColumnStep { kind: 'drop' | 'edit' | 'add'; column: string; to?: string; sql: string; detail?: string[] }
+export interface ColumnStep { kind: 'rebuild' | 'drop' | 'edit' | 'add'; column: string; to?: string; sql: string; detail?: string[] }
 
 /** perubahan kolom selain nama, untuk dibaca user: tipe, NULL, default */
 function diffColumn(a: ColumnDef, b: ColumnDef): string[] {
@@ -220,10 +226,11 @@ function diffColumn(a: ColumnDef, b: ColumnDef): string[] {
   ];
 }
 
-export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnDef[], rows: ColumnRow[]): { sql: string; errors: string[]; count: number; steps: ColumnStep[] } {
+export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow[], rows: ColumnRow[]): { sql: string; errors: string[]; count: number; steps: ColumnStep[] } {
   const live = rows.filter((r) => !r.deleted && (r.orig || r.name.trim() || r.type.trim()));
+  const clean = (r: ColumnRow): ColumnDef => ({ name: r.name.trim(), type: r.type.trim(), nullable: r.nullable, ...(r.default?.trim() ? { default: r.default.trim() } : {}) });
   const errors = live.flatMap((r) => {
-    const e = checkColumn(r) ?? checkType(r.type, ddl.types);
+    const e = checkColumn(r) ?? checkType(r.type, ddl.types) ?? ddl.check?.(clean(r), !r.orig);
     return e ? [`${r.orig ?? `new column ${rows.indexOf(r) + 1}`}: ${e}`] : [];
   });
   const seen = new Set<string>();
@@ -233,15 +240,19 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnDef
     seen.add(k);
   }
   if (errors.length) return { sql: '', errors, count: 0, steps: [] };
-  const clean = (r: ColumnRow): ColumnDef => ({ name: r.name.trim(), type: r.type.trim(), nullable: r.nullable, ...(r.default?.trim() ? { default: r.default.trim() } : {}) });
   const old = (r: ColumnRow) => original.find((c) => c.name === r.orig)!;
+  // SQLite: perubahan selain nama dikerjakan satu rebuild tabel di awal (nama asal), rename / drop / add sesudahnya
+  const rebuilt = ddl.rebuild ? live.filter((r) => r.orig && diffColumn(old(r), clean(r)).length) : [];
   const steps: ColumnStep[] = [
+    ...(rebuilt.length ? [{ kind: 'rebuild' as const, column: obj.name, sql: ddl.rebuild!(obj, original, rebuilt.map((r) => ({ ...clean(r), name: r.orig! }))),
+      detail: rebuilt.map((r) => `${r.orig}: ${diffColumn(old(r), clean(r)).join(', ')}`) }] : []),
     ...rows.filter((r) => r.deleted && r.orig).map((r): ColumnStep => ({ kind: 'drop', column: r.orig!, sql: ddl.drop(obj, r.orig!) })),
     ...live.filter((r) => r.orig && !sameCol(old(r), clean(r))).map((r): ColumnStep => ({ kind: 'edit', column: r.orig!,
       ...(clean(r).name !== r.orig ? { to: clean(r).name } : {}), sql: ddl.edit(obj, old(r), clean(r)), detail: diffColumn(old(r), clean(r)) })),
     ...live.filter((r) => !r.orig).map((r): ColumnStep => ({ kind: 'add', column: clean(r).name, sql: ddl.add(obj, clean(r)) })),
   ];
-  return { sql: steps.map((x) => x.sql).join(ddl.separator), errors: [], count: steps.length, steps };
+  const sql = steps.map((x) => x.sql).join(ddl.separator);
+  return { sql: sql && ddl.wrap ? ddl.wrap(sql) : sql, errors: [], count: steps.length, steps };
 }
 
 /** penerima baris export All Data; row() boleh mengembalikan Promise (backpressure) */
