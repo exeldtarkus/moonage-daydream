@@ -19,6 +19,7 @@ import type { Outcome, Source } from './resultsHtml';
 import { columnsHtml } from './columnsHtml';
 import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
+import { mongoChanges, mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, changeStatements, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
@@ -1505,7 +1506,7 @@ export async function applyWhere(where: string, part?: number) {
     return;
   }
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(src.uri));
-  await execute(doc, sql, { uri: src.uri, sql: src.sql, where: where.trim() || undefined });
+  await execute(doc, sql, { uri: src.uri, sql: src.sql, where: where.trim() || undefined, ...(src.mongo ? { mongo: true } : {}) });
 }
 
 /**
@@ -1888,21 +1889,30 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
   await results.show(title, outcome);
 }
 
-/** tabel asal result set yang diedit: statement SELECT satu tabel + primary key; gagal = Error dengan alasannya */
-async function gridTarget(m: ResultMessage) {
-  const o = results.current?.outcome;
-  if (!o) throw new Error('No result to edit');
+/** alasan result set tidak bisa diedit (bukan error sistem): tombol edit dinonaktifkan dengan pesan ini */
+class NotEditable extends Error {}
+
+/** tabel / koleksi asal result set yang diedit: SELECT satu tabel + primary key, atau find() satu koleksi MongoDB (_id) */
+async function gridTarget(m: ResultMessage, o = results.current?.outcome) {
+  if (!o) throw new NotEditable('No result to edit');
   const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
   const single = part ? part.o : o;
-  if (!('result' in single)) throw new Error('No result to edit');
+  if (!('result' in single)) throw new NotEditable('No result to edit');
   const rs = single.result.resultSets[m.set ?? 0];
   const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
   const c = src && fileConn(vscode.Uri.parse(src.uri));
-  if (!rs || !src || !c) throw new Error('Editing needs the result of a single SELECT');
+  if (!rs || !src || !c) throw new NotEditable('Editing needs the result of a single SELECT');
   const d = drivers[c.type];
-  if (!['mssql', 'mysql', 'postgres', 'sqlite'].includes(d.dialect)) throw new Error(`Editing rows is not available for ${d.label} yet`);
+  if (src.mongo) {
+    const coll = mongoFindCollection(src.sql);
+    if (!coll) throw new NotEditable('Editing needs a find() on one collection');
+    if (!rs.columns.includes('_id')) throw new NotEditable('The _id field must be part of the result to edit documents');
+    const db = c.database || d.defaultDb;
+    return { c, d, pw: await conns.password(c.name), rs, src, pk: ['_id'], table: coll, label: `${db}.${coll}`, mongo: true };
+  }
+  if (!['mssql', 'mysql', 'postgres', 'sqlite'].includes(d.dialect)) throw new NotEditable(`Editing rows is not available for ${d.label} yet`);
   const refs = tableRefs(src.sql);
-  if (refs.length !== 1) throw new Error('Editing needs a SELECT from exactly one table (no JOIN)');
+  if (refs.length !== 1) throw new NotEditable('Editing needs a SELECT from exactly one table (no JOIN)');
   const parts = refs[0].parts;
   const name = parts[parts.length - 1];
   // MySQL: `db.tabel` (schema = database); lainnya `db.schema.tabel` / `schema.tabel`
@@ -1911,11 +1921,37 @@ async function gridTarget(m: ResultMessage) {
   const schema = d.dialect === 'mysql' ? db : (parts.length >= 2 && parts[parts.length - 2])
     || (await d.objects(c, pw, db, 'table')).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
   const pk = await d.primaryKey(c, pw, db, { schema, name });
-  if (!pk.length) throw new Error(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
+  if (!pk.length) throw new NotEditable(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
   const q = d.quote;
   const table = d.dialect === 'mssql' ? `${q(db)}.${q(schema)}.${q(name)}` : d.dialect === 'mysql' ? `${q(db)}.${q(name)}`
     : d.dialect === 'postgres' ? `${q(schema)}.${q(name)}` : q(name);
-  return { c, d, pw, rs, src, pk, table, label: `${db}.${schema}.${name}` };
+  if (!pk.every((k) => rs.columns.some((x) => k.toLowerCase() === x.toLowerCase()))) throw new NotEditable(`The primary key (${pk.join(', ')}) must be part of the SELECT to edit rows`);
+  return { c, d, pw, rs, src, pk, table, label: `${db}.${schema}.${name}`, mongo: false };
+}
+
+/**
+ * setelah hasil tampil: result set yang tidak bisa diedit (atau koneksi read-only) diberi alasan -> tombol edit nonaktif + tooltip.
+ * Error lain (mis. gagal membaca primary key) dicatat dan tombol tetap aktif: Save akan melaporkannya.
+ */
+// shortcut: tiap SELECT memicu baca primary key (+ daftar tabel bila schema tidak ditulis) setelah hasil tampil; cache per tabel bila terasa lambat di database besar
+async function markEditable(o: Outcome) {
+  const singles = 'parts' in o ? o.parts.map((p, part) => ({ s: p.o, part })) : [{ s: o, part: undefined }];
+  let changed = false;
+  for (const { s, part } of singles) {
+    if (!('result' in s) || !s.result.resultSets.length) continue;
+    try {
+      const t = await gridTarget({ type: 'saveGrid', set: 0, part } as ResultMessage, o);
+      if (t.c.readOnly) throw new NotEditable(`${t.c.name} is a read-only connection`);
+    } catch (e) {
+      if (!(e instanceof NotEditable)) {
+        log.error(`markEditable - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        continue;
+      }
+      s.editBlock = e.message;
+      changed = true;
+    }
+  }
+  if (changed && results.current?.outcome === o) results.refresh();
 }
 
 /**
@@ -1926,7 +1962,8 @@ export async function editScript(m: ResultMessage): Promise<vscode.TextDocument 
   if (!m.edits?.length) return;
   try {
     const t = await gridTarget(m);
-    const script = updateScript(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, m.edits, t.d.quote, t.d.dialect);
+    const script = t.mongo ? mongoChanges(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, { edits: m.edits }).join('\n')
+      : updateScript(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, m.edits, t.d.quote, t.d.dialect);
     const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: script });
     await conns.bind(doc.uri.toString(), { conn: t.c.name, db: t.c.database || undefined });
     await vscode.window.showTextDocument(doc, { preview: false });
@@ -1950,11 +1987,32 @@ export async function saveGrid(m: ResultMessage): Promise<boolean> {
     const t = await gridTarget(m);
     c = t.c;
     if (c.readOnly) throw new Error(`${c.name} is read-only`);
-    const stmts = changeStatements(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, ch, t.d.quote, t.d.dialect);
+    const stmts = t.mongo ? mongoChanges(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, ch)
+      : changeStatements(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, ch, t.d.quote, t.d.dialect);
     if (!stmts.length) return false;
-    const detail = `${t.label}: ${ch.edits.length ? `${new Set(ch.edits.map((e) => e.row)).size} row(s) updated, ` : ''}${new Set(ch.deletes).size} deleted, ${ch.inserts.length} inserted. One transaction; any error rolls everything back.\n\n${stmts.join('\n')}`;
+    const how = t.mongo ? 'MongoDB has no transaction here: commands run one by one and stop at the first error (earlier ones stay saved).'
+      : 'One transaction; any error rolls everything back.';
+    const detail = `${t.label}: ${ch.edits.length ? `${new Set(ch.edits.map((e) => e.row)).size} row(s) updated, ` : ''}${new Set(ch.deletes).size} deleted, ${ch.inserts.length} inserted. ${how}\n\n${stmts.join('\n')}`;
     const ok = await vscode.window.showWarningMessage(`Save changes to ${t.label} on ${c.name}?`, { modal: true, detail: detail.length > 4000 ? `${detail.slice(0, 4000)}\n…` : detail }, 'Save');
     if (ok !== 'Save') return false;
+    if (t.mongo) {
+      // shortcut: tanpa transaksi (perlu replica set); perintah dijalankan berurutan, berhenti di error pertama
+      let done = 0;
+      try {
+        for (const st of stmts) {
+          await t.d.run(c, t.pw, st);
+          done++;
+        }
+      } catch (e) {
+        log.error(`saveGrid mongo - EXCEPTION CAUGHT | ${c.name}: ${done} of ${stmts.length} saved: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        vscode.window.showErrorMessage(`Save stopped after ${done} of ${stmts.length} command(s): ${errMsg(e)}`);
+        await applyWhere('', m.part);
+        return false;
+      }
+      log.info(`saveGrid: ${t.label} ${stmts.length} command(s)`);
+      await applyWhere('', m.part);
+      return true;
+    }
     const session = await t.d.session(c, t.pw);
     try {
       for (const st of stmts) await session.run(st);
@@ -2056,7 +2114,8 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   // beberapa SELECT tanpa variabel / #temp: tiap statement di koneksi sendiri, hasil tampil begitu statement itu selesai
   const stmts = splitBatches(text).flatMap((b) => splitStatements(b, drivers[c.type].dialect));
   // satu SELECT: toolbar WHERE aktif (dasarnya statement asal, bukan versi yang sudah difilter)
-  const src = source ?? (singleSelect(stmts) ? { uri: key, sql: stmts[0] } : undefined);
+  const src = source ?? (singleSelect(stmts) ? { uri: key, sql: stmts[0] }
+    : drivers[c.type].dialect === 'mongodb' && stmts.length === 1 && mongoFindCollection(stmts[0]) ? { uri: key, sql: stmts[0], mongo: true } : undefined);
   const manual = txMode(key) === 'manual'; // transaksi manual: satu sesi, selalu berurutan
   let outcome: Outcome = !manual && parallelSafe(stmts)
     ? { parts: stmts.map((sql) => ({ sql, o: { loading: true } })), uri: key, start: q.start }
@@ -2133,4 +2192,5 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   if (running.has(key)) return; // sudah diganti run yang lebih baru: hasilnya yang ditampilkan
   if ('parts' in outcome) results.repaint(key); // panel sudah tampil sejak awal; cukup perbarui status akhir
   else await results.show(title, outcome);
+  void markEditable(outcome);
 }

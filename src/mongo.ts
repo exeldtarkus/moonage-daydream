@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { BSON, Binary, Decimal128, Double, Int32, Long, MongoClient, ObjectId } from 'mongodb';
 import type { AbstractCursor, Db, Document, MongoClientOptions } from 'mongodb';
 import { MAX_ROWS, connectMs, typedOptions } from './db';
+import { driverLog } from './log';
 import type { ColumnDdl, ConnectionInfo, Driver, NewColumn, NewDatabase, QueryResult, ResultSet, TypeSpec } from './db';
 
 /** satu perintah shell yang direkam: db.<collection>.<method>(args) atau db.<method>(args), plus chain cursor */
@@ -68,6 +69,8 @@ export function parseShell(text: string): Op[] {
   if (!ops.length) throw new Error('No MongoDB command found. Example: db.users.find({ active: true }).limit(10);');
   return ops;
 }
+
+const errText = (e: unknown) => (e instanceof Error ? `${e.message} - stack-trace: ${e.stack}` : String(e));
 
 const BSON_TYPE = (v: unknown): string => v === null || v === undefined ? '' : v instanceof ObjectId ? 'objectId' : v instanceof Date ? 'date'
   : v instanceof Long ? 'long' : v instanceof Decimal128 ? 'decimal' : v instanceof Int32 ? 'int' : v instanceof Double ? 'double'
@@ -408,3 +411,79 @@ export const mongoDriver: Driver = {
     if (c) await (await c).close();
   },
 };
+
+/** nilai teks grid -> literal mongosh sesuai tipe BSON kolom ('NULL' / null = null); tipe tak dikenal: angka / true / false, selain itu string */
+function mongoLiteral(v: string | null, type: string, field: string): string {
+  if (v === null || v === 'NULL') return 'null';
+  const bad = (what: string) => new Error(`${field}: "${v}" is not ${what}`);
+  switch (type) {
+    case 'objectId':
+      if (!/^[0-9a-f]{24}$/i.test(v)) throw bad('an ObjectId (24 hex characters)');
+      return `ObjectId(${JSON.stringify(v)})`;
+    case 'int': case 'double': case 'long': case 'decimal':
+      if (v.trim() === '' || !Number.isFinite(Number(v))) throw bad('a number');
+      return type === 'long' ? `NumberLong(${JSON.stringify(v.trim())})` : type === 'decimal' ? `NumberDecimal(${JSON.stringify(v.trim())})` : String(Number(v));
+    case 'bool':
+      if (!/^(true|false)$/i.test(v.trim())) throw bad('true or false');
+      return v.trim().toLowerCase();
+    case 'date':
+      if (Number.isNaN(Date.parse(v))) throw bad('a date');
+      return `ISODate(${JSON.stringify(v)})`;
+    case 'array': case 'object':
+      try {
+        return JSON.stringify(JSON.parse(v));
+      } catch (e) {
+        driverLog.error(`mongoLiteral - EXCEPTION CAUGHT | ${field}: ${errText(e)}`);
+        throw bad(`valid JSON (${type})`);
+      }
+    case 'string':
+      return JSON.stringify(v);
+    default:
+      return /^-?\d+(\.\d+)?$/.test(v.trim()) ? String(Number(v)) : /^(true|false)$/.test(v.trim()) ? v.trim() : JSON.stringify(v);
+  }
+}
+
+/**
+ * perubahan grid koleksi MongoDB -> perintah mongosh, urut: updateOne ($set kolom yang berubah), deleteOne, insertOne;
+ * dokumen dikenali dari `_id` (wajib ikut di hasil). Tanpa transaksi: dijalankan satu per satu oleh extension.
+ */
+export function mongoChanges(collection: string, columns: string[], types: string[], rows: unknown[][],
+  ch: { edits?: { row: number; col: number; value: string | null }[]; deletes?: number[]; inserts?: string[][] }): string[] {
+  const c = `db.getCollection(${JSON.stringify(collection)})`;
+  const id = columns.indexOf('_id');
+  const key = (r: number) => {
+    if (id < 0) throw new Error('The _id field must be part of the result to edit documents');
+    const row = rows[r];
+    if (!row) throw new Error(`Row ${r + 1} is not loaded`);
+    return `{ "_id": ${mongoLiteral(row[id] === null ? null : String(row[id]), types[id] ?? '', '_id')} }`;
+  };
+  const gone = new Set(ch.deletes ?? []);
+  const byRow = new Map<number, { col: number; value: string | null }[]>();
+  for (const e of ch.edits ?? []) {
+    if (e.col === id) throw new Error('_id cannot be edited here');
+    if (!gone.has(e.row)) byRow.set(e.row, [...(byRow.get(e.row) ?? []), e]);
+  }
+  const out: string[] = [];
+  for (const [r, es] of [...byRow.entries()].sort((a, b) => a[0] - b[0])) {
+    const set = es.map((e) => `${JSON.stringify(columns[e.col])}: ${mongoLiteral(e.value, types[e.col] ?? '', columns[e.col])}`).join(', ');
+    out.push(`${c}.updateOne(${key(r)}, { $set: { ${set} } });`);
+  }
+  for (const r of [...gone].sort((a, b) => a - b)) out.push(`${c}.deleteOne(${key(r)});`);
+  for (const v of ch.inserts ?? []) {
+    const fields = columns.map((name, i) => [name, i] as const).filter(([, i]) => (v[i] ?? '') !== '')
+      .map(([name, i]) => `${JSON.stringify(name)}: ${mongoLiteral(v[i], types[i] ?? '', name)}`);
+    out.push(`${c}.insertOne(${fields.length ? `{ ${fields.join(', ')} }` : '{}'});`);
+  }
+  return out;
+}
+
+/** koleksi asal hasil yang bisa diedit di grid: teks berisi tepat satu find() pada satu koleksi */
+export function mongoFindCollection(text: string): string | undefined {
+  try {
+    const ops = parseShell(text);
+    return ops.length === 1 && ops[0].coll && ops[0].method === 'find' ? ops[0].coll : undefined;
+  } catch (e) {
+    driverLog.error(`mongoFindCollection - EXCEPTION CAUGHT | ${errText(e)}`);
+    return undefined;
+  }
+}

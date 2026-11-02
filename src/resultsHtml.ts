@@ -27,6 +27,8 @@ export interface Source {
   uri: string;
   sql: string;
   where?: string;
+  /** teks mongosh (find satu koleksi): toolbar WHERE SQL tidak berlaku */
+  mongo?: boolean;
 }
 /** Explain (estimated, query tidak dijalankan) / Analyze (actual, SELECT dijalankan lalu di-rollback) */
 export interface PlanOutcome {
@@ -37,7 +39,7 @@ export interface PlanOutcome {
   /** Analyze: jumlah baris hasil query per result set */
   rows?: number[];
 }
-export type Single = PlanOutcome | { result: QueryResult; source?: Source } | { error: string; source?: Source } | { loading: true; uri?: string; cancelling?: boolean };
+export type Single = PlanOutcome | { result: QueryResult; source?: Source; editBlock?: string } | { error: string; source?: Source } | { loading: true; uri?: string; cancelling?: boolean };
 /** run paralel: satu Part per statement, diperbarui begitu statement itu selesai */
 export interface Part {
   sql: string;
@@ -81,7 +83,8 @@ function whereBar(where: string | undefined, part?: number): string {
 }
 
 /** canMore: statement asal diketahui (satu SELECT) -> tombol Load more di result set pertama */
-function resultHtml(r: QueryResult, canMore = false): string {
+/** editBlock: alasan result set tidak bisa diedit (dicek extension setelah hasil tampil) -> tombol edit nonaktif */
+function resultHtml(r: QueryResult, canMore = false, editBlock?: string): string {
   const sets = r.resultSets.map((s, i) => {
     // kolom angka rata kanan; tanpa info tipe: tebak dari nilai baris pertama
     const num = s.columns.map((_, c) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number'));
@@ -94,10 +97,11 @@ function resultHtml(r: QueryResult, canMore = false): string {
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
     return `<div class="blk"><h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
-<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead>${s.rows.length > VIRTUAL_ROWS
+<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 && !editBlock ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead>${s.rows.length > VIRTUAL_ROWS
       ? `<tbody></tbody></table><template class="vrows">${rows}</template>` : `<tbody>${rows}</tbody></table>`}</div>
 <div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0
-      ? '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
+      ? editBlock ? `<span class="editbar off" title="Editing is off: ${esc(editBlock)}"><button class="addrow" disabled>Add row</button><button class="delrow" disabled>Delete rows</button></span>`
+        : '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
       ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div></div>`;
   }).join('');
   // jumlah baris per statement non-SELECT (urut), juga di samping result set SELECT: berjudul statement asalnya bila pasti
@@ -135,7 +139,7 @@ function partHtml(p: Part, i: number, uri: string, pinned: boolean): string {
   const state = 'loading' in o ? (o.cancelling ? 'cancelling' : 'running') : 'error' in o ? 'failed' : `${o.result.durationMs} ms`;
   const head = `<h2>Query ${i + 1} <span>${esc(preview(p.sql))} · ${state}</span></h2>`;
   if ('loading' in o) return `<section data-part="${i}">${head}<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div></section>`;
-  return `<section data-part="${i}">${head}${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned)}</section>`;
+  return `<section data-part="${i}">${head}${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned, o.editBlock)}</section>`;
 }
 
 /** pinned: snapshot di tab sendiri (tanpa toolbar WHERE / tombol Pin; filter, sort, export tetap) */
@@ -160,10 +164,10 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
 </div>`;
   } else if ('error' in o) {
     status = 'Failed';
-    body = `${o.source && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
+    body = `${o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = `${o.source && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned)}`;
+    body = `${o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned, o.editBlock)}`;
   }
   return `<!DOCTYPE html>
 <html>
@@ -219,6 +223,8 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .editbar { display: inline-flex; align-items: center; gap: 6px; color: var(--vscode-editorWarning-foreground, #cca700); }
   .editbar[hidden], .editbar .pend[hidden] { display: none; }
   .editbar .pend { display: inline-flex; align-items: center; gap: 6px; }
+  .editbar.off { color: var(--vscode-descriptionForeground); cursor: help; }
+  .editbar button:disabled { opacity: .5; cursor: help; }
   tr.todelete td { text-decoration: line-through; opacity: .55; }
   tbody.newrows td { background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, #81b88b) 12%, transparent); }
   tbody.newrows input.cell { width: 100%; min-width: 60px; }
