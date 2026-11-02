@@ -389,6 +389,53 @@ export const msNewDatabase: NewDatabase = {
   },
 };
 
+/** opsi sp_serveroption yang bisa diatur dari form (kosong = default server) */
+const LS_OPTIONS: [key: string, opt: string, label: string][] = [['rpc', 'rpc', 'RPC'], ['rpc_out', 'rpc out', 'RPC out'],
+  ['data_access', 'data access', 'Data access'], ['collation_compatible', 'collation compatible', 'Collation compatible']];
+const BOOL_ITEMS = async () => [{ value: '', label: 'server default' }, { value: 'true' }, { value: 'false' }];
+
+/**
+ * form New Linked Server (SQL Server): tanpa data source = nama linked server adalah nama jaringan server SQL Server;
+ * dengan data source = alias lewat provider OLE DB (default MSOLEDBSQL). Password remote login tidak pernah tampil (maskSecrets).
+ */
+export const linkedServerForm: NewDatabase = {
+  maxName: 128,
+  noun: 'Linked server',
+  fields: [
+    { key: 'datasrc', label: 'Data source', kind: 'text', hint: 'empty = the name is the server network name (e.g. host\\instance,port)' },
+    { key: 'provider', label: 'Provider', kind: 'text', hint: 'MSOLEDBSQL (used with a data source)' },
+    { key: 'catalog', label: 'Catalog', kind: 'text', hint: 'default database (optional)' },
+    { key: 'login', label: 'Login', kind: 'choice', items: async () => [{ value: '', label: 'current security context' }, { value: 'remote', label: 'remote login (user + password)' }] },
+    { key: 'rmtuser', label: 'Remote user', kind: 'text', hint: 'for remote login' },
+    { key: 'rmtpassword', label: 'Remote password', kind: 'password', hint: 'for remote login (never shown in the script)' },
+    ...LS_OPTIONS.map(([key, , label]) => ({ key, label, kind: 'choice' as const, group: 'Options', items: BOOL_ITEMS })),
+  ],
+  check(v) {
+    const e: string[] = [];
+    if (!v.datasrc && (v.provider || v.catalog)) e.push('Provider and catalog need a data source');
+    if (v.login && v.login !== 'remote') e.push('Login must be current security context or remote login');
+    if (v.login === 'remote' && !v.rmtuser) e.push('Remote login needs a remote user');
+    for (const [key, , label] of LS_OPTIONS) if (v[key] && !/^(true|false)$/.test(v[key])) e.push(`${label} must be true or false`);
+    return e;
+  },
+  script(name, v) {
+    const server = v.datasrc
+      ? `@srvproduct = N'', @provider = ${lit(v.provider || 'MSOLEDBSQL')}, @datasrc = ${lit(v.datasrc)}${v.catalog ? `, @catalog = ${lit(v.catalog)}` : ''}`
+      : "@srvproduct = N'SQL Server'";
+    const login = v.login === 'remote'
+      ? `@useself = N'False', @locallogin = NULL, @rmtuser = ${lit(v.rmtuser)}, @rmtpassword = ${lit(v.rmtpassword ?? '')}`
+      : "@useself = N'True', @locallogin = NULL";
+    return [
+      `EXEC master.dbo.sp_addlinkedserver @server = ${lit(name)}, ${server};`,
+      `EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = ${lit(name)}, ${login};`,
+      ...LS_OPTIONS.filter(([key]) => v[key]).map(([key, opt]) => `EXEC master.dbo.sp_serveroption @server = ${lit(name)}, @optname = ${lit(opt)}, @optvalue = ${lit(v[key])};`),
+    ].join('\n');
+  },
+};
+
+/** uji koneksi linked server (dijalankan setelah dibuat) */
+export const testLinkedServerSql = (name: string) => `EXEC master.dbo.sp_testlinkedserver ${lit(name)};`;
+
 /** schema database untuk New Table: tanpa schema sistem dan schema role db_* (schema_id >= 16384) */
 export const msSchemasSql = (db: string) => `SELECT name FROM ${q(db)}.sys.schemas WHERE schema_id < 16384 AND name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest') ORDER BY name`;
 

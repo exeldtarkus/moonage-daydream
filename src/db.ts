@@ -603,7 +603,8 @@ export async function execScript(d: Pick<Driver, 'run' | 'session'>, c: Connecti
 export interface DbField {
   key: string;
   label: string;
-  kind: 'text' | 'number' | 'choice';
+  /** password: input tersembunyi, tampil *** di preview / Open in SQL Editor (lihat maskSecrets) */
+  kind: 'text' | 'number' | 'choice' | 'password';
   group?: string;
   hint?: string;
   /** pilihan choice; run = jalankan query di koneksi (semua baris, mis. 5500 collation) */
@@ -613,6 +614,8 @@ export interface DbField {
 /** New Database (form tab): isian per database lalu script CREATE DATABASE */
 export interface NewDatabase {
   maxName: number;
+  /** sebutan objek di pesan validasi nama (default 'Database'), mis. 'Linked server' */
+  noun?: string;
   fields: DbField[];
   /** pesan error isian; kosong = valid */
   check(values: Record<string, string>): string[];
@@ -626,14 +629,14 @@ export interface NewDatabase {
 /** script New Database atau daftar error (script kosong bila ada error) */
 export function newDatabaseScript(nd: NewDatabase, name: string, values: Record<string, string>): { sql: string; errors: string[] } {
   const v = Object.fromEntries(Object.entries(values).map(([k, x]) => [k, x.trim()]));
-  const errors = [checkDbName(name, nd.maxName) ?? nd.checkName?.(name.trim()), ...nd.check(v)].filter((e): e is string => !!e);
+  const errors = [checkDbName(name, nd.maxName, nd.noun) ?? nd.checkName?.(name.trim()), ...nd.check(v)].filter((e): e is string => !!e);
   return errors.length ? { sql: '', errors } : { sql: nd.script(name.trim(), v), errors: [] };
 }
 
 /** validasi nama database baru; undefined = valid */
-export function checkDbName(name: string, max: number): string | undefined {
-  if (!name.trim()) return 'Database name is required';
-  if (name.trim().length > max) return `Database name is at most ${max} characters`;
+export function checkDbName(name: string, max: number, noun = 'Database'): string | undefined {
+  if (!name.trim()) return `${noun} name is required`;
+  if (name.trim().length > max) return `${noun} name is at most ${max} characters`;
   return undefined;
 }
 
@@ -784,4 +787,10 @@ export function dropConfirm(kind: 'database' | 'table', name: string, where: str
     message: `Drop ${kind} ${name} on ${where}?`,
     detail: `This permanently deletes the ${kind} and all its ${kind === 'database' ? 'data' : 'rows'}. It cannot be undone.\n\n${sql}`,
   };
+}
+
+/** isian password diganti *** (preview / Open in SQL Editor); nilai asli hanya dipakai saat Execute */
+export function maskSecrets(nd: NewDatabase, values: Record<string, string>): Record<string, string> {
+  const secret = new Set(nd.fields.filter((f) => f.kind === 'password').map((f) => f.key));
+  return Object.fromEntries(Object.entries(values).map(([k, v]) => [k, secret.has(k) && v ? '***' : v]));
 }

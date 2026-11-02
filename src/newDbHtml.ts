@@ -6,7 +6,8 @@ import { esc } from './resultsHtml';
  * ext -> page: { type: 'init', fields } | { type: 'script', sql, errors } | { type: 'status', text, error? }
  * page -> ext: { type: 'ready' } | { type: 'change' | 'create' | 'open', name, values }
  */
-export function newDbHtml(cspSource: string, t: { conn: string; type: string }, readOnly: boolean): string {
+/** dipakai juga untuk New Linked Server (t.title); isian kind password = input tersembunyi */
+export function newDbHtml(cspSource: string, t: { conn: string; type: string; title?: string }, readOnly: boolean): string {
   const nonce = randomBytes(16).toString('base64');
   return `<!DOCTYPE html>
 <html>
@@ -52,9 +53,9 @@ export function newDbHtml(cspSource: string, t: { conn: string; type: string }, 
 </style>
 </head>
 <body>
-<h1>New Database</h1>
+<h1>${esc(t.title ?? 'New Database')}</h1>
 <p class="where">${esc(t.conn)} · ${esc(t.type)}</p>
-${readOnly ? '<p class="ro">Read-only connection: the database cannot be created here, use Open in SQL Editor to get the script.</p>' : ''}
+${readOnly ? '<p class="ro">Read-only connection: it cannot be created here, use Open in SQL Editor to get the script.</p>' : ''}
 <div class="row"><label for="name">Name</label><input id="name" type="text" autofocus spellcheck="false" autocomplete="off"></div>
 <div id="fields"></div>
 <h2>Script</h2>
@@ -76,7 +77,7 @@ function field(f) {
   const items = f.items || [];
   const def = items.find((x) => x.value === '');
   const list = f.kind === 'choice' ? '<datalist id="dl-' + h(f.key) + '">' + items.filter((x) => x.value).map((x) => '<option value="' + h(x.value) + '">' + h(x.label || '') + '</option>').join('') + '</datalist>' : '';
-  return '<div class="row"><label for="f-' + h(f.key) + '">' + h(f.label) + '</label><input id="f-' + h(f.key) + '" type="text" spellcheck="false" autocomplete="off"'
+  return '<div class="row"><label for="f-' + h(f.key) + '">' + h(f.label) + '</label><input id="f-' + h(f.key) + '" type="' + (f.kind === 'password' ? 'password' : 'text') + '" spellcheck="false" autocomplete="off"'
     + (f.kind === 'choice' ? ' list="dl-' + h(f.key) + '"' : '') + (f.kind === 'number' ? ' inputmode="numeric"' : '')
     + ' placeholder="' + h(def ? def.label : f.hint || '') + (f.kind === 'choice' && items.length > 1 ? ' · type to search ' + (items.length - 1) : '') + '">' + list + '</div>';
 }
@@ -92,8 +93,8 @@ window.addEventListener('message', ({ data: m }) => {
       : fields.filter((f) => !f.group).map(field).join('')).join('');
     send('change');
   } else if (m.type === 'script') {
-    $('preview').textContent = m.sql || (m.errors.length ? '' : '-- enter a database name');
-    $('errors').innerHTML = m.errors.filter((e) => e !== 'Database name is required' || $('name').value).map((e) => '<li>' + h(e) + '</li>').join('');
+    $('preview').textContent = m.sql || (m.errors.length ? '' : '-- enter a name');
+    $('errors').innerHTML = m.errors.filter((e) => !/ name is required$/.test(e) || $('name').value).map((e) => '<li>' + h(e) + '</li>').join('');
     for (const id of ['create', 'openSql']) if ($(id)) $(id).disabled = !m.sql;
   } else if (m.type === 'status') {
     $('status').textContent = m.text; $('status').className = m.error ? 'err' : '';

@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnRow, ConnectionInfo, Driver, NewColumn, createTable, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, dropConfirm, dropTarget, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnRow, ConnectionInfo, Driver, NewColumn, createTable, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -20,7 +20,7 @@ import { columnsHtml } from './columnsHtml';
 import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
 import { mongoChanges, mongoFindCollection } from './mongo';
-import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
+import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, changeStatements, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 import { monitorKit } from './monitorKits';
@@ -183,6 +183,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.importDbcode', importFromDbcode),
     vscode.commands.registerCommand('moonageDaydream.autoCommitConfirm', autoCommitConfirmCommand),
     vscode.commands.registerCommand('moonageDaydream.whatsNew', () => openWhatsNew(ctx)),
+    vscode.commands.registerCommand('moonageDaydream.newLinkedServer', newLinkedServer),
     vscode.commands.registerCommand('moonageDaydream.connect', (n?: Node) => n?.kind === 'conn' && connectCommand(n.c)),
     vscode.commands.registerCommand('moonageDaydream.disconnect', (n?: Node) => n?.kind === 'conn' && disconnect(n.c)),
     // Consul: value KV sebagai file moonage-consul:// (Ctrl+S = simpan), New / Delete Key, Dashboard
@@ -915,23 +916,45 @@ function newTable(n?: Node) {
   });
 }
 
-/** form New Database per koneksi (dibuka lagi = tab yang sama di-reveal) */
-const newDbPanels = new Map<string, vscode.WebviewPanel>();
+/** form tab per koneksi + jenis (dibuka lagi = tab yang sama di-reveal) */
+const formPanels = new Map<string, vscode.WebviewPanel>();
 
 /** klik kanan koneksi / folder Databases -> New Database…: form tab, script live, Create (konfirmasi) atau Open in SQL Editor */
 function newDatabase(n?: Node) {
   if (n?.kind !== 'conn' && !(n?.kind === 'mfolder' && n.folder === 'databases')) return;
   if (n.c.type === 'sqlite') return void newSqliteDatabase(n.c);
   if (!drivers[n.c.type].newDatabase) return void vscode.window.showInformationMessage(`New Database is not available for ${drivers[n.c.type].label} yet.`);
-  const conn = n.c;
+  formTab(n.c, drivers[n.c.type].newDatabase!, 'New Database', 'database');
+}
+
+/** klik kanan koneksi SQL Server / folder Linked Servers -> New Linked Server…; setelah dibuat langsung diuji (sp_testlinkedserver) */
+function newLinkedServer(n?: Node) {
+  if (!(n?.kind === 'conn' && n.c.type === 'mssql') && !(n?.kind === 'mfolder' && n.folder === 'linkedServers')) return;
+  formTab(n.c, linkedServerForm, 'New Linked Server', 'linked server', async (conn, name, pw) => {
+    try {
+      await drivers.mssql.run(conn, pw, testLinkedServerSql(name));
+      vscode.window.showInformationMessage(`Linked server ${name} created on ${conn.name}; test connection succeeded.`);
+    } catch (e) {
+      log.error(`newLinkedServer test - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      vscode.window.showWarningMessage(`Linked server ${name} was created on ${conn.name}, but the test connection failed: ${errMsg(e)}`);
+    }
+  });
+}
+
+/**
+ * form bersama New Database / New Linked Server: isian dari NewDatabase, script live, Create (konfirmasi modal) / Open in SQL Editor.
+ * Isian password tampil *** di preview, konfirmasi dan editor; nilai asli hanya dipakai saat dijalankan.
+ */
+function formTab(conn: ConnectionInfo, nd: NewDatabase, title: string, what: string,
+  created?: (conn: ConnectionInfo, name: string, pw: string) => Promise<void>) {
   const d = drivers[conn.type];
-  const nd = d.newDatabase!;
-  const open = newDbPanels.get(conn.name);
+  const key = `${title}\u0000${conn.name}`;
+  const open = formPanels.get(key);
   if (open) return open.reveal();
-  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.newDatabase', `New Database: ${conn.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
-  newDbPanels.set(conn.name, panel);
-  panel.onDidDispose(() => newDbPanels.delete(conn.name));
-  panel.webview.html = newDbHtml(panel.webview.cspSource, { conn: conn.name, type: d.label }, !!conn.readOnly);
+  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.newDatabase', `${title}: ${conn.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
+  formPanels.set(key, panel);
+  panel.onDidDispose(() => formPanels.delete(key));
+  panel.webview.html = newDbHtml(panel.webview.cspSource, { conn: conn.name, type: d.label, title }, !!conn.readOnly);
   const post = (m: unknown) => void panel.webview.postMessage(m);
   // daftar pilihan bisa ribuan baris (collation SQL Server ~5500): stream tanpa batas MAX_ROWS
   const run = async (sql: string) => {
@@ -946,33 +969,35 @@ function newDatabase(n?: Node) {
           return { ...f, items: items ? await items(run) : [] };
         } catch (e) {
           // daftar dari server gagal (mis. izin): isian tetap bisa diketik bebas
-          log.error(`newDatabase options - EXCEPTION CAUGHT | ${conn.name} / ${f.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+          log.error(`${title} options - EXCEPTION CAUGHT | ${conn.name} / ${f.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
           return { ...f, items: [] };
         }
       }));
       return post({ type: 'init', fields });
     }
     const name = (m.name ?? '').trim();
-    const r = newDatabaseScript(nd, name, m.values ?? {});
-    if (m.type === 'change') return post({ type: 'script', ...r });
-    if (!r.sql) return;
+    const shown = newDatabaseScript(nd, name, maskSecrets(nd, m.values ?? {}));
+    if (m.type === 'change') return post({ type: 'script', ...shown });
+    if (!shown.sql) return;
     // MongoDB: script jalan di database baru (database dibuat bersama koleksi pertama)
     const target = nd.useNewDatabase ? { ...conn, database: name } : conn;
-    if (m.type === 'open') return openScript(conn, target.database || d.defaultDb, r.sql);
+    if (m.type === 'open') return openScript(conn, target.database || d.defaultDb, shown.sql);
     if (m.type !== 'create' || conn.readOnly) return;
-    const ok = await vscode.window.showWarningMessage(`Create database ${name} on ${conn.name}?`, { modal: true, detail: r.sql }, 'Create');
+    const ok = await vscode.window.showWarningMessage(`Create ${what} ${name} on ${conn.name}?`, { modal: true, detail: shown.sql }, 'Create');
     if (!ok) return;
     try {
       post({ type: 'status', text: 'Creating…' });
-      await d.run(target, await conns.password(conn.name), r.sql);
-      log.info(`newDatabase: ${conn.name} / ${name}`);
+      const pw = await conns.password(conn.name);
+      await d.run(target, pw, newDatabaseScript(nd, name, m.values ?? {}).sql);
+      log.info(`${title}: ${conn.name} / ${name}`);
       explorer.refresh();
-      vscode.window.showInformationMessage(`Database ${name} created on ${conn.name}.`);
       panel.dispose();
+      if (created) await created(conn, name, pw);
+      else vscode.window.showInformationMessage(`${what[0].toUpperCase()}${what.slice(1)} ${name} created on ${conn.name}.`);
     } catch (e) {
-      log.error(`newDatabase execute - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      log.error(`${title} execute - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Create failed: ${errMsg(e)}`, error: true });
-      vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
+      vscode.window.showErrorMessage(`${title} failed: ${errMsg(e)}`);
     }
   });
 }
