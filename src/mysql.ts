@@ -1,7 +1,7 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
 import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, NewDatabase, ProcParam, TypeSpec } from './db';
-import { connectMs, typedOptions } from './db';
+import { connectMs, fkActs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
 
@@ -284,15 +284,13 @@ ORDER BY c.ordinal_position;`,
     + `${fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''};`,
   setAi: (o, col, on) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql({ ...col, ai: on })};`,
   move: (o, col, after) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql(col)}${after === null ? ' FIRST' : ` AFTER ${quoteMy(after)}`};`,
-  create(o, cols) {
-    const act = (k: string, v?: string) => (v && v !== 'NO ACTION' ? ` ON ${k} ${v}` : '');
+  create(o, cols, keys) {
     const pk = cols.filter((c) => c.pk);
     const lines = [
       ...cols.map(myColumnSql),
       ...(pk.length ? [`PRIMARY KEY (${pk.map((c) => quoteMy(c.name)).join(', ')})`] : []),
-      ...cols.filter((c) => c.unique).map((c) => `UNIQUE KEY ${quoteMy(`UQ_${o.name}_${c.name}`)} (${quoteMy(c.name)})`),
-      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${quoteMy(`FK_${o.name}_${name}`)} FOREIGN KEY (${quoteMy(name)}) REFERENCES ${myTbl({ schema: fk!.schema, name: fk!.table })} (${quoteMy(fk!.column)})`
-        + act('DELETE', fk!.onDelete) + act('UPDATE', fk!.onUpdate)),
+      ...keys.map((k) => (k.kind === 'unique' ? `UNIQUE KEY ${quoteMy(k.name!)} (${k.cols.map(quoteMy).join(', ')})`
+        : `CONSTRAINT ${quoteMy(k.name!)} FOREIGN KEY (${k.cols.map(quoteMy).join(', ')}) REFERENCES ${myTbl({ schema: k.ref!.schema, name: k.ref!.table })} (${k.ref!.columns.map(quoteMy).join(', ')})${fkActs(k.ref!)}`)),
     ];
     return [`CREATE TABLE ${myTbl(o)} (`, lines.map((l) => `  ${l}`).join(',\n'), ');'].join('\n');
   },

@@ -5,6 +5,7 @@ import { consulDriver } from './consul';
 import { postgresDriver } from './postgres';
 import { sqliteDriver } from './sqlite';
 import { driverLog } from './log';
+import { createHash } from 'crypto';
 
 const errText = (e: unknown) => (e instanceof Error ? `${e.message} - stack-trace: ${e.stack ?? e.message}` : `${String(e)} - stack-trace: ${String(e)}`);
 
@@ -114,6 +115,74 @@ export type ColumnDef = Pick<Column, 'name' | 'type' | 'nullable' | 'default'> &
   gen?: string;
 };
 
+/**
+ * UNIQUE / FOREIGN KEY tingkat tabel (satu atau lebih kolom, urutan bermakna); PK tetap di chip kolom.
+ * readOnly = index berfilter / ekspresi dari server: ditampilkan saja, tidak pernah di-drop / dibuat ulang.
+ */
+export interface TableKey {
+  kind: 'unique' | 'fk';
+  /** nama constraint / index; kosong = nama otomatis (keyName) */
+  name?: string;
+  cols: string[];
+  ref?: { schema: string; table: string; columns: string[]; onDelete?: string; onUpdate?: string };
+  /** UNIQUE yang berupa unique index, bukan constraint */
+  index?: boolean;
+  readOnly?: boolean;
+}
+
+/** ' ON DELETE x ON UPDATE y' untuk FK; NO ACTION (default) tidak ditulis */
+export function fkActs(r: { onDelete?: string; onUpdate?: string }): string {
+  return `${r.onDelete && r.onDelete !== 'NO ACTION' ? ` ON DELETE ${r.onDelete}` : ''}${r.onUpdate && r.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${r.onUpdate}` : ''}`;
+}
+
+/** nama otomatis UQ_/FK_<tabel>_<kolom...>; lewat nameMax (byte) dipotong + hash pendek supaya tetap unik dan stabil */
+export function keyName(obj: DbObject, kind: TableKey['kind'], cols: string[], nameMax?: number): string {
+  const full = `${kind === 'unique' ? 'UQ' : 'FK'}_${obj.name.trim()}_${cols.join('_')}`;
+  if (!nameMax || Buffer.byteLength(full, 'utf8') <= nameMax) return full;
+  const hash = createHash('sha1').update(full).digest('hex').slice(0, 8);
+  let head = full;
+  while (Buffer.byteLength(head, 'utf8') > nameMax - hash.length - 1) head = head.slice(0, -1);
+  return `${head}_${hash}`;
+}
+
+/** validasi key tabel terhadap kolom final (rows); chip UQ / FK satu kolom ikut dicek untuk duplikat */
+export function checkKeys(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[], keys: TableKey[]): string[] {
+  const errors: string[] = [];
+  const byName = new Map(rows.map((r) => [r.name.toLowerCase(), r]));
+  // UNIQUE: susunan kolom tidak berpengaruh; FK: pasangan kolom berurutan + tujuan
+  const sig = (k: TableKey) => k.kind === 'unique'
+    ? `u:${k.cols.map((c) => c.toLowerCase()).sort().join(',')}`
+    : `f:${k.cols.join(',')}>${k.ref?.schema}.${k.ref?.table}(${k.ref?.columns.join(',')})`.toLowerCase();
+  const seen = new Set<string>([
+    ...rows.filter((r) => r.unique).map((r) => sig({ kind: 'unique', cols: [r.name] })),
+    ...rows.filter((r) => r.fk).map((r) => sig({ kind: 'fk', cols: [r.name], ref: { schema: r.fk!.schema, table: r.fk!.table, columns: [r.fk!.column] } })),
+  ]);
+  keys.forEach((k, i) => {
+    const label = k.name?.trim() || `${k.kind === 'unique' ? 'UNIQUE' : 'FOREIGN KEY'} ${i + 1}`;
+    const err = (m: string) => { errors.push(`${label}: ${m}`); };
+    if (k.kind === 'fk' && !ddl.fkActions) return err('foreign keys are not supported here');
+    if (!k.cols.length) return err('choose at least one column');
+    for (const c of k.cols) if (!byName.has(c.toLowerCase())) err(`unknown column ${c}`);
+    if (new Set(k.cols.map((c) => c.toLowerCase())).size !== k.cols.length) err('a column is used twice');
+    if (k.kind === 'fk') {
+      if (!k.ref?.table || !k.ref.columns.length || k.ref.columns.some((c) => !c)) return err('choose the referenced table and columns');
+      if (k.ref.columns.length !== k.cols.length) err('local and referenced keys need the same number of columns');
+      if (new Set(k.ref.columns.map((c) => c.toLowerCase())).size !== k.ref.columns.length) err('a referenced column is used twice');
+      for (const [p, verb] of [['onDelete', 'DELETE'], ['onUpdate', 'UPDATE']] as const) {
+        const act = k.ref[p];
+        if (act && !ddl.fkActions!.includes(act)) err(`ON ${verb} ${act} is not supported here`);
+        if (act === 'SET NULL' && k.cols.some((c) => byName.get(c.toLowerCase())?.nullable === false)) err(`ON ${verb} SET NULL needs nullable columns`);
+      }
+    }
+    const name = k.name?.trim();
+    if (name && ddl.nameMax && Buffer.byteLength(name, 'utf8') > ddl.nameMax) err(`constraint name too long (max ${ddl.nameMax})`);
+    const s = sig(k);
+    if (seen.has(s)) err('Duplicate key definition');
+    seen.add(s);
+  });
+  return errors;
+}
+
 /** foreign key satu kolom; name = nama constraint yang ada (untuk drop) */
 export interface ColumnFk { schema: string; table: string; column: string; onDelete?: string; onUpdate?: string; name?: string }
 
@@ -137,8 +206,8 @@ export interface ColumnDdl {
   rebuild?(obj: DbObject, original: ColumnRow[], changed: ColumnDef[]): string;
   /** bungkus seluruh script (mis. satu transaksi) */
   wrap?(sql: string): string;
-  /** New Table: CREATE TABLE lengkap (kolom, PK, UQ, FK); tidak ada = menu New Table tidak tampil */
-  create?(obj: DbObject, cols: NewColumn[]): string;
+  /** New Table: CREATE TABLE lengkap (kolom, PK, lalu keys = semua UNIQUE / FK bernama, termasuk chip satu kolom); tidak ada = menu New Table tidak tampil */
+  create?(obj: DbObject, cols: NewColumn[], keys: TableKey[]): string;
   /** tipe yang boleh auto increment / identity */
   aiTypes?: string[];
   /** pilihan ON DELETE / ON UPDATE foreign key (pertama = default, tidak ditulis) */
@@ -174,7 +243,7 @@ export type NewColumn = ColumnDef & {
 };
 
 /** New Table: validasi lalu script CREATE TABLE (kosong bila ada error); kolom PK / AI dipaksa NOT NULL */
-export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): { sql: string; errors: string[] } {
+export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[], keys: TableKey[] = []): { sql: string; errors: string[] } {
   const cols = rows.filter((r) => r.name.trim() || r.type.trim()).map((r): NewColumn => ({ ...r, name: r.name.trim(), type: r.type.trim(),
     nullable: r.nullable && !r.pk && !r.ai, default: r.ai ? undefined : r.default?.trim() || undefined }));
   const errors: string[] = [];
@@ -193,7 +262,19 @@ export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): {
     if (k && seen.has(k)) errors.push(`Duplicate column name: ${c.name}`);
     seen.add(k);
   }
-  return errors.length || !ddl.create ? { sql: '', errors } : { sql: ddl.create({ ...obj, name: obj.name.trim() }, cols), errors: [] };
+  errors.push(...checkKeys(ddl, obj, cols, keys));
+  if (errors.length || !ddl.create) return { sql: '', errors };
+  const o = { ...obj, name: obj.name.trim() };
+  // chip UQ / FK satu kolom memakai nama lama (UQ_/FK_<tabel>_<kolom>, panjangnya dicek checkRows); urutan: semua UNIQUE lalu semua FK
+  const named = keys.map((k) => ({ ...k, name: k.name?.trim() || keyName(o, k.kind, k.cols, ddl.nameMax) }));
+  const all: TableKey[] = [
+    ...cols.filter((c) => c.unique).map((c): TableKey => ({ kind: 'unique', name: `UQ_${o.name}_${c.name}`, cols: [c.name] })),
+    ...named.filter((k) => k.kind === 'unique'),
+    ...cols.filter((c) => c.fk).map(({ name, fk }): TableKey => ({ kind: 'fk', name: `FK_${o.name}_${name}`, cols: [name],
+      ref: { schema: fk!.schema, table: fk!.table, columns: [fk!.column], onDelete: fk!.onDelete, onUpdate: fk!.onUpdate } })),
+    ...named.filter((k) => k.kind === 'fk'),
+  ];
+  return { sql: ddl.create(o, cols, all), errors: [] };
 }
 
 /**

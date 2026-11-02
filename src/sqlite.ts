@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { stat, unlink } from 'fs/promises';
 import type { Database, SqlJsStatic } from 'sql.js';
 import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, NewColumn, TypeSpec } from './db';
+import { fkActs } from './db';
 import { maskSql, splitStatements } from './sqlContext';
 import { driverLog } from './log';
 import { sqlDriver } from './sqlDriver';
@@ -265,17 +266,15 @@ ORDER BY p.cid;`,
   aiTypes: ['integer'],
   fkActions: ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'],
   // schema diabaikan: satu file = satu database (main)
-  create(o, cols) {
-    const act = (k: string, v?: string) => (v && v !== 'NO ACTION' ? ` ON ${k} ${v}` : '');
+  create(o, cols, keys) {
     const pk = cols.filter((c) => c.pk);
     const ai = cols.some((c) => c.ai);
     const lines = [
       ...cols.map((c) => `${quote(c.name)} ${c.type}${c.nullable ? '' : ' NOT NULL'}${c.default ? ` DEFAULT ${c.default}` : ''}`
         + (c.ai ? ` CONSTRAINT ${quote(`PK_${o.name}`)} PRIMARY KEY AUTOINCREMENT` : '')),
       ...(pk.length && !ai ? [`CONSTRAINT ${quote(`PK_${o.name}`)} PRIMARY KEY (${pk.map((c) => quote(c.name)).join(', ')})`] : []),
-      ...cols.filter((c) => c.unique).map((c) => `CONSTRAINT ${quote(`UQ_${o.name}_${c.name}`)} UNIQUE (${quote(c.name)})`),
-      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${quote(`FK_${o.name}_${name}`)} FOREIGN KEY (${quote(name)}) REFERENCES ${quote(fk!.table)} (${quote(fk!.column)})`
-        + act('DELETE', fk!.onDelete) + act('UPDATE', fk!.onUpdate)),
+      ...keys.map((k) => `CONSTRAINT ${quote(k.name!)} ${k.kind === 'unique' ? 'UNIQUE' : 'FOREIGN KEY'} (${k.cols.map(quote).join(', ')})`
+        + (k.ref ? ` REFERENCES ${quote(k.ref.table)} (${k.ref.columns.map(quote).join(', ')})${fkActs(k.ref)}` : '')),
     ];
     return [`CREATE TABLE ${quote(o.name)} (`, lines.map((l) => `  ${l}`).join(',\n'), ');'].join('\n');
   },

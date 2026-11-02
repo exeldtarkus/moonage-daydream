@@ -1,5 +1,5 @@
 import * as sql from 'mssql';
-import { MAX_ROWS, connectMs, typedOptions } from './db';
+import { MAX_ROWS, connectMs, fkActs, typedOptions } from './db';
 import type { Column, ColumnDdl, NewDatabase, ColumnDef, ConnectionInfo, TypeSpec, Driver, ListKind, ObjectKind, ProcParam, QueryResult, ResultSet, Session, Sink } from './db';
 import { driverLog } from './log';
 import { maskSql, readOnly, splitStatements } from './sqlContext';
@@ -315,16 +315,14 @@ ORDER BY c.column_id;`,
     ? `CREATE UNIQUE INDEX ${q(name ?? `UQ_${o.name}_${col}`)} ON ${tbl(o)} (${q(col)});`
     : `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `UQ_${o.name}_${col}`)} UNIQUE (${q(col)});`,
   dropFk: (o, name) => `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name)};`,
-  addFk: (o, col, fk) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${q(col)}) REFERENCES ${q(fk.schema)}.${q(fk.table)} (${q(fk.column)})`
-    + `${fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''};`,
-  create(o, cols) {
+  addFk: (o, col, fk) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${q(col)}) REFERENCES ${q(fk.schema)}.${q(fk.table)} (${q(fk.column)})${fkActs(fk)};`,
+  create(o, cols, keys) {
     const pk = cols.filter((c) => c.pk);
     const lines = [
       ...cols.map((c) => `${q(c.name)} ${c.type}${c.ai ? ' IDENTITY(1, 1)' : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}${c.default ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(c.default)}` : ''}`),
       ...(pk.length ? [`CONSTRAINT ${q(`PK_${o.name}`)} PRIMARY KEY (${pk.map((c) => q(c.name)).join(', ')})`] : []),
-      ...cols.filter((c) => c.unique).map((c) => `CONSTRAINT ${q(`UQ_${o.name}_${c.name}`)} UNIQUE (${q(c.name)})`),
-      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${q(`FK_${o.name}_${name}`)} FOREIGN KEY (${q(name)}) REFERENCES ${q(fk!.schema)}.${q(fk!.table)} (${q(fk!.column)})`
-        + `${fk!.onDelete && fk!.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk!.onDelete}` : ''}${fk!.onUpdate && fk!.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk!.onUpdate}` : ''}`),
+      ...keys.map((k) => `CONSTRAINT ${q(k.name!)} ${k.kind === 'unique' ? 'UNIQUE' : 'FOREIGN KEY'} (${k.cols.map(q).join(', ')})`
+        + (k.ref ? ` REFERENCES ${q(k.ref.schema)}.${q(k.ref.table)} (${k.ref.columns.map(q).join(', ')})${fkActs(k.ref)}` : '')),
     ];
     return [`CREATE TABLE ${tbl(o)} (`, ...lines.map((l, i) => `${i ? '  , ' : '    '}${l}`), ');'].join('\n');
   },
