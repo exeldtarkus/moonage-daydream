@@ -22,6 +22,7 @@ export async function retryOnce<T>(f: () => Promise<T>, retryable: (e: unknown) 
     return await f();
   } catch (e) {
     if (!retryable(e)) throw e;
+    driverLog.error(`retryOnce - EXCEPTION CAUGHT (retrying once) | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
     return f();
   }
 }

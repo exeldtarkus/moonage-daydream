@@ -58,6 +58,7 @@ export function insertScript(d: Pick<Driver, 'dialect' | 'tableRef' | 'quote'>, 
       names.push(c.name);
       values.push(e.isNull ? 'NULL' : mongo ? mongoLiteral(e.value, c.type, c.name) : editLiteral(e.value, c.type, d.dialect));
     } catch (err) {
+      // nilai input user tidak valid: pesan validasi ditampilkan di form (bukan error program)
       names.pop();
       errors.push(err instanceof Error ? err.message.replace(/^"([^"]*)" is/, `${c.name}: "$1" is`) : String(err));
     }

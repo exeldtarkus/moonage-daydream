@@ -2,6 +2,7 @@ import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
 import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, NewDatabase, ProcParam, TypeSpec } from './db';
 import { connectMs, fkActs, typedOptions } from './db';
+import { driverLog } from './log';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
 
@@ -75,7 +76,8 @@ function link(c: mysql.PoolConnection | mysql.Connection, killer: mysql.Pool | (
             }
           } else await killer.query(`KILL QUERY ${c.threadId}`);
         } catch (e) {
-          killFailed = e; // dilaporkan bersama hasil query (pemanggil yang mencatat log)
+          killFailed = e; // juga ditempel ke error query bila query gagal
+          driverLog.error(`mysql cancel - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
         }
       };
       signal?.addEventListener('abort', kill);

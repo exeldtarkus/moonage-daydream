@@ -59,7 +59,10 @@ function link(c: PoolClient | Client, cancel: (pid: number) => Promise<unknown>,
       signal?.throwIfAborted();
       let cancelFailed: unknown;
       // cancel = pg_cancel_backend dari koneksi lain: query dihentikan di server
-      const onAbort = () => cancel((c as unknown as { processID: number }).processID).catch((e: unknown) => (cancelFailed = e));
+      const onAbort = () => cancel((c as unknown as { processID: number }).processID).catch((e: unknown) => {
+        cancelFailed = e;
+        driverLog.error(`postgres cancel - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+      });
       signal?.addEventListener('abort', onAbort);
       try {
         const res = await c.query({ text: sql, rowMode: 'array' }) as unknown as QueryArrayResult | QueryArrayResult[];
