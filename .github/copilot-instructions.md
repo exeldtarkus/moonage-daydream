@@ -24,3 +24,17 @@ Aturan lengkap project ada di `CLAUDE.md` di root repo (bisa jadi hanya ada loka
 - Variabel yang sengaja tidak dipakai diberi prefix `_`.
 - Komentar kode berbahasa Indonesia.
 - TDD: tulis unit test dulu di `src/test/*.test.ts`, pastikan gagal, baru implementasi sampai lulus.
+- Jangan jalankan `npm run test:real` (hanya user); cukup `npm test` (saat ini 330 test lulus), lalu berikan langkah test
+  manual di VS Code (`npm run dev`) beserta expected result tiap langkah.
+- `TODO.md` hanya lokal: jangan di-commit / push.
+- Commit gaya conventional (`feat: ...`, `fix: ...`, `chore: ...`), bahasa Inggris, tanpa atribusi AI.
+
+## Status pekerjaan
+
+- Rilis terakhir: v0.7.0. Atribut kolom (chip PK / AI / UQ / FK) dan Drop Database / Drop Table sudah selesai di `main`.
+- Unique / FK gabungan (tabel "Keys" di New Table + editor Columns): selesai di branch `feature/composite-keys`
+  (6 commit), menunggu test real user lalu merge ke `main`. Spec `docs/superpowers/specs/2026-11-02-composite-keys-design.md`,
+  plan `docs/superpowers/plans/2026-11-02-composite-keys.md`.
+- Antrian berikutnya: bagian "Belum dikerjakan" di `TODO.md` (checklist test manual, bug `GO` di `mssql.ts`, Mongo
+  multi-host, export streaming, cache PK, pecah `src/extension.ts` (2292 baris) setelah Keys gabungan di-merge, cek
+  Open VSX).
