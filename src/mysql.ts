@@ -1,5 +1,5 @@
 import * as mysql from 'mysql2/promise';
-import { Types } from 'mysql2';
+import { Types, type Connection as CoreConnection } from 'mysql2';
 import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, NewDatabase, ProcParam, TypeSpec } from './db';
 import { connectMs, fkActs, typedOptions } from './db';
 import { driverLog } from './log';
@@ -91,6 +91,51 @@ function link(c: mysql.PoolConnection | mysql.Connection, killer: mysql.Pool | (
       } finally {
         signal?.removeEventListener('abort', kill);
       }
+    },
+    // export: query streaming mysql2 di koneksi inti, koneksi di-pause selama sink menulis baris (memori tetap kecil)
+    stream(sql, signal, sink) {
+      const core = (c as unknown as { connection: CoreConnection }).connection;
+      return new Promise<number>((resolve, reject) => {
+        let n = 0, started = false, first = false, failed: unknown;
+        let chain = Promise.resolve();
+        const stop = async () => {
+          try {
+            if (typeof killer === 'function') {
+              const k = await killer();
+              try { await k.query(`KILL QUERY ${c.threadId}`); } finally { await k.end(); }
+            } else await killer.query(`KILL QUERY ${c.threadId}`);
+          } catch (e) {
+            driverLog.error(`mysql stream cancel - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+          }
+        };
+        const step = (f: () => Promise<void> | void) => {
+          core.pause();
+          chain = chain.then(f).catch((e: unknown) => {
+            // sink gagal (mis. batas baris Excel): query dihentikan, error dilaporkan ke pemanggil
+            if (!failed) { failed = e; void stop(); }
+          }).finally(() => core.resume());
+        };
+        const abort = () => { failed ??= signal?.reason ?? new Error('Query cancelled'); void stop(); };
+        signal?.addEventListener('abort', abort);
+        const q = core.query({ sql, rowsAsArray: true });
+        q.on('fields', (fields?: { name: string }[]) => {
+          // result set pertama saja; paket OK (fields kosong) / result set berikutnya diabaikan
+          if (fields && !started) { started = first = true; step(() => sink.columns(fields.map((f) => f.name))); } else if (started) first = false;
+        });
+        q.on('result', (row: unknown) => {
+          if (first && Array.isArray(row) && !failed) { n++; step(() => sink.row(row)); }
+        });
+        // koneksi putus bisa memancarkan error tanpa end: selesai dari mana pun yang lebih dulu
+        let done = false;
+        const settle = () => {
+          if (done) return;
+          done = true;
+          signal?.removeEventListener('abort', abort);
+          void chain.then(() => (failed ? reject(failed) : resolve(n)));
+        };
+        q.on('error', (e: Error) => { failed ??= e; settle(); });
+        q.on('end', settle);
+      });
     },
     release: done,
     // paket OK membawa flag SERVER_STATUS_IN_TRANS; DO 0 = statement kosong yang membalas paket OK
