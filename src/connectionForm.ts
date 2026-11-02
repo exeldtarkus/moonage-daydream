@@ -5,6 +5,7 @@ import type { Connections } from './connections';
 import { ConnectionInfo, drivers } from './db';
 import { FormData, formHtml, toConnection, validate } from './connectionFormHtml';
 import { parseConnectionString } from './connString';
+import { closeResultsPanel } from './uiPanels';
 
 /** Test connection: testSql driver (server, database) lewat pool sementara (tidak mengganggu pool koneksi tersimpan) */
 export async function testConnection(c: ConnectionInfo, password: string, log: vscode.LogOutputChannel): Promise<{ ok: boolean; message: string }> {
@@ -46,6 +47,7 @@ export function openConnectionForm(
   group?: string,
 ): vscode.WebviewPanel {
   const key = old?.name ?? '';
+  closeResultsPanel();
   const existing = panels.get(key);
   if (existing) {
     existing.reveal();

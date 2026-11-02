@@ -3,7 +3,7 @@ import { esc } from './resultsHtml';
 
 /**
  * form Add Data (tab): satu baris isian per kolom, script INSERT live di bawah.
- * ext -> page: { type: 'init', columns: {name, type, nullable, generated, default}[] } | { type: 'script', sql, errors } | { type: 'status', text, error? }
+ * ext -> page: { type: 'init', columns: {name, type, nullable, generated, default}[] } | { type: 'script', sql, errors } | { type: 'status', text, error? } | { type: 'inserted', text }
  * page -> ext: { type: 'ready' } | { type: 'change' | 'insert' | 'open', entries: { [kolom]: { value, isNull } } }
  */
 export function addDataHtml(cspSource: string, t: { conn: string; table: string; type: string }, readOnly: boolean): string {
@@ -94,6 +94,10 @@ window.addEventListener('message', ({ data: m }) => {
     $('preview').textContent = m.sql || '';
     $('errors').innerHTML = m.errors.map((e) => '<li>' + h(e) + '</li>').join('');
     for (const id of ['insert', 'openSql']) if ($(id)) $(id).disabled = !m.sql;
+  } else if (m.type === 'inserted') {
+    $('cols').innerHTML = cols.map(row).join('');
+    $('status').textContent = m.text; $('status').className = '';
+    send('change');
   } else if (m.type === 'status') {
     $('status').textContent = m.text; $('status').className = m.error ? 'err' : '';
   }

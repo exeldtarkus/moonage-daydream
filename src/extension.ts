@@ -35,6 +35,7 @@ import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } fro
 import { columnsEditor, newTable } from './tablePanels';
 import { consulDashboard } from './consulDashboard';
 import { liveMonitor } from './monitorPanel';
+import { closeResultsPanel } from './uiPanels';
 // tetap diekspor dari extension: dipakai test real lewat modul extension
 export { editScript, loadMore, saveGrid };
 
@@ -773,7 +774,7 @@ function databaseInfo(n?: Node) {
   const db = n.db;
   const key = `${conn.name}\u0000${db}`;
   const open = dbInfoPanels.get(key);
-  if (open) return open.reveal();
+  if (open) { closeResultsPanel(); return open.reveal(); }
   const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.databaseInfo', `Database Info: ${db}`, vscode.ViewColumn.Active, { enableScripts: true }));
   dbInfoPanels.set(key, panel);
   panel.onDidDispose(() => dbInfoPanels.delete(key));
@@ -842,7 +843,7 @@ function formTab(conn: ConnectionInfo, nd: NewDatabase, title: string, what: str
   const d = drivers[conn.type];
   const key = `${title}\u0000${conn.name}`;
   const open = formPanels.get(key);
-  if (open) return open.reveal();
+  if (open) { closeResultsPanel(); return open.reveal(); }
   const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.newDatabase', `${title}: ${conn.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
   formPanels.set(key, panel);
   panel.onDidDispose(() => formPanels.delete(key));
@@ -932,7 +933,7 @@ async function addData(n?: Node) {
   const label = n.obj.schema && conn.type !== 'sqlite' && d.dialect !== 'mongodb' ? `${n.obj.schema}.${n.obj.name}` : n.obj.name;
   const key = `${conn.name}\u0000${n.db}\u0000${label}`;
   const open = addDataPanels.get(key);
-  if (open) return open.reveal();
+  if (open) { closeResultsPanel(); return open.reveal(); }
   let cols;
   try {
     cols = await d.columns(conn, await conns.password(conn.name), n.db, n.obj);
@@ -959,8 +960,9 @@ async function addData(n?: Node) {
       post({ type: 'status', text: 'Inserting…' });
       const res = await d.run({ ...conn, database: n.db }, await conns.password(conn.name), r.sql);
       log.info(`addData: ${conn.name} / ${n.db} / ${label}`);
-      post({ type: 'status', text: res.resultSets.length || res.messages?.length ? `Inserted. ${(res.messages ?? []).join(' ')}`.trim() : 'Inserted.' });
-      void vscode.window.showInformationMessage(`Row inserted into ${label}.`);
+      post({ type: 'inserted', text: '1 row inserted.' });
+      await results.show(`${conn.name} / ${n.db}`, { result: { resultSets: [], rowsAffected: [], messages: ['1 row inserted.'], durationMs: res.durationMs } });
+      void vscode.window.showInformationMessage(`1 row inserted into ${label}.`);
     } catch (e) {
       log.error(`addData insert - EXCEPTION CAUGHT | ${conn.name} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Insert failed: ${errMsg(e)}`, error: true });
@@ -1102,6 +1104,7 @@ let whatsNewPanel: vscode.WebviewPanel | undefined;
 
 /** halaman What's New; sekali dibuka (otomatis / command) tidak muncul otomatis lagi sampai ada catatan rilis baru */
 function openWhatsNew(ctx: vscode.ExtensionContext) {
+  closeResultsPanel();
   if (whatsNewPanel) return whatsNewPanel.reveal();
   whatsNewPanel = vscode.window.createWebviewPanel('moonageDaydream.whatsNew', "What's New: Moonage Daydream", vscode.ViewColumn.Active, {});
   whatsNewPanel.webview.html = whatsNewHtml(whatsNewPanel.webview.cspSource, ctx.extension.packageJSON.version);
@@ -1310,6 +1313,7 @@ let consulFs: ConsulFs;
 /** panel Live Monitor / Dashboard per koneksi (Disconnect menutupnya; koneksi dianggap connected selama ada) */
 const connPanels = new Map<string, Set<vscode.WebviewPanel>>();
 export function trackPanel(conn: string, p: vscode.WebviewPanel): vscode.WebviewPanel {
+  closeResultsPanel();
   const set = connPanels.get(conn) ?? new Set();
   connPanels.set(conn, set.add(p));
   p.onDidDispose(() => {
