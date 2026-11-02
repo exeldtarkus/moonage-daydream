@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { stat, unlink } from 'fs/promises';
 import type { Database, SqlJsStatic } from 'sql.js';
 import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, NewColumn, ObjectKind, TypeSpec } from './db';
 import { maskSql, splitStatements } from './sqlContext';
@@ -43,6 +44,12 @@ export async function createSqliteFile(file: string): Promise<void> {
   } finally {
     db.close();
   }
+}
+
+/** Drop Database SQLite = hapus file; direktori / path yang tidak ada ditolak */
+export async function deleteSqliteFile(file: string): Promise<void> {
+  if (!(await stat(file)).isFile()) throw new Error(`Path is not a file: ${file}`);
+  await unlink(file);
 }
 
 /** nama koneksi dari nama file tanpa ekstensi; sudah dipakai -> "nama (2)", "nama (3)", ... */

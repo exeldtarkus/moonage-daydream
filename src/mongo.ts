@@ -15,7 +15,7 @@ export interface Op {
 
 const COLL_METHODS = new Set(['find', 'findOne', 'aggregate', 'countDocuments', 'estimatedDocumentCount', 'distinct', 'insertOne', 'insertMany',
   'updateOne', 'updateMany', 'replaceOne', 'deleteOne', 'deleteMany', 'createIndex', 'dropIndex', 'indexes', 'drop']);
-const DB_METHODS = new Set(['runCommand', 'adminCommand', 'getCollectionNames', 'getName', 'version', 'getMongo', 'stats', 'createCollection']);
+const DB_METHODS = new Set(['runCommand', 'adminCommand', 'getCollectionNames', 'getName', 'version', 'getMongo', 'stats', 'createCollection', 'dropDatabase']);
 const CURSOR_METHODS = new Set(['sort', 'limit', 'skip', 'project', 'projection', 'hint', 'batchSize', 'explain', 'toArray', 'pretty']);
 
 /** objek / array / regex dari context vm -> objek realm extension (prototype normal untuk serializer BSON); tipe BSON dibiarkan */
@@ -192,6 +192,7 @@ async function execOp(db: Db, op: Op, comment: string, onCursor: (c: AbstractCur
     case 'version': return toSet([{ version: (await db.admin().command({ buildInfo: 1 })).version }]);
     case 'stats': return toSet([await db.stats()]);
     case 'createCollection': return toSet([{ created: (await db.createCollection(String(a), b)).collectionName }]);
+    case 'dropDatabase': return toSet([{ dropped: db.databaseName, ok: await db.dropDatabase() }]);
     case 'getMongo': {
       const hello = await db.admin().command({ hello: 1 });
       return toSet([{ server: hello.me ?? hello.hosts?.[0] ?? 'mongod', db: db.databaseName }]);
@@ -337,6 +338,8 @@ export const mongoDriver: Driver = {
   transactions: false,
   columnDdl: mongoColumnDdl,
   newDatabase: mongoNewDatabase,
+  dropDatabase: { script: () => 'db.dropDatabase();', inside: true, system: ['admin', 'local', 'config'] },
+  dropTable: (o) => `${coll(o)}.drop();`,
   explain: (s, mode) => `${s}.explain(${JSON.stringify(mode === 'estimated' ? 'queryPlanner' : 'executionStats')})`,
   autoLimitable: (stmts) => {
     if (stmts.length !== 1) return false;

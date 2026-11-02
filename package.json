@@ -199,6 +199,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "moonageDaydream.dropDatabase",
+        "title": "Drop Database…",
+        "category": "Moonage Daydream",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "moonageDaydream.dropTable",
+        "title": "Drop Table…",
+        "category": "Moonage Daydream",
+        "icon": "$(trash)"
+      },
+      {
         "command": "moonageDaydream.killSession",
         "title": "Kill Session…",
         "category": "Moonage Daydream",
@@ -582,6 +594,16 @@
           "group": "9_delete@1"
         },
         {
+          "command": "moonageDaydream.dropDatabase",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^db(\\.(mssql|live))?$/",
+          "group": "9_delete@1"
+        },
+        {
+          "command": "moonageDaydream.dropTable",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^table(\\.[a-z.]+)?$/",
+          "group": "9_delete@1"
+        },
+        {
           "command": "moonageDaydream.refreshExplorer",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn(\\.\\w+)?\\.(on|off)|db(\\.\\w+)?)$/",
           "group": "2_refresh"
@@ -882,6 +904,14 @@
         },
         {
           "command": "moonageDaydream.newTable",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.dropDatabase",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.dropTable",
           "when": "false"
         },
         {

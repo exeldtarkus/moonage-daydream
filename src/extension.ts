@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnRow, ConnectionInfo, Driver, NewColumn, createTable, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnRow, ConnectionInfo, Driver, NewColumn, createTable, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, dropConfirm, dropTarget, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -28,7 +28,7 @@ import { consulDashboardHtml } from './consulDashHtml';
 import { monitorHtml } from './monitorHtml';
 import { permissionHint } from './mssqlTree';
 import { importDbcode } from './connString';
-import { createSqliteFile, uniqueConnName } from './sqlite';
+import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 
 let log: vscode.LogOutputChannel;
 export let conns: Connections;
@@ -290,6 +290,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.killSession', killCommand),
     vscode.commands.registerCommand('moonageDaydream.newDatabase', newDatabase),
     vscode.commands.registerCommand('moonageDaydream.newTable', newTable),
+    vscode.commands.registerCommand('moonageDaydream.dropDatabase', dropDatabase),
+    vscode.commands.registerCommand('moonageDaydream.dropTable', dropTable),
     vscode.commands.registerCommand('moonageDaydream.liveMonitor', liveMonitor),
     vscode.commands.registerCommand('moonageDaydream.serverInfo', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', SERVER_INFO_SQL, true)),
     vscode.commands.registerCommand('moonageDaydream.databaseInfo', (n?: Node) => n?.kind === 'db' && openScript(n.c, n.db, DB_INFO_SQL, true)),
@@ -979,6 +981,68 @@ async function newSqliteDatabase(conn: ConnectionInfo) {
   } catch (e) {
     log.error(`newSqliteDatabase - EXCEPTION CAUGHT | ${file}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
+  }
+}
+
+/** klik kanan database -> Drop Database…: konfirmasi modal; SQLite = hapus file (koneksi boleh ikut dihapus) */
+async function dropDatabase(n?: Node) {
+  if (n?.kind !== 'db') return;
+  const c = n.c;
+  const d = drivers[c.type];
+  if (c.readOnly) return void vscode.window.showWarningMessage(`${c.name} is read-only; Drop Database is not allowed.`);
+  try {
+    if (c.type === 'sqlite') return await dropSqliteFile(c);
+    const dd = d.dropDatabase;
+    if (!dd) return void vscode.window.showInformationMessage(`Drop Database is not available for ${d.label} yet.`);
+    if (dd.system?.includes(n.db)) return void vscode.window.showWarningMessage(`${n.db} is a system database and cannot be dropped.`);
+    const sql = dd.script(n.db);
+    const t = dropConfirm('database', n.db, c.name, sql);
+    if (await vscode.window.showWarningMessage(t.message, { modal: true, detail: t.detail }, 'Drop') !== 'Drop') return;
+    await d.run(dropTarget(c, n.db, d), await conns.password(c.name), sql);
+    log.info(`dropDatabase: ${c.name} / ${n.db}`);
+    await closePool(c); // pool lama masih menunjuk database yang sudah tidak ada
+    explorer.refresh();
+    vscode.window.showInformationMessage(`Database ${n.db} dropped on ${c.name}.`);
+  } catch (e) {
+    log.error(`dropDatabase - EXCEPTION CAUGHT | ${c.name} / ${n.db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Drop Database failed: ${errMsg(e)}`);
+  }
+}
+
+/** SQLite: Drop Database = hapus file .db; tombol kedua juga menghapus koneksinya */
+async function dropSqliteFile(c: ConnectionInfo) {
+  const file = c.file ?? '';
+  const detail = `This permanently deletes the file ${file}. It cannot be undone.`;
+  const pick = await vscode.window.showWarningMessage(`Drop database file of ${c.name}?`, { modal: true, detail }, 'Delete File', 'Delete File and Connection');
+  if (!pick) return;
+  await closePool(c);
+  await deleteSqliteFile(file);
+  log.info(`dropDatabase sqlite: ${c.name} / ${file}`);
+  if (pick === 'Delete File and Connection') await conns.remove(c.name);
+  explorer.refresh();
+  updateStatus();
+  vscode.window.showInformationMessage(`Database file ${path.basename(file)} deleted.`);
+}
+
+/** klik kanan tabel -> Drop Table…: konfirmasi modal (FK yang mengacu tabel itu = error server ditampilkan apa adanya) */
+async function dropTable(n?: Node) {
+  if (n?.kind !== 'obj' || n.objKind !== 'table') return;
+  const c = n.c;
+  const d = drivers[c.type];
+  if (c.readOnly) return void vscode.window.showWarningMessage(`${c.name} is read-only; Drop Table is not allowed.`);
+  if (!d.dropTable) return void vscode.window.showInformationMessage(`Drop Table is not available for ${d.label} yet.`);
+  const label = n.obj.schema && c.type !== 'sqlite' && d.dialect !== 'mongodb' ? `${n.obj.schema}.${n.obj.name}` : n.obj.name;
+  try {
+    const sql = d.dropTable(n.obj);
+    const t = dropConfirm('table', label, `${c.name} / ${n.db}`, sql);
+    if (await vscode.window.showWarningMessage(t.message, { modal: true, detail: t.detail }, 'Drop') !== 'Drop') return;
+    await d.run({ ...c, database: n.db }, await conns.password(c.name), sql);
+    log.info(`dropTable: ${c.name} / ${n.db} / ${label}`);
+    explorer.refresh();
+    vscode.window.showInformationMessage(`Table ${label} dropped.`);
+  } catch (e) {
+    log.error(`dropTable - EXCEPTION CAUGHT | ${c.name} / ${n.db} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Drop Table failed: ${errMsg(e)}`);
   }
 }
 

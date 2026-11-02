@@ -766,3 +766,19 @@ export const address = (c: ConnectionInfo) => (c.type === 'sqlite' ? c.file ?? '
 
 /** schema objek yang tidak ditulis di SQL */
 export const schemaOf = (c: ConnectionInfo, db: string) => drivers[c.type].defaultSchema || db;
+
+/** koneksi untuk menjalankan Drop Database: tidak boleh memakai database yang di-drop (MongoDB: justru database itu sendiri) */
+export function dropTarget(conn: ConnectionInfo, db: string, d: Pick<Driver, 'defaultDb' | 'dropDatabase'>): ConnectionInfo {
+  if (d.dropDatabase?.inside) return { ...conn, database: db };
+  let use = conn.database && conn.database !== db ? conn.database : d.defaultDb;
+  if (use === db) use = 'template1'; // shortcut: PostgreSQL saja yang defaultDb-nya bisa sama dengan database yang di-drop
+  return { ...conn, database: use };
+}
+
+/** teks popup konfirmasi modal Drop Database / Drop Table */
+export function dropConfirm(kind: 'database' | 'table', name: string, where: string, sql: string): { message: string; detail: string } {
+  return {
+    message: `Drop ${kind} ${name} on ${where}?`,
+    detail: `This permanently deletes the ${kind} and all its ${kind === 'database' ? 'data' : 'rows'}. It cannot be undone.\n\n${sql}`,
+  };
+}
