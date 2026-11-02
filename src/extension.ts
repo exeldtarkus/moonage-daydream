@@ -18,6 +18,7 @@ import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { columnsHtml } from './columnsHtml';
 import { newDbHtml } from './newDbHtml';
+import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
@@ -71,6 +72,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   updateFormatterContext(ctx);
   vscode.workspace.textDocuments.forEach(lintDoc);
   updateDbcodeAlias();
+  if (shouldShow(ctx.globalState.get<string>(WHATS_NEW_SEEN), RELEASES)) openWhatsNew(ctx);
   sqlFiles = new SqlFiles(ctx.globalState, conns, log);
   completion = new SqlCompletion(conns, fileConn, log);
   updateStatus();
@@ -176,6 +178,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.addConnection', (n?: Node) => editConnection(undefined, n?.kind === 'group' ? n.group : undefined)),
     vscode.commands.registerCommand('moonageDaydream.importDbcode', importFromDbcode),
     vscode.commands.registerCommand('moonageDaydream.autoCommitConfirm', autoCommitConfirmCommand),
+    vscode.commands.registerCommand('moonageDaydream.whatsNew', () => openWhatsNew(ctx)),
     vscode.commands.registerCommand('moonageDaydream.connect', (n?: Node) => n?.kind === 'conn' && connectCommand(n.c)),
     vscode.commands.registerCommand('moonageDaydream.disconnect', (n?: Node) => n?.kind === 'conn' && disconnect(n.c)),
     // Consul: value KV sebagai file moonage-consul:// (Ctrl+S = simpan), New / Delete Key, Dashboard
@@ -1385,6 +1388,18 @@ async function objectScript(n: Node | undefined, mode: 'show' | 'edit' | 'run') 
 }
 
 /** klik kanan group / koneksi: konfirmasi Auto-commit On / Off (koneksi juga: ikut group) */
+const WHATS_NEW_SEEN = 'moonageDaydream.whatsNewSeen';
+let whatsNewPanel: vscode.WebviewPanel | undefined;
+
+/** halaman What's New; sekali dibuka (otomatis / command) tidak muncul otomatis lagi sampai ada catatan rilis baru */
+function openWhatsNew(ctx: vscode.ExtensionContext) {
+  if (whatsNewPanel) return whatsNewPanel.reveal();
+  whatsNewPanel = vscode.window.createWebviewPanel('moonageDaydream.whatsNew', "What's New: Moonage Daydream", vscode.ViewColumn.Active, {});
+  whatsNewPanel.webview.html = whatsNewHtml(whatsNewPanel.webview.cspSource, ctx.extension.packageJSON.version);
+  whatsNewPanel.onDidDispose(() => (whatsNewPanel = undefined));
+  if (RELEASES.length) void ctx.globalState.update(WHATS_NEW_SEEN, RELEASES[0].version);
+}
+
 async function autoCommitConfirmCommand(n?: Node) {
   if (n?.kind !== 'group' && n?.kind !== 'conn') return;
   const groups = conns.groupSettings();

@@ -49,6 +49,12 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "moonageDaydream.whatsNew",
+        "title": "What's New",
+        "category": "Moonage Daydream",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "moonageDaydream.autoCommitConfirm",
         "title": "Auto-commit Confirmation…",
         "category": "Moonage Daydream",
@@ -506,6 +512,11 @@
           "command": "moonageDaydream.importDbcode",
           "when": "view == moonageDaydream.explorer",
           "group": "import@1"
+        },
+        {
+          "command": "moonageDaydream.whatsNew",
+          "when": "view == moonageDaydream.explorer",
+          "group": "help@1"
         },
         {
           "command": "moonageDaydream.refreshExplorer",

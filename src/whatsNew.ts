@@ -1,0 +1,139 @@
+import { esc } from './resultsHtml';
+
+export type ReleaseItem = { kind: 'new' | 'improved' | 'fixed'; title: string; detail?: string };
+export type Release = { version: string; date: string; items: ReleaseItem[] };
+
+/** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
+export const RELEASES: Release[] = [
+  {
+    version: '0.6.5', date: '2026-10-30', items: [
+      { kind: 'improved', title: 'Automatic releases', detail: 'New versions are published to the VS Code Marketplace and Open VSX from GitHub Actions, with a GitHub Release and .vsix for every tag.' },
+    ],
+  },
+  {
+    version: '0.6.4', date: '2026-10-30', items: [
+      { kind: 'new', title: 'Columns editor for SQL Server tables', detail: 'Right-click a table → Columns: add, rename, change type / null / default and drop columns, review the script, then execute.' },
+    ],
+  },
+  {
+    version: '0.6.3', date: '2026-10-30', items: [
+      { kind: 'new', title: 'Consul dashboard split view', detail: 'Browse keys on the left and edit values on the right, with a cluster summary on top.' },
+      { kind: 'fixed', title: 'Consul key filter', detail: 'The filter is cleared when you move to another folder.' },
+    ],
+  },
+  {
+    version: '0.6.2', date: '2026-10-29', items: [
+      { kind: 'fixed', title: 'Disconnect', detail: 'Disconnected connections no longer reconnect or show a stale status.' },
+    ],
+  },
+  {
+    version: '0.6.0', date: '2026-10-29', items: [
+      { kind: 'new', title: 'Consul connections', detail: 'Browse and edit the KV store (with confirmation and conflict check) and open a Consul dashboard.' },
+      { kind: 'new', title: 'Connect / Disconnect', detail: 'Connect or disconnect each connection from the Explorer, with a connected status and an idle auto-disconnect setting.' },
+    ],
+  },
+  {
+    version: '0.5.0', date: '2026-10-29', items: [
+      { kind: 'new', title: 'Live Monitor', detail: 'Live charts and tables for SQL Server, MySQL / MariaDB (with a Blocking tab) and PostgreSQL.' },
+      { kind: 'new', title: 'SQL Server Object Explorer', detail: 'Tables, views, procedures, functions and more, grouped like the mssql extension.' },
+      { kind: 'new', title: 'Procedures, functions and views', detail: 'Show Definition, Edit (CREATE OR ALTER) and Run with parameters from the Explorer.' },
+      { kind: 'new', title: 'Confirm data changes in Auto-commit', detail: 'Statements that change data ask for confirmation before they run.' },
+      { kind: 'improved', title: 'Transaction state', detail: 'MySQL / MariaDB and PostgreSQL read the open transaction state from the server.' },
+    ],
+  },
+  {
+    version: '0.4.0', date: '2026-10-29', items: [
+      { kind: 'new', title: 'Connection form sections', detail: 'Connection, SSL/TLS, Timeouts, Permissions (read-only) and Driver settings.' },
+      { kind: 'new', title: 'Import connections', detail: 'Paste a connection string or import your DBCode connections.' },
+      { kind: 'improved', title: 'Statement results', detail: 'Each statement shows its own result or affected row count.' },
+      { kind: 'fixed', title: 'SQL Server manual transactions', detail: 'The transaction state is read from @@TRANCOUNT.' },
+    ],
+  },
+  {
+    version: '0.3.0', date: '2026-10-29', items: [
+      { kind: 'new', title: 'MySQL / MariaDB, PostgreSQL, SQLite and MongoDB', detail: 'All databases in one Explorer, with MongoDB autocomplete.' },
+      { kind: 'new', title: 'Connection groups and colors', detail: '15 colors, groups such as prod / non-prod, Rename / Change Color / Delete, and a two-step connection form.' },
+      { kind: 'new', title: 'SQL Files', detail: 'Drag & drop, rename, duplicate, delete and reveal SQL files.' },
+      { kind: 'new', title: 'Result grid', detail: 'Filter, sort, reorder columns, edit cells into an UPDATE script, pin results, Load more and export to xlsx / csv / json / markdown / html.' },
+      { kind: 'new', title: 'Execution plans and manual transactions', detail: 'Execute | Explain | Analyze per statement, and Commit / Rollback per file.' },
+    ],
+  },
+];
+
+/** buka otomatis selama catatan rilis terbaru belum pernah dilihat (seen = versi terakhir yang dibuka user) */
+export function shouldShow(seen: string | undefined, releases: Release[]): boolean {
+  return releases.length > 0 && seen !== releases[0].version;
+}
+
+const KIND = { new: 'New', improved: 'Improved', fixed: 'Fixed' };
+
+function releaseHtml(r: Release, latest: boolean): string {
+  const count = (['new', 'improved', 'fixed'] as const)
+    .map((k) => [k, r.items.filter((i) => i.kind === k).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `<span class="count ${k}">${n} ${KIND[k].toLowerCase()}</span>`).join('');
+  const items = r.items.map((i) => `<li><span class="kind ${i.kind}">${KIND[i.kind]}</span><div><strong>${esc(i.title)}</strong>${i.detail ? `<p>${esc(i.detail)}</p>` : ''}</div></li>`).join('');
+  return `<details${latest ? ' open' : ''} class="release">
+<summary><span class="ver">v${esc(r.version)}</span>${latest ? '<span class="latest">Latest</span>' : ''}<time>${esc(r.date)}</time><span class="counts">${count}</span></summary>
+<ul>${items}</ul>
+</details>`;
+}
+
+/** halaman What's New (statis, tanpa script) */
+export function whatsNewHtml(cspSource: string, installed: string, releases: Release[] = RELEASES): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline';">
+<style>
+  :root {
+    --fg: var(--vscode-foreground); --muted: var(--vscode-descriptionForeground); --line: var(--vscode-panel-border, #8884);
+    --bg: var(--vscode-editor-background); --raise: var(--vscode-sideBar-background, var(--bg)); --focus: var(--vscode-focusBorder);
+    --mono: var(--vscode-editor-font-family, monospace);
+    --new: var(--vscode-charts-green, #89d185); --improved: var(--vscode-charts-blue, #3794ff); --fixed: var(--vscode-charts-orange, #d18616);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; padding: 28px 24px 40px; color: var(--fg); background: var(--bg); font-family: var(--vscode-font-family); font-size: 13px; max-width: 820px; line-height: 1.5; }
+  header { margin-bottom: 22px; }
+  .eyebrow { margin: 0; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  h1 { margin: 2px 0 4px; font-size: 26px; font-weight: 600; }
+  .installed { margin: 0; color: var(--muted); }
+  .installed b { font-family: var(--mono); color: var(--fg); font-weight: 600; }
+  .release { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; background: var(--raise); }
+  .release[open] { padding-bottom: 6px; }
+  summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 14px; cursor: pointer; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: '›'; display: inline-block; width: 10px; color: var(--muted); transition: transform .15s; }
+  .release[open] > summary::before { transform: rotate(90deg); }
+  summary:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; border-radius: 6px; }
+  .ver { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+  .latest { font-size: 11px; padding: 0 7px; border-radius: 9px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); }
+  time { color: var(--muted); }
+  .counts { margin-left: auto; display: flex; gap: 6px; }
+  .count { font-size: 11px; color: var(--muted); }
+  .count::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; background: var(--c); }
+  ul { list-style: none; margin: 0; padding: 0 14px 4px 34px; }
+  li { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+  li strong { font-weight: 600; }
+  li p { margin: 2px 0 0; color: var(--muted); }
+  .kind { justify-self: start; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 4px; height: fit-content; margin-top: 1px;
+    color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); }
+  .new { --c: var(--new); } .improved { --c: var(--improved); } .fixed { --c: var(--fixed); }
+  footer { margin-top: 18px; color: var(--muted); }
+  kbd { font-family: var(--mono); font-size: 12px; padding: 0 5px; border: 1px solid var(--line); border-radius: 3px; }
+  @media (max-width: 560px) { body { padding: 18px 14px; } ul { padding-left: 14px; } li { grid-template-columns: 1fr; gap: 4px; } .counts { margin-left: 0; width: 100%; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+<p class="eyebrow">Moonage Daydream</p>
+<h1>What's New</h1>
+<p class="installed">Version <b>${esc(installed)}</b> installed</p>
+</header>
+${releases.map((r, i) => releaseHtml(r, i === 0)).join('\n')}
+<footer>Open this page again anytime: <kbd>Ctrl+Shift+P</kbd> → <b>Moonage Daydream: What's New</b>.</footer>
+</body>
+</html>`;
+}
