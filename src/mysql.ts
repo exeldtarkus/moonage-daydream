@@ -152,8 +152,20 @@ export const MY_TYPES: TypeSpec[] = [
 ];
 
 const myTbl = (o: { schema: string; name: string }) => (o.schema ? `${quoteMy(o.schema)}.${quoteMy(o.name)}` : quoteMy(o.name));
-const myCol = (c: ColumnDef, collate = '', rest = '') => `${quoteMy(c.name)} ${c.type.trim()}${collate ? ` ${collate}` : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}`
-  + `${c.default?.trim() ? ` DEFAULT ${c.default.trim()}` : ''}${rest ? ` ${rest}` : ''}`;
+const myColumnSql = (c: ColumnDef) => {
+  const keep = c.keep ?? '';
+  const collation = /^COLLATE (\S+)\s*(.*)$/.exec(keep);
+  const text = /^\s*((var)?char|(tiny|medium|long)?text|enum|set)\b/i.test(c.type);
+  const collate = collation && text ? ` COLLATE ${collation[1]}` : '';
+  const rest = collation ? collation[2] : keep;
+  const generated = c.gen?.trim();
+  const definition = generated
+    ? `${quoteMy(c.name)} ${c.type.trim()}${collate} ${generated}${c.nullable ? '' : ' NOT NULL'}`
+    : `${quoteMy(c.name)} ${c.type.trim()}${collate} ${c.nullable ? 'NULL' : 'NOT NULL'}`
+      + `${c.default?.trim() ? ` DEFAULT ${c.default.trim()}` : ''}${c.ai ? ' AUTO_INCREMENT' : ''}`;
+  return `${definition}${rest.trim() ? ` ${rest.trim()}` : ''}`;
+};
+const myCol = (c: ColumnDef, collate = '', rest = '') => myColumnSql({ ...c, keep: [collate, rest].filter(Boolean).join(' ') });
 
 export const myColumnDdl: ColumnDdl = {
   separator: '\n',
@@ -161,36 +173,122 @@ export const myColumnDdl: ColumnDdl = {
   note: 'MySQL / MariaDB DDL commits implicitly: steps before a failing step stay applied (no rollback).',
   types: MY_TYPES,
   // tipe integer tanpa display width (MariaDB: int(11)) kecuali tinyint(1); default MySQL dikembalikan ke bentuk ekspresi SQL
-  show: (o) => `SELECT ordinal_position AS ordinal, column_name AS column_name,
-  CASE WHEN data_type IN (${INTS.map(litMy).join(', ')}) AND column_type NOT LIKE '%zerofill%' AND column_type NOT LIKE 'tinyint(1)%'
-    THEN CONCAT(data_type, IF(column_type LIKE '%unsigned', ' unsigned', '')) ELSE column_type END AS data_type,
-  is_nullable AS nullable,
-  CASE WHEN column_default IS NULL THEN NULL
-    WHEN VERSION() LIKE '%MariaDB%' THEN NULLIF(column_default, 'NULL')
-    WHEN extra LIKE '%DEFAULT_GENERATED%' THEN IF(column_default LIKE 'current_timestamp%', column_default, CONCAT('(', column_default, ')'))
-    WHEN data_type IN (${[...INTS, 'decimal', 'float', 'double', 'bit', 'year'].map(litMy).join(', ')}) THEN column_default
-    ELSE QUOTE(column_default) END AS default_value,
-  IF(extra LIKE '%auto_increment%', 'auto_increment', NULL) AS \`identity\`,
-  NULLIF(generation_expression, '') AS \`generated\`,
-  IF(column_key = 'PRI', 'PK', '') AS primary_key,
-  collation_name AS \`collation\`,
-  column_comment AS \`comment\`,
-  CONCAT_WS(' ', CONCAT('COLLATE ', collation_name), IF(extra LIKE '%on update%', SUBSTRING(extra, LOCATE('on update', extra)), NULL),
-    IF(column_comment = '', NULL, CONCAT('COMMENT ', QUOTE(column_comment)))) AS keep
-FROM information_schema.columns
-WHERE table_schema = ${litMy(o.schema)} AND table_name = ${litMy(o.name)}
-ORDER BY ordinal_position;`,
-  add: (o, c) => `ALTER TABLE ${myTbl(o)} ADD COLUMN ${myCol(c)};`,
+  show: (o) => `SELECT c.ordinal_position AS ordinal, c.column_name AS column_name,
+  CASE WHEN c.data_type IN (${INTS.map(litMy).join(', ')}) AND c.column_type NOT LIKE '%zerofill%' AND c.column_type NOT LIKE 'tinyint(1)%'
+    THEN CONCAT(c.data_type, IF(c.column_type LIKE '%unsigned', ' unsigned', '')) ELSE c.column_type END AS data_type,
+  c.is_nullable AS nullable,
+  CASE WHEN c.column_default IS NULL THEN NULL
+    WHEN VERSION() LIKE '%MariaDB%' THEN NULLIF(c.column_default, 'NULL')
+    WHEN c.extra LIKE '%DEFAULT_GENERATED%' THEN IF(c.column_default LIKE 'current_timestamp%', c.column_default, CONCAT('(', c.column_default, ')'))
+    WHEN c.data_type IN (${[...INTS, 'decimal', 'float', 'double', 'bit', 'year'].map(litMy).join(', ')}) THEN c.column_default
+    ELSE QUOTE(c.column_default) END AS default_value,
+  IF(c.extra LIKE '%auto_increment%', 'YES', NULL) AS \`ai\`,
+  NULLIF(c.generation_expression, '') AS \`generated\`,
+  CASE WHEN c.generation_expression <> '' THEN CONCAT('AS (', c.generation_expression, ') ',
+    IF(c.extra LIKE '%STORED%', 'STORED', 'VIRTUAL')) ELSE NULL END AS \`gen\`,
+  IF(c.column_key = 'PRI', 'PK', '') AS primary_key,
+  (SELECT s.index_name FROM information_schema.statistics s
+    WHERE s.table_schema = c.table_schema AND s.table_name = c.table_name AND s.column_name = c.column_name
+      AND s.non_unique = 0 AND s.index_name <> 'PRIMARY'
+      AND (SELECT COUNT(*) FROM information_schema.statistics part WHERE part.table_schema = s.table_schema
+        AND part.table_name = s.table_name AND part.index_name = s.index_name) = 1
+    ORDER BY s.index_name LIMIT 1) AS \`uq_name\`,
+  (SELECT k.constraint_name FROM information_schema.key_column_usage k
+    WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
+        AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
+    ORDER BY k.constraint_name LIMIT 1) AS \`fk_name\`,
+  (SELECT k.referenced_table_schema FROM information_schema.key_column_usage k
+    WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
+        AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
+    ORDER BY k.constraint_name LIMIT 1) AS \`fk_schema\`,
+  (SELECT k.referenced_table_name FROM information_schema.key_column_usage k
+    WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
+        AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
+    ORDER BY k.constraint_name LIMIT 1) AS \`fk_table\`,
+  (SELECT k.referenced_column_name FROM information_schema.key_column_usage k
+    WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
+        AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
+    ORDER BY k.constraint_name LIMIT 1) AS \`fk_column\`,
+  (SELECT r.delete_rule FROM information_schema.referential_constraints r
+    WHERE r.constraint_schema = c.table_schema AND r.table_name = c.table_name
+      AND r.constraint_name = (SELECT k.constraint_name FROM information_schema.key_column_usage k
+        WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
+          AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+          AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
+            AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
+        ORDER BY k.constraint_name LIMIT 1)
+    LIMIT 1) AS \`fk_delete\`,
+  (SELECT r.update_rule FROM information_schema.referential_constraints r
+    WHERE r.constraint_schema = c.table_schema AND r.table_name = c.table_name
+      AND r.constraint_name = (SELECT k.constraint_name FROM information_schema.key_column_usage k
+        WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
+          AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+          AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
+            AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
+        ORDER BY k.constraint_name LIMIT 1)
+    LIMIT 1) AS \`fk_update\`,
+  CONCAT_WS('; ',
+    (SELECT GROUP_CONCAT(DISTINCT CONCAT('UQ (', (SELECT GROUP_CONCAT(k.column_name ORDER BY k.seq_in_index SEPARATOR ', ')
+        FROM information_schema.statistics k WHERE k.table_schema = s.table_schema AND k.table_name = s.table_name AND k.index_name = s.index_name), ')') SEPARATOR '; ')
+      FROM information_schema.statistics s
+      WHERE s.table_schema = c.table_schema AND s.table_name = c.table_name AND s.column_name = c.column_name
+        AND s.non_unique = 0 AND s.index_name <> 'PRIMARY'
+        AND (SELECT COUNT(*) FROM information_schema.statistics part WHERE part.table_schema = s.table_schema
+          AND part.table_name = s.table_name AND part.index_name = s.index_name) > 1),
+    (SELECT GROUP_CONCAT(DISTINCT CONCAT('FK (', (SELECT GROUP_CONCAT(k.column_name ORDER BY k.ordinal_position SEPARATOR ', ')
+        FROM information_schema.key_column_usage k WHERE k.constraint_schema = f.constraint_schema AND k.table_name = f.table_name
+          AND k.constraint_name = f.constraint_name), ') → ', f.referenced_table_name, '(',
+        (SELECT GROUP_CONCAT(k.referenced_column_name ORDER BY k.ordinal_position SEPARATOR ', ')
+          FROM information_schema.key_column_usage k WHERE k.constraint_schema = f.constraint_schema AND k.table_name = f.table_name
+            AND k.constraint_name = f.constraint_name), ')') SEPARATOR '; ')
+      FROM information_schema.key_column_usage f
+      WHERE f.constraint_schema = c.table_schema AND f.table_schema = c.table_schema AND f.table_name = c.table_name
+        AND f.column_name = c.column_name AND f.referenced_table_name IS NOT NULL AND f.referenced_table_schema = c.table_schema
+        AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = f.constraint_schema
+          AND part.table_name = f.table_name AND part.constraint_name = f.constraint_name) > 1)) AS \`keys\`,
+  c.collation_name AS \`collation\`,
+  c.column_comment AS \`comment\`,
+  CONCAT_WS(' ', CONCAT('COLLATE ', c.collation_name), IF(c.extra LIKE '%on update%', SUBSTRING(c.extra, LOCATE('on update', c.extra)), NULL),
+    IF(c.extra LIKE '%INVISIBLE%', 'INVISIBLE', NULL),
+    IF(c.column_comment = '', NULL, CONCAT('COMMENT ', QUOTE(c.column_comment)))) AS keep
+FROM information_schema.columns c
+WHERE c.table_schema = ${litMy(o.schema)} AND c.table_name = ${litMy(o.name)}
+ORDER BY c.ordinal_position;`,
+  add: (o, c, pos) => {
+    const position = pos?.after === null ? ' FIRST' : pos?.after ? ` AFTER ${quoteMy(pos.after)}` : '';
+    const pk = pos?.pkCols?.length ? `, ADD PRIMARY KEY (${pos.pkCols.map(quoteMy).join(', ')})` : '';
+    return `ALTER TABLE ${myTbl(o)} ADD COLUMN ${myColumnSql(c)}${position}${pk};`;
+  },
   drop: (o, name) => `ALTER TABLE ${myTbl(o)} DROP COLUMN ${quoteMy(name)};`,
   aiTypes: [...INTS, ...INTS.map((x) => `${x} unsigned`)],
   // InnoDB menolak SET DEFAULT
   fkActions: ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL'],
   aiNeedsKey: true,
+  nameMax: 64,
+  dropKeepsKeys: true,
+  dropPk: (o) => `ALTER TABLE ${myTbl(o)} DROP PRIMARY KEY;`,
+  addPk: (o, cols) => `ALTER TABLE ${myTbl(o)} ADD PRIMARY KEY (${cols.map(quoteMy).join(', ')});`,
+  replacePk: (o, cols) => `ALTER TABLE ${myTbl(o)} DROP PRIMARY KEY, ADD PRIMARY KEY (${cols.map(quoteMy).join(', ')});`,
+  dropUnique: (o, name) => `ALTER TABLE ${myTbl(o)} DROP INDEX ${quoteMy(name)};`,
+  addUnique: (o, col, name) => `ALTER TABLE ${myTbl(o)} ADD UNIQUE KEY ${quoteMy(name ?? `UQ_${o.name}_${col}`)} (${quoteMy(col)});`,
+  dropFk: (o, name) => `ALTER TABLE ${myTbl(o)} DROP FOREIGN KEY ${quoteMy(name)};`,
+  addFk: (o, col, fk) => `ALTER TABLE ${myTbl(o)} ADD CONSTRAINT ${quoteMy(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${quoteMy(col)}) REFERENCES ${myTbl({ schema: fk.schema, name: fk.table })} (${quoteMy(fk.column)})`
+    + `${fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''};`,
+  setAi: (o, col, on) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql({ ...col, ai: on })};`,
+  move: (o, col, after) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql(col)}${after === null ? ' FIRST' : ` AFTER ${quoteMy(after)}`};`,
   create(o, cols) {
     const act = (k: string, v?: string) => (v && v !== 'NO ACTION' ? ` ON ${k} ${v}` : '');
     const pk = cols.filter((c) => c.pk);
     const lines = [
-      ...cols.map((c) => `${myCol(c)}${c.ai ? ' AUTO_INCREMENT' : ''}`),
+      ...cols.map(myColumnSql),
       ...(pk.length ? [`PRIMARY KEY (${pk.map((c) => quoteMy(c.name)).join(', ')})`] : []),
       ...cols.filter((c) => c.unique).map((c) => `UNIQUE KEY ${quoteMy(`UQ_${o.name}_${c.name}`)} (${quoteMy(c.name)})`),
       ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${quoteMy(`FK_${o.name}_${name}`)} FOREIGN KEY (${quoteMy(name)}) REFERENCES ${myTbl({ schema: fk!.schema, name: fk!.table })} (${quoteMy(fk!.column)})`

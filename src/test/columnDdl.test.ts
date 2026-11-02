@@ -241,10 +241,10 @@ test('column ddl: MySQL and MariaDB share the same column script, new columns st
 test('column ddl: MySQL Show reads information_schema.columns of the table, defaults as SQL expressions (MySQL / MariaDB)', () => {
   const sql = my.show(mt);
   assert.match(sql, /FROM information_schema\.columns/);
-  assert.ok(sql.includes("table_schema = 'sh`op' AND table_name = 'or''ders'"), sql);
-  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'identity', 'generated', 'primary_key', 'collation', 'comment', 'keep']) assert.match(sql, new RegExp(`AS \`?${col}\\b`), col);
+  assert.ok(sql.includes("c.table_schema = 'sh`op' AND c.table_name = 'or''ders'"), sql);
+  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'ai', 'generated', 'primary_key', 'collation', 'comment', 'keep']) assert.match(sql, new RegExp(`AS \`?${col}\\b`), col);
   assert.match(sql, /VERSION\(\) LIKE '%MariaDB%'/, 'MariaDB column_default is already an expression');
-  assert.match(sql, /ORDER BY ordinal_position/);
+  assert.match(sql, /ORDER BY c\.ordinal_position/);
 });
 
 test('column ddl: MySQL Add / Delete', () => {
@@ -288,13 +288,13 @@ test('MySQL / MariaDB data types: complete list, grouped, size rules', () => {
 });
 
 test('columns editor: Show keep (attributes carried by CHANGE COLUMN) goes to the column, not to the info grid', () => {
-  const rs = { columns: ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'identity', 'comment', 'keep'],
-    rows: [[1, 'id', 'int', 'NO', null, 'auto_increment', '', ''], [2, 'title', 'varchar(50)', 'YES', null, null, 'x', "COMMENT 'x'"]] };
+  const rs = { columns: ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'ai', 'primary_key', 'comment', 'keep'],
+    rows: [[1, 'id', 'int', 'NO', null, 'YES', 'PK', '', ''], [2, 'title', 'varchar(50)', 'YES', null, null, '', 'x', "COMMENT 'x'"]] };
   const { cols, info } = showColumns(rs);
-  assert.deepEqual(cols, [{ name: 'id', type: 'int', nullable: false, generated: true, ai: true }, { name: 'title', type: 'varchar(50)', nullable: true, keep: "COMMENT 'x'" }]);
-  assert.deepEqual(info.columns, ['identity', 'comment']);
+  assert.deepEqual(cols, [{ name: 'id', type: 'int', nullable: false, ai: true, pk: true }, { name: 'title', type: 'varchar(50)', nullable: true, keep: "COMMENT 'x'" }]);
+  assert.deepEqual(info.columns, ['comment']);
   const r = columnChanges(my, mt, cols, [{ ...cols[0], orig: 'id' }, { ...cols[1], orig: 'title', type: 'varchar(60)' }, { name: 'n', type: 'int', nullable: true }]);
-  assert.equal(r.sql, `ALTER TABLE ${MT} CHANGE COLUMN \`title\` \`title\` varchar(60) NULL COMMENT 'x';\nALTER TABLE ${MT} ADD COLUMN \`n\` int NULL;`);
+  assert.equal(r.sql, `ALTER TABLE ${MT} CHANGE COLUMN \`title\` \`title\` varchar(60) NULL COMMENT 'x';\nALTER TABLE ${MT} ADD COLUMN \`n\` int NULL AFTER \`title\`;`);
 });
 
 // ---------- PostgreSQL ----------

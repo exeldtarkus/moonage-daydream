@@ -36,8 +36,11 @@ test('showColumns: SQL Server identity stays rename-only but shows AI on; genera
 });
 
 const ms = drivers.mssql.columnDdl!;
+const myd = drivers.mysql.columnDdl!;
 const stub: ColumnDdl = { ...ms, aiTypes: ['int'] };
 const ot = { schema: 'dbo', name: 'order_item' };
+const mo = { schema: 'shop', name: 'order`item' };
+const MT = '`shop`.`order``item`';
 
 test('checkRows: SET NULL on a NOT NULL FK column is rejected', () => {
   assert.deepEqual(checkRows(stub, ot, [{ name: 'order_id', type: 'int', nullable: false, fk: { schema: 'dbo', table: 'orders', column: 'id', onDelete: 'SET NULL' } }]),
@@ -361,4 +364,85 @@ test('SQL Server drops keys before a key column and re-adds the remaining primar
     'Add primary key PK_or]ders (id)',
   ]);
   for (const step of result.steps) assert.doesNotMatch(step.sql, /DROP[^;]*CASCADE/);
+});
+
+test('MySQL key DDL: exact SQL and identifier quoting', () => {
+  assert.equal(myd.addPk!(mo, ['a', 'b']), `ALTER TABLE ${MT} ADD PRIMARY KEY (\`a\`, \`b\`);`);
+  assert.equal(myd.dropPk!(mo), `ALTER TABLE ${MT} DROP PRIMARY KEY;`);
+  assert.equal(myd.replacePk!(mo, ['id', 'line_no']), `ALTER TABLE ${MT} DROP PRIMARY KEY, ADD PRIMARY KEY (\`id\`, \`line_no\`);`);
+  assert.equal(myd.addUnique!(mo, 'sku'), `ALTER TABLE ${MT} ADD UNIQUE KEY \`UQ_order\`\`item_sku\` (\`sku\`);`);
+  assert.equal(myd.dropUnique!(mo, 'uq_order_item_order_sku', false), `ALTER TABLE ${MT} DROP INDEX \`uq_order_item_order_sku\`;`);
+  assert.equal(myd.dropFk!(mo, 'FK_x'), `ALTER TABLE ${MT} DROP FOREIGN KEY \`FK_x\`;`);
+  assert.equal(myd.addFk!(mo, 'order_id', { schema: 'shop', table: 'orders', column: 'id', onDelete: 'CASCADE' }),
+    `ALTER TABLE ${MT} ADD CONSTRAINT \`FK_order\`\`item_order_id\` FOREIGN KEY (\`order_id\`) REFERENCES \`shop\`.\`orders\` (\`id\`) ON DELETE CASCADE;`);
+});
+
+test('MySQL add: supports column position and inline primary key', () => {
+  assert.equal(myd.add(mo, { name: 'note', type: 'varchar(100)', nullable: true }, { after: 'title' }),
+    `ALTER TABLE ${MT} ADD COLUMN \`note\` varchar(100) NULL AFTER \`title\`;`);
+  assert.equal(myd.add(mo, { name: 'id', type: 'int', nullable: false, ai: true, pk: true }, { after: null, pkCols: ['id'] }),
+    `ALTER TABLE ${MT} ADD COLUMN \`id\` int NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (\`id\`);`);
+});
+
+test('MySQL setAi and move preserve the full column definition', () => {
+  assert.equal(myd.setAi!(mo, { name: 'id', type: 'int', nullable: false }, true),
+    `ALTER TABLE ${MT} MODIFY COLUMN \`id\` int NOT NULL AUTO_INCREMENT;`);
+  assert.equal(myd.move!(mo, { name: 'qty', type: 'int unsigned', nullable: false, default: '0', keep: "COLLATE utf8mb4_bin COMMENT 'x'" }, 'title'),
+    `ALTER TABLE ${MT} MODIFY COLUMN \`qty\` int unsigned NOT NULL DEFAULT 0 COMMENT 'x' AFTER \`title\`;`);
+  assert.equal(myd.move!(mo, { name: 'id', type: 'int', nullable: false, ai: true }, 'note'),
+    `ALTER TABLE ${MT} MODIFY COLUMN \`id\` int NOT NULL AUTO_INCREMENT AFTER \`note\`;`);
+  assert.equal(myd.move!(mo, { name: 'total', type: 'decimal(12,2)', nullable: true, gen: 'AS (\`qty\` * \`price\`) VIRTUAL' }, null),
+    `ALTER TABLE ${MT} MODIFY COLUMN \`total\` decimal(12,2) AS (\`qty\` * \`price\`) VIRTUAL FIRST;`);
+  assert.equal(myd.move!(mo, { name: 'created', type: 'timestamp', nullable: false, default: 'CURRENT_TIMESTAMP',
+    keep: "on update current_timestamp() INVISIBLE COMMENT 'c'" }, null),
+  `ALTER TABLE ${MT} MODIFY COLUMN \`created\` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP on update current_timestamp() INVISIBLE COMMENT 'c' FIRST;`);
+});
+
+test('MySQL edit keeps AUTO_INCREMENT on a type change', () => {
+  assert.equal(myd.edit(mo, { name: 'id', type: 'int', nullable: false, ai: true },
+    { name: 'id', type: 'bigint', nullable: false, ai: true }),
+  `ALTER TABLE ${MT} CHANGE COLUMN \`id\` \`id\` bigint NOT NULL AUTO_INCREMENT;`);
+});
+
+test('MySQL show: AI, generated expression, INVISIBLE and key metadata aliases', () => {
+  const sql = myd.show(mo);
+  for (const fragment of ['AS `ai`', 'AS `gen`', 'INVISIBLE', 'AS `uq_name`', 'referential_constraints', 'AS `keys`']) {
+    assert.ok(sql.includes(fragment), `Missing ${fragment} in ${sql}`);
+  }
+  assert.doesNotMatch(sql, /AS `identity`/);
+  assert.match(sql, /LIMIT 1/);
+  assert.match(sql, /generation_expression <> ''/);
+});
+
+test('MySQL Columns editor replaces the primary key and removes AI before key replacement', () => {
+  const original = [col('id', { ai: true, pk: true }), col('line_no')];
+  const kept = columnChanges(myd, mo, original, [
+    col('id', { orig: 'id', ai: true, pk: true }),
+    col('line_no', { orig: 'line_no', pk: true }),
+  ]);
+  assert.deepEqual(titles(kept.steps), ['Replace primary key (id, line_no)']);
+
+  const replaced = columnChanges(myd, mo, original, [
+    col('id', { orig: 'id' }),
+    col('line_no', { orig: 'line_no', pk: true }),
+  ]);
+  assert.deepEqual(titles(replaced.steps), ['Remove auto increment from id', 'Replace primary key (line_no)']);
+});
+
+test('MySQL Columns editor emits one move with the complete definition', () => {
+  const original = [
+    col('id', { pk: true, ai: true }),
+    col('line_no'),
+    col('sku'),
+    col('qty', { nullable: false, default: '1', keep: "COMMENT 'pieces'" }),
+  ];
+  const rows = [
+    col('id', { orig: 'id', pk: true, ai: true }),
+    col('line_no', { orig: 'line_no' }),
+    col('qty', { orig: 'qty', nullable: false, default: '1', keep: "COMMENT 'pieces'" }),
+    col('sku', { orig: 'sku' }),
+  ];
+  const result = columnChanges(myd, mo, original, rows);
+  assert.deepEqual(titles(result.steps), ['Move qty after line_no']);
+  assert.match(result.steps[0].sql, /DEFAULT 1 COMMENT 'pieces' AFTER `line_no`/);
 });
