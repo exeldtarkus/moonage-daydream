@@ -308,11 +308,12 @@ test('column ddl: PostgreSQL basics (separator, new column type, note about one 
   assert.match(pg.note!, /one transaction/i);
 });
 
-test('column ddl: PostgreSQL Show reads pg_attribute of the table with short type names, identity, generated, primary key', () => {
+test('column ddl: PostgreSQL Show reads pg_attribute of the table with short type names, AI, identity mode, generated, primary key', () => {
   const sql = pg.show(pt);
   assert.match(sql, /FROM pg_attribute a/);
   assert.ok(sql.includes(`to_regclass('${PT.replace(/'/g, "''")}')`), sql);
-  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'identity', 'generated', 'primary_key', 'collation', 'comment', 'keep']) assert.match(sql, new RegExp(`AS ${col}\\b`), col);
+  for (const col of ['column_name', 'data_type', 'nullable', 'default_value', 'ai', 'identity_mode', 'generated', 'primary_key', 'collation', 'comment', 'keep']) assert.match(sql, new RegExp(`AS ${col}\\b`), col);
+  assert.doesNotMatch(sql, /AS identity\b/);
   assert.match(sql, /varchar/);
   assert.match(sql, /timestamptz/);
   assert.match(sql, /ORDER BY a\.attnum/);
