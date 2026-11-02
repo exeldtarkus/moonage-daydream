@@ -960,6 +960,7 @@ async function addData(n?: Node) {
       const res = await d.run({ ...conn, database: n.db }, await conns.password(conn.name), r.sql);
       log.info(`addData: ${conn.name} / ${n.db} / ${label}`);
       post({ type: 'status', text: res.resultSets.length || res.messages?.length ? `Inserted. ${(res.messages ?? []).join(' ')}`.trim() : 'Inserted.' });
+      void vscode.window.showInformationMessage(`Row inserted into ${label}.`);
     } catch (e) {
       log.error(`addData insert - EXCEPTION CAUGHT | ${conn.name} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Insert failed: ${errMsg(e)}`, error: true });

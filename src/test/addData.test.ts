@@ -72,3 +72,12 @@ test('menus: Add Data on table nodes only, hidden from the palette', () => {
   for (const v of ['view.def', 'tables', 'db', 'folder.table']) assert.ok(!shown(v), v);
   assert.ok(pkg.contributes.menus.commandPalette.some((p: { command: string; when?: string }) => p.command === 'moonageDaydream.addData' && p.when === 'false'));
 });
+
+test('data changes show a success notification after an insert or grid save', () => {
+  const source = (file: string) => readFileSync(join(__dirname, '..', '..', 'src', file), 'utf8');
+  const addData = source('extension.ts');
+  const gridEdit = source('gridEdit.ts');
+  assert.match(addData, /post\(\{ type: 'status', text: .*Inserted\.[\s\S]*showInformationMessage\(`Row inserted into \$\{label\}\.`\)/);
+  assert.match(gridEdit, /if \(t\.mongo\) \{[\s\S]*await applyWhere\('', m\.part\);\s+void vscode\.window\.showInformationMessage\(`Changes saved to \$\{t\.label\}\.`\)/);
+  assert.match(gridEdit, /await applyWhere\(t\.src\.where \?\? '', m\.part\);\s+void vscode\.window\.showInformationMessage\(`Changes saved to \$\{t\.label\}\.`\)/);
+});

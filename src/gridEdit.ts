@@ -146,6 +146,7 @@ export async function saveGrid(m: ResultMessage): Promise<boolean> {
       }
       log.info(`saveGrid: ${t.label} ${stmts.length} command(s)`);
       await applyWhere('', m.part);
+      void vscode.window.showInformationMessage(`Changes saved to ${t.label}.`);
       return true;
     }
     const session = await t.d.session(c, t.pw);
@@ -164,6 +165,7 @@ export async function saveGrid(m: ResultMessage): Promise<boolean> {
     }
     log.info(`saveGrid: ${t.label} ${stmts.length} statement(s)`);
     await applyWhere(t.src.where ?? '', m.part);
+    void vscode.window.showInformationMessage(`Changes saved to ${t.label}.`);
     return true;
   } catch (e) {
     log.error(`saveGrid - EXCEPTION CAUGHT | ${c?.name ?? ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
