@@ -20,7 +20,7 @@ import { columnsHtml } from './columnsHtml';
 import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
 import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches } from './mssql';
-import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, changeStatements, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 import { monitorKit } from './monitorKits';
 import { ConsulFs, backupWriter, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
@@ -84,7 +84,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     : m.type === 'planXml' ? openPlanXml(o)
     : m.type === 'pin' ? results.pin()
     : m.type === 'more' ? loadMore(m)
-    : m.type === 'edits' ? editScript(m) : undefined);
+    : m.type === 'edits' ? editScript(m)
+    : m.type === 'saveGrid' ? saveGrid(m) : undefined);
   runningView = new RunningView(running);
   history = new History(ctx.globalState);
 
@@ -1867,45 +1868,94 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
   await results.show(title, outcome);
 }
 
+/** tabel asal result set yang diedit: statement SELECT satu tabel + primary key; gagal = Error dengan alasannya */
+async function gridTarget(m: ResultMessage) {
+  const o = results.current?.outcome;
+  if (!o) throw new Error('No result to edit');
+  const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
+  const single = part ? part.o : o;
+  if (!('result' in single)) throw new Error('No result to edit');
+  const rs = single.result.resultSets[m.set ?? 0];
+  const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
+  const c = src && fileConn(vscode.Uri.parse(src.uri));
+  if (!rs || !src || !c) throw new Error('Editing needs the result of a single SELECT');
+  const d = drivers[c.type];
+  if (!['mssql', 'mysql', 'postgres', 'sqlite'].includes(d.dialect)) throw new Error(`Editing rows is not available for ${d.label} yet`);
+  const refs = tableRefs(src.sql);
+  if (refs.length !== 1) throw new Error('Editing needs a SELECT from exactly one table (no JOIN)');
+  const parts = refs[0].parts;
+  const name = parts[parts.length - 1];
+  // MySQL: `db.tabel` (schema = database); lainnya `db.schema.tabel` / `schema.tabel`
+  const db = parts.length === 3 || (d.dialect === 'mysql' && parts.length === 2) ? parts[0] : c.database || d.defaultDb;
+  const pw = await conns.password(c.name);
+  const schema = d.dialect === 'mysql' ? db : (parts.length >= 2 && parts[parts.length - 2])
+    || (await d.objects(c, pw, db, 'table')).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
+  const pk = await d.primaryKey(c, pw, db, { schema, name });
+  if (!pk.length) throw new Error(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
+  const q = d.quote;
+  const table = d.dialect === 'mssql' ? `${q(db)}.${q(schema)}.${q(name)}` : d.dialect === 'mysql' ? `${q(db)}.${q(name)}`
+    : d.dialect === 'postgres' ? `${q(schema)}.${q(name)}` : q(name);
+  return { c, d, pw, rs, src, pk, table, label: `${db}.${schema}.${name}` };
+}
+
 /**
  * Edit grid -> script UPDATE di tab baru (BEGIN TRAN, WHERE primary key); tidak pernah dijalankan otomatis.
  * Syarat: statement asal SELECT dari satu tabel yang punya primary key, kolom PK ikut di-SELECT.
  */
 export async function editScript(m: ResultMessage): Promise<vscode.TextDocument | undefined> {
-  const o = results.current?.outcome;
-  if (!o || !m.edits?.length) return;
-  const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
-  const single = part ? part.o : o;
-  if (!('result' in single)) return;
-  const rs = single.result.resultSets[m.set ?? 0];
-  const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
-  const c = src && fileConn(vscode.Uri.parse(src.uri));
+  if (!m.edits?.length) return;
   try {
-    if (!rs || !src || !c) throw new Error('Editing needs the result of a single SELECT');
-    const refs = tableRefs(src.sql);
-    if (refs.length !== 1) throw new Error('Editing needs a SELECT from exactly one table (no JOIN)');
-    const parts = refs[0].parts;
-    const name = parts[parts.length - 1];
-    const d = drivers[c.type];
-    // MySQL: `db.tabel` (schema = database); lainnya `db.schema.tabel` / `schema.tabel`
-    const db = parts.length === 3 || (d.dialect === 'mysql' && parts.length === 2) ? parts[0] : c.database || d.defaultDb;
-    const pw = await conns.password(c.name);
-    const schema = d.dialect === 'mysql' ? db : (parts.length >= 2 && parts[parts.length - 2])
-      || (await d.objects(c, pw, db, 'table')).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
-    const pk = await d.primaryKey(c, pw, db, { schema, name });
-    if (!pk.length) throw new Error(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
-    const q = d.quote;
-    const table = d.dialect === 'mssql' ? `${q(db)}.${q(schema)}.${q(name)}` : d.dialect === 'mysql' ? `${q(db)}.${q(name)}`
-      : d.dialect === 'postgres' ? `${q(schema)}.${q(name)}` : q(name);
-    const script = updateScript(table, rs.columns, rs.types ?? [], rs.rows, pk, m.edits, q, d.dialect);
+    const t = await gridTarget(m);
+    const script = updateScript(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, m.edits, t.d.quote, t.d.dialect);
     const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: script });
-    await conns.bind(doc.uri.toString(), { conn: c.name, db: c.database || undefined });
+    await conns.bind(doc.uri.toString(), { conn: t.c.name, db: t.c.database || undefined });
     await vscode.window.showTextDocument(doc, { preview: false });
-    log.info(`edit script: ${m.edits.length} cell(s) on ${db}.${schema}.${name}`);
+    log.info(`edit script: ${m.edits.length} cell(s) on ${t.label}`);
     return doc;
   } catch (e) {
     log.error(`editScript - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`Cannot generate UPDATE script: ${errMsg(e)}`);
+  }
+}
+
+/**
+ * Save di grid: edit sel + hapus baris + baris baru jadi satu transaksi (gagal = rollback), setelah konfirmasi modal;
+ * sukses = query asal dijalankan ulang. Mengembalikan true bila tersimpan.
+ */
+export async function saveGrid(m: ResultMessage): Promise<boolean> {
+  const ch = { edits: m.edits ?? [], deletes: m.deletes ?? [], inserts: m.inserts ?? [] };
+  if (!ch.edits.length && !ch.deletes.length && !ch.inserts.length) return false;
+  let c: ConnectionInfo | undefined;
+  try {
+    const t = await gridTarget(m);
+    c = t.c;
+    if (c.readOnly) throw new Error(`${c.name} is read-only`);
+    const stmts = changeStatements(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, ch, t.d.quote, t.d.dialect);
+    if (!stmts.length) return false;
+    const detail = `${t.label}: ${ch.edits.length ? `${new Set(ch.edits.map((e) => e.row)).size} row(s) updated, ` : ''}${new Set(ch.deletes).size} deleted, ${ch.inserts.length} inserted. One transaction; any error rolls everything back.\n\n${stmts.join('\n')}`;
+    const ok = await vscode.window.showWarningMessage(`Save changes to ${t.label} on ${c.name}?`, { modal: true, detail: detail.length > 4000 ? `${detail.slice(0, 4000)}\n…` : detail }, 'Save');
+    if (ok !== 'Save') return false;
+    const session = await t.d.session(c, t.pw);
+    try {
+      for (const st of stmts) await session.run(st);
+      await session.commit();
+    } catch (e) {
+      try {
+        await session.rollback();
+      } catch (re) {
+        log.error(`saveGrid rollback - EXCEPTION CAUGHT | ${c.name}: ${errMsg(re)} - stack-trace: ${errStack(re)}`);
+      }
+      throw e;
+    } finally {
+      await session.close();
+    }
+    log.info(`saveGrid: ${t.label} ${stmts.length} statement(s)`);
+    await applyWhere(t.src.where ?? '', m.part);
+    return true;
+  } catch (e) {
+    log.error(`saveGrid - EXCEPTION CAUGHT | ${c?.name ?? ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    vscode.window.showErrorMessage(`Save failed (nothing was changed): ${errMsg(e)}`);
+    return false;
   }
 }
 

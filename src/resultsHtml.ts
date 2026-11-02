@@ -94,10 +94,10 @@ function resultHtml(r: QueryResult, canMore = false): string {
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
     return `<div class="blk"><h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
-<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 ? ' data-edit="1" title="Double-click a cell to edit (generates an UPDATE script)"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead>${s.rows.length > VIRTUAL_ROWS
+<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead>${s.rows.length > VIRTUAL_ROWS
       ? `<tbody></tbody></table><template class="vrows">${rows}</template>` : `<tbody>${rows}</tbody></table>`}</div>
 <div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0
-      ? '<span class="editbar" hidden><b class="ecount"></b> change(s)<button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
+      ? '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
       ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div></div>`;
   }).join('');
   // jumlah baris per statement non-SELECT (urut), juga di samping result set SELECT: berjudul statement asalnya bila pasti
@@ -217,10 +217,14 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .foot .morebtn:hover { background: var(--vscode-button-hoverBackground, #1177bb); } .foot .morebtn:disabled { opacity: .5; cursor: progress; }
   .foot .morebtn + .xbtn { margin-left: 8px; }
   .editbar { display: inline-flex; align-items: center; gap: 6px; color: var(--vscode-editorWarning-foreground, #cca700); }
-  .editbar[hidden] { display: none; }
+  .editbar[hidden], .editbar .pend[hidden] { display: none; }
+  .editbar .pend { display: inline-flex; align-items: center; gap: 6px; }
+  tr.todelete td { text-decoration: line-through; opacity: .55; }
+  tbody.newrows td { background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, #81b88b) 12%, transparent); }
+  tbody.newrows input.cell { width: 100%; min-width: 60px; }
   .editbar button { padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
     color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
-  .editbar .genupd { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
+  .editbar .save, .editbar .genupd { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   tbody td.edited { box-shadow: inset 2px 0 var(--vscode-editorWarning-foreground, #cca700); background: rgba(204, 167, 0, .12) !important; }
   tbody td input.cell { width: 100%; min-width: 80px; box-sizing: border-box; padding: 2px 4px; font: inherit; color: var(--vscode-input-foreground);
     background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder); }
@@ -428,7 +432,7 @@ const GRID_SCRIPT = `(() => {
     s.view = rows;
     render(t);
     const ord = order(t);
-    for (const r of [t.tHead.rows[0], ...s.rows]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(ord[i - 1])));
+    for (const r of [t.tHead.rows[0], ...s.rows, ...(t.tBodies[1]?.rows ?? [])]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(ord[i - 1])));
     t.tHead.querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('on', b.dataset.c in s.filters));
     t.tHead.querySelectorAll('.mbtn').forEach((b) => b.classList.toggle('on', s.sort?.c === +b.dataset.c));
     const count = t.closest('.grid').nextElementSibling.querySelector('.count');
@@ -498,6 +502,16 @@ const GRID_SCRIPT = `(() => {
     const th = b.closest('th');
     if (b.classList.contains('xmlbtn')) { vscode.postMessage({ type: 'planXml' }); return; }
     if (b.classList.contains('pinbtn')) { vscode.postMessage({ type: 'pin' }); return; }
+    if (b.classList.contains('addrow')) { addRow(b.closest('.foot').previousElementSibling.querySelector('table')); return; }
+    if (b.classList.contains('delrow')) { markDelete(b.closest('.foot').previousElementSibling.querySelector('table')); return; }
+    if (b.classList.contains('save')) {
+      const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
+      const edits = [...(s.edits ?? [])].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
+      const inserts = newRows(t).map((tr) => { const v = []; tr.querySelectorAll('input.cell').forEach((i) => { v[+i.dataset.c] = i.value; }); return Array.from(v, (x) => x ?? ''); });
+      const part = t.closest('section')?.dataset.part;
+      vscode.postMessage({ type: 'saveGrid', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits, deletes: [...(s.deletes ?? [])], inserts });
+      return;
+    }
     if (b.classList.contains('genupd') || b.classList.contains('discard')) {
       const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
       if (b.classList.contains('genupd')) {
@@ -507,6 +521,9 @@ const GRID_SCRIPT = `(() => {
       } else {
         st(t).rows.flatMap((r) => [...r.querySelectorAll('td.edited')]).forEach((td) => { showCell(td, JSON.parse(td.dataset.orig)); td.classList.remove('edited'); });
         s.edits.clear();
+        s.deletes?.clear();
+        st(t).rows.forEach((r) => r.classList.remove('todelete'));
+        t.tBodies[1]?.remove();
         syncEdits(t);
       }
       return;
@@ -624,9 +641,36 @@ const GRID_SCRIPT = `(() => {
     const s = st(t);
     const bar = t.closest('.grid').nextElementSibling.querySelector('.editbar');
     if (!bar) return;
-    bar.hidden = !s.edits?.size;
-    bar.querySelector('.ecount').textContent = String(s.edits?.size ?? 0);
+    const n = (s.edits?.size ?? 0) + (s.deletes?.size ?? 0) + newRows(t).length;
+    bar.querySelector('.pend').hidden = !n;
+    bar.querySelector('.ecount').textContent = String(n);
   }
+  const newRows = (t) => [...(t.tBodies[1]?.rows ?? [])];
+  /** baris baru di tbody terpisah (tidak ikut filter / sort); sel per kolom hasil, kosong = default server, NULL = NULL */
+  function addRow(t) {
+    const s = st(t);
+    const nb = t.tBodies[1] ?? Object.assign(t.appendChild(document.createElement('tbody')), { className: 'newrows' });
+    const tr = nb.insertRow();
+    tr.insertCell().textContent = '+';
+    tr.cells[0].className = 'n';
+    for (const c of order(t)) {
+      const td = tr.insertCell();
+      td.hidden = s.hidden.has(c);
+      td.innerHTML = '<input class="cell" spellcheck="false" data-c="' + c + '" placeholder="default">';
+    }
+    tr.querySelector('input.cell:not([hidden])')?.focus();
+    syncEdits(t);
+  }
+  /** baris terpilih ditandai hapus (dicoret); tandai lagi = batal */
+  function markDelete(t) {
+    const s = st(t);
+    s.deletes ??= new Set();
+    const sel = selected(t);
+    const all = sel.length && sel.every((r) => s.deletes.has(r));
+    for (const r of sel) { if (all) s.deletes.delete(r); else s.deletes.add(r); s.rows[r].classList.toggle('todelete', !all); }
+    syncEdits(t);
+  }
+  document.addEventListener('input', (e) => { const t = e.target.closest?.('tbody.newrows')?.closest('table'); if (t) syncEdits(t); });
   function commitCell(td, input, keep) {
     const t = td.closest('table'), s = st(t), tr = td.parentElement;
     const r = s.rows.indexOf(tr), c = order(t)[[...tr.cells].indexOf(td) - 1]; // index kolom asli (kolom bisa dipindah)

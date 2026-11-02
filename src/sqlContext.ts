@@ -358,6 +358,51 @@ export interface CellEdit {
   value: string | null;
 }
 
+/** where PK dari baris asli: kolom PK wajib ikut di SELECT */
+function pkWhere(columns: string[], rows: unknown[][], pk: string[], r: number, q: (n: string) => string, d: Dialect): string {
+  const row = rows[r];
+  if (!row) throw new Error(`Row ${r + 1} is not loaded`);
+  return pk.map((k) => {
+    const i = columns.findIndex((c) => c.toLowerCase() === k.toLowerCase());
+    if (i < 0) throw new Error(`Primary key column ${k} must be part of the SELECT to edit rows`);
+    return row[i] === null ? `${q(columns[i])} IS NULL` : `${q(columns[i])} = ${sqlLiteral(row[i], d)}`;
+  }).join(' AND ');
+}
+
+export interface GridChanges {
+  edits?: CellEdit[];
+  /** index baris asli yang dihapus */
+  deletes?: number[];
+  /** baris baru: nilai per kolom hasil ('' = lewati / default server, 'NULL' = NULL) */
+  inserts?: string[][];
+}
+
+/**
+ * statement perubahan grid, urut: UPDATE (per baris, kolom berubah), DELETE, INSERT. Semua WHERE memakai kolom primary key
+ * (nilai asli); edit pada baris yang dihapus dibuang. Dijalankan extension dalam satu transaksi.
+ */
+export function changeStatements(table: string, columns: string[], types: string[], rows: unknown[][], pk: string[], ch: GridChanges,
+  q: (n: string) => string = (n) => `[${n.replace(/]/g, ']]')}]`, d: Dialect = 'mssql'): string[] {
+  const gone = new Set(ch.deletes ?? []);
+  const out: string[] = [];
+  const byRow = new Map<number, CellEdit[]>();
+  for (const e of ch.edits ?? []) if (!gone.has(e.row)) byRow.set(e.row, [...(byRow.get(e.row) ?? []), e]);
+  for (const [r, es] of [...byRow.entries()].sort((a, b) => a[0] - b[0])) {
+    const where = pkWhere(columns, rows, pk, r, q, d);
+    if (es.some((e) => pk.some((k) => k.toLowerCase() === columns[e.col]?.toLowerCase()))) throw new Error('Primary key columns cannot be edited here');
+    const set = es.map((e) => `${q(columns[e.col])} = ${editLiteral(e.value, types[e.col] ?? '', d)}`).join(', ');
+    out.push(`UPDATE ${table}\nSET ${set}\nWHERE ${where};`);
+  }
+  for (const r of [...gone].sort((a, b) => a - b)) out.push(`DELETE FROM ${table} WHERE ${pkWhere(columns, rows, pk, r, q, d)};`);
+  for (const v of ch.inserts ?? []) {
+    const idx = columns.map((_, i) => i).filter((i) => (v[i] ?? '') !== '');
+    out.push(idx.length
+      ? `INSERT INTO ${table} (${idx.map((i) => q(columns[i])).join(', ')}) VALUES (${idx.map((i) => editLiteral(v[i], types[i] ?? '', d)).join(', ')});`
+      : d === 'mysql' ? `INSERT INTO ${table} () VALUES ();` : `INSERT INTO ${table} DEFAULT VALUES;`);
+  }
+  return out;
+}
+
 /**
  * script UPDATE untuk edit di grid: satu UPDATE per baris (kolom yang diubah), WHERE semua kolom primary key (nilai asli),
  * di dalam BEGIN TRAN; COMMIT / ROLLBACK dibiarkan ke user (tidak pernah dijalankan otomatis).
