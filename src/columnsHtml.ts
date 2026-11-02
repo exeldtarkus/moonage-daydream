@@ -4,10 +4,9 @@ import { esc } from './resultsHtml';
 /**
  * editor Columns (klik kanan tabel), seperti DBeaver: grid kolom bisa diedit (nama, tipe dari dropdown + ukuran, NOT NULL, default,
  * tambah / hapus), daftar Pending changes berisi langkah SQL yang akan dijalankan; Execute / Open in SQL Editor / Revert.
- * ext -> page: { type: 'load', cols, info, types } | { type: 'script', sql, errors, count, steps } | { type: 'status', text, error? }
- * page -> ext: { type: 'ready' | 'refresh' } | { type: 'change' | 'execute' | 'open', rows, table? }
- * mode create (New Table): load juga membawa rows awal, tables (untuk FK), schemas, fkActions; ext -> page { type: 'fkColumns', key, columns };
- * page -> ext { type: 'fkColumns', schema, table }
+ * ext -> page: { type: 'load', cols, info, types, capabilities } | { type: 'script', sql, errors, count, steps } | { type: 'status', text, error? }
+ * page -> ext: { type: 'ready' | 'refresh' | 'fkTables' } | { type: 'change' | 'execute' | 'open' | 'fkColumns', rows?, table?, schema?, name? }
+ * FK responses carry the tables / columns needed by the editor.
  */
 export function columnsHtml(cspSource: string, t: { conn: string; db: string; table: string }, readOnly: boolean, mode: 'edit' | 'create' = 'edit'): string {
   const create = mode === 'create';
@@ -86,6 +85,10 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
   .switch input:disabled + span { opacity: .45; }
 
   .attrs { display: flex; flex-wrap: wrap; gap: 4px; min-width: 120px; }
+  td.gripCell { width: 28px; padding: 3px 2px; }
+  .grip { width: 24px; height: 26px; padding: 0; border: 0; color: var(--muted); background: transparent; touch-action: none; cursor: grab; }
+  .grip:active:not(:disabled) { cursor: grabbing; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .badge { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; white-space: nowrap;
     color: var(--muted); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); }
   .badge.key { color: var(--vscode-symbolIcon-keyForeground, var(--changed)); border-color: currentColor; }
@@ -126,8 +129,11 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
   .detail li { padding: 0 !important; border: 0 !important; }
   .detail li::before { content: none !important; }
   #preview li.drop::before { background: var(--deleted); }
+  #preview li.dropKey::before { background: var(--deleted); }
   #preview li.edit::before { background: var(--changed); }
   #preview li.add::before { background: var(--added); }
+  #preview li.addKey::before { background: var(--added); }
+  #preview li.move::before, #preview li.ai::before { background: var(--changed); }
   .what { margin: 2px 0 6px; font-weight: 600; }
   .what code { font-family: var(--mono); font-weight: 500; }
   .sql { margin: 0; padding: 8px 10px; border-radius: 4px; overflow-x: auto; white-space: pre; font-family: var(--mono); font-size: var(--vscode-editor-font-size, 12px);
@@ -170,7 +176,8 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
 const vscode = acquireVsCodeApi();
 const readOnly = ${readOnly ? 'true' : 'false'};
 const mode = '${mode}';
-let tables = [], schemas = [], fkActions = [], fkCols = {}, openFk = -1, canAi = true, canFk = true;
+let tables = [], schemas = [], fkActions = [], aiTypes = [], fkCols = {}, openFk = -1, canAi = true, canFk = true;
+let keys = false, reorder = false, aiExisting = true, schema = '', orderNote = '', fkTablesRequested = false, fkSnapshot;
 const fkKey = (fk) => fk.schema + '.' + fk.table;
 const CUSTOM = '\\u0000custom';
 let orig = [], rows = [], info = { columns: [], rows: [] }, types = [], newType = '', timer;
@@ -183,7 +190,12 @@ function split(type) {
   const s = m && spec(m[1].toLowerCase());
   return s ? { base: s.name, args: s.args === 'values' ? (m[2] || '').trim() : (m[2] || '').replace(/\\s+/g, ''), known: true } : { base: type || '', args: '', known: false };
 }
-const same = (r) => { const o = orig.find((c) => c.name === r.orig); return o && o.name === r.name && o.type === r.type && o.nullable === r.nullable && (o.default || '') === (r.default || ''); };
+const sameFk = (a, b) => (!a && !b) || (!!a && !!b && ['schema', 'table', 'column', 'onDelete', 'onUpdate'].every((k) => (a[k] || '') === (b[k] || '')));
+const same = (r) => {
+  const o = orig.find((c) => c.name === r.orig);
+  return o && o.name === r.name && o.type === r.type && o.nullable === r.nullable && (o.default || '') === (r.default || '')
+    && !!o.pk === !!r.pk && !!o.ai === !!r.ai && !!o.unique === !!r.unique && sameFk(o.fk, r.fk);
+};
 const cls = (r) => (r.deleted ? 'deleted' : !r.orig ? (mode === 'create' ? '' : 'added') : same(r) ? '' : 'changed');
 const hint = { length: (s) => '1-' + s.max + (s.allowMax ? ', max' : ''), precisionScale: () => 'p,s', precision: (s) => '1-' + s.max, scale: (s) => '0-' + s.max, values: () => "'a','b'" };
 
@@ -198,29 +210,40 @@ function typeCell(r, dis) {
     : s && s.args ? '<input type="text" class="size" data-k="size" value="' + h(t.args) + '" placeholder="' + hint[s.args](s) + '" aria-label="Size of ' + h(s.name) + '"' + dis + '>' : '';
   return '<div class="type"><select data-k="base" aria-label="Data type"' + dis + '>' + opts + '</select>' + extra + '</div>';
 }
-function attrs(extra) {
-  return info.columns.map((k, j) => {
+function attrs(extra, r, includePk = true) {
+  return (includePk && r.pk ? '<span class="badge key">Primary key</span>' : '') + info.columns.map((k, j) => {
     const v = extra[j];
     if (v === null || v === undefined || v === '') return '';
-    if (k === 'primary_key') return '<span class="badge key">Primary key</span>';
+    if (k === 'primary_key') return r.pk ? '' : '<span class="badge key">Primary key</span>';
     if (k === 'identity') return '<span class="badge gen" title="seed, increment">Identity ' + h(v) + '</span>';
+    if (k === 'identity_mode') return '<span class="badge gen">identity ' + h(v) + '</span>';
     if (k === 'computed') return '<span class="badge gen" title="' + h(v) + '">Computed</span>';
     if (k === 'collation') return '<span class="badge" title="Collation">' + h(v) + '</span>';
+    if (k === 'keys') return '<span class="badge">' + h(v) + '</span>';
     return '<span class="badge">' + h(k) + ': ' + h(v) + '</span>';
   }).join('');
 }
 // New Table: chip atribut PK / AI / UQ / FK (FK membuka baris editor di bawahnya)
 function chips(r, i, lock) {
-  const chip = (k, label, on, title) => '<button class="chip' + (k === 'fk' ? ' fk' : '') + '" data-chip="' + k + '" data-i="' + i + '" aria-pressed="' + !!on + '" title="' + title + '"' + lock + '>' + label + '</button>';
+  const chip = (k, label, on, title) => {
+    const ruleDisabled = k === 'ai' && !!r.orig && !aiExisting;
+    const titleText = ruleDisabled ? 'Identity cannot be added to or removed from an existing column on SQL Server' : title;
+    return '<button class="chip' + (k === 'fk' ? ' fk' : '') + '" data-chip="' + k + '" data-i="' + i + '" aria-pressed="' + !!on
+      + '" aria-disabled="' + (lock || ruleDisabled ? 'true' : 'false') + '" title="' + h(titleText) + '"' + (lock ? ' disabled' : '') + '>' + label + '</button>';
+  };
+  const target = r.fk && r.fk.table
+    ? 'FK → ' + (r.fk.schema && r.fk.schema !== (mode === 'create' ? $('tableSchema')?.value : schema) ? h(r.fk.schema + '.') : '')
+      + h(r.fk.table + '.' + (r.fk.column || '?'))
+    : 'FK…';
   return chip('pk', 'PK', r.pk, 'Primary key') + (canAi ? chip('ai', 'AI', r.ai, 'Auto increment / identity') : '') + chip('uq', 'UQ', r.unique, 'Unique')
-    + (canFk ? chip('fk', r.fk && r.fk.table ? 'FK → ' + h(r.fk.table + '.' + (r.fk.column || '?')) : 'FK…', !!r.fk, 'Foreign key') : '');
+    + (canFk ? chip('fk', target, !!r.fk, 'Foreign key') : '');
 }
 function fkRow(r, i) {
   const fk = r.fk || {};
   const opt = (v, label, sel) => '<option value="' + h(v) + '"' + (sel ? ' selected' : '') + '>' + h(label) + '</option>';
   const cols = fkCols[fkKey(fk)] || [];
   const act = (k) => '<select data-fk="' + k + '" aria-label="' + (k === 'onDelete' ? 'On delete' : 'On update') + '">' + fkActions.map((a) => opt(a, a, (fk[k] || fkActions[0]) === a)).join('') + '</select>';
-  return '<tr class="fkrow" data-fkrow="' + i + '"><td colspan="8"><div class="fkedit"><b>Foreign key ' + h(r.name || '') + '</b>'
+  return '<tr role="group" aria-label="Foreign key for ' + h(r.name || '') + '" class="fkrow" data-fkrow="' + i + '"><td colspan="' + (reorder ? 9 : 8) + '"><div class="fkedit"><b>Foreign key ' + h(r.name || '') + '</b>'
     + '<label>references <select data-fk="table" aria-label="Referenced table">' + opt('', 'choose a table…', !fk.table) + tables.map((x) => opt(x.schema + '\u0000' + x.name, (x.schema ? x.schema + '.' : '') + x.name, fk.table === x.name && fk.schema === x.schema)).join('') + '</select></label>'
     + '<label>column <select data-fk="column" aria-label="Referenced column">' + opt('', fk.table && !cols.length ? 'loading…' : 'choose a column…', !fk.column) + cols.map((c) => opt(c, c, fk.column === c)).join('') + '</select></label>'
     + '<label>on delete ' + act('onDelete') + '</label><label>on update ' + act('onUpdate') + '</label>'
@@ -230,20 +253,24 @@ function row(r, i) {
   const lock = readOnly || r.deleted ? ' disabled' : '';
   const gen = lock || (r.generated ? ' disabled' : ''); // identity / computed: hanya nama
   const extra = r.orig ? info.rows[orig.findIndex((c) => c.name === r.orig)] || [] : [];
-  return '<tr data-i="' + i + '" class="' + cls(r) + '"><td class="mark"></td><td class="num">' + (i + 1) + '</td>'
+  const grip = reorder ? '<td class="gripCell"><button class="grip" data-grip aria-label="Move ' + h(r.name) + '" title="Drag, or Alt+↑ / Alt+↓"'
+    + (lock ? ' disabled aria-disabled="true"' : '') + '>⋮⋮</button></td>' : '';
+  const attributeHtml = mode === 'create' || keys
+    ? chips(r, i, lock) + (mode === 'create' ? '' : attrs(extra, r, false)) : attrs(extra, r);
+  return '<tr data-i="' + i + '" class="' + cls(r) + '">' + grip + '<td class="mark"></td><td class="num">' + (i + 1) + '</td>'
     + '<td><input type="text" class="name" data-k="name" value="' + h(r.name) + '" placeholder="column_name" aria-label="Column name"' + lock + '></td>'
     + '<td>' + typeCell(r, gen) + '</td>'
     + '<td><label class="switch" title="' + (r.pk ? 'Primary key columns are NOT NULL' : 'NOT NULL') + '"><input type="checkbox" data-k="notnull" aria-label="Not null"' + (r.nullable && !r.pk ? '' : ' checked') + (gen || (r.pk ? ' disabled' : '')) + '><span></span></label></td>'
     + '<td><input type="text" class="dflt" data-k="default" value="' + h(r.ai ? '' : r.default) + '" placeholder="' + (r.ai ? 'auto increment' : 'none') + '" aria-label="Default value"' + (gen || (r.ai ? ' disabled' : '')) + '></td>'
-    + '<td><div class="attrs">' + (mode === 'create' ? chips(r, i, lock) : attrs(extra)) + '</div></td>'
+    + '<td><div class="attrs">' + attributeHtml + '</div></td>'
     + '<td>' + (readOnly ? '' : '<button class="x" data-del="' + i + '" title="' + (r.deleted ? 'Keep this column' : 'Delete column') + '" aria-label="' + (r.deleted ? 'Keep' : 'Delete') + ' ' + h(r.name || 'new column') + '">' + (r.deleted ? '↺' : '✕') + '</button>') + '</td></tr>';
 }
 function render() {
-  $('grid').innerHTML = '<table><thead><tr><th></th><th>#</th><th>Name</th><th>Data type</th><th>Not null</th><th>Default</th><th>Attributes</th><th></th></tr></thead><tbody>'
+  $('grid').innerHTML = '<table><thead><tr>' + (reorder ? '<th></th>' : '') + '<th></th><th title="' + (!reorder ? h(orderNote) : '') + '">#</th><th>Name</th><th>Data type</th><th>Not null</th><th>Default</th><th>Attributes</th><th></th></tr></thead><tbody>'
     + rows.map((r, i) => row(r, i) + (i === openFk ? fkRow(r, i) : '')).join('') + '</tbody></table>';
   if (mode === 'create') { $('summary').innerHTML = '<b>' + rows.length + '</b> column' + (rows.length === 1 ? '' : 's'); return; }
-  const keys = info.rows.filter((x) => x[info.columns.indexOf('primary_key')]).length;
-  $('summary').innerHTML = '<b>' + orig.length + '</b> column' + (orig.length === 1 ? '' : 's') + (keys ? ', <b>' + keys + '</b> in the primary key' : '');
+  const pkCount = orig.filter((c) => c.pk).length;
+  $('summary').innerHTML = '<b>' + orig.length + '</b> column' + (orig.length === 1 ? '' : 's') + (pkCount ? ', <b>' + pkCount + '</b> in the primary key' : '');
 }
 const table = () => (mode === 'create' ? { schema: $('tableSchema').value, name: $('tableName').value } : undefined);
 const send = (type) => vscode.postMessage({ type, rows, table: table() });
@@ -275,7 +302,7 @@ $('grid').addEventListener('change', (e) => { if (e.target.dataset.k === 'base' 
 function onFk(e) {
   const el = e.target, r = rows[openFk];
   if (!r || e.type !== 'change') return;
-  const fk = r.fk = r.fk || { schema: '', table: '', column: '' };
+  const fk = r.fk = r.fk ? { ...r.fk } : { schema: '', table: '', column: '' };
   if (el.dataset.fk === 'table') {
     const [schema, name] = el.value.split('\u0000');
     Object.assign(fk, { schema: schema || '', table: name || '', column: '' });
@@ -284,15 +311,41 @@ function onFk(e) {
   render(); changed();
   document.querySelector('[data-fk="' + (el.dataset.fk === 'table' ? 'column' : el.dataset.fk) + '"]')?.focus();
 }
+function moveRow(from, to, target) {
+  if (!reorder || from < 0 || to < 0 || to >= rows.length || from === to) return;
+  const active = target.closest('[data-k], [data-chip]') || target;
+  const selector = active.dataset.k ? '[data-k="' + active.dataset.k + '"]'
+    : active.dataset.chip ? '[data-chip="' + active.dataset.chip + '"]' : '.grip';
+  const [moved] = rows.splice(from, 1);
+  rows.splice(to, 0, moved);
+  openFk = -1; fkSnapshot = undefined;
+  render(); changed();
+  $('live').textContent = moved.name + (to === 0 ? ' moved to first' : ' moved after ' + rows[to - 1].name);
+  document.querySelector('tr[data-i="' + to + '"] ' + selector)?.focus();
+}
 $('grid').addEventListener('click', (e) => {
   const c = e.target.closest('[data-chip]'), a = e.target.closest('[data-fkact]');
   if (c || a) {
+    if (c && c.getAttribute('aria-disabled') === 'true') return;
     const i = +(c || a).dataset.i, r = rows[i];
-    if (a) { if (a.dataset.fkact === 'remove') delete r.fk; openFk = -1; }
-    else if (c.dataset.chip === 'fk') { openFk = openFk === i ? -1 : i; if (!r.fk) r.fk = { schema: '', table: '', column: '' }; }
+    if (a) {
+      if (a.dataset.fkact === 'remove') delete r.fk;
+      openFk = -1; fkSnapshot = undefined;
+    }
+    else if (c.dataset.chip === 'fk') {
+      if (openFk === i) { openFk = -1; fkSnapshot = undefined; }
+      else {
+        openFk = i; fkSnapshot = r.fk ? { ...r.fk } : undefined;
+        if (mode === 'edit' && !tables.length && !fkTablesRequested) {
+          fkTablesRequested = true;
+          vscode.postMessage({ type: 'fkTables' });
+        }
+      }
+    }
     else if (c.dataset.chip === 'pk') r.pk = !r.pk;
     else if (c.dataset.chip === 'ai') { r.ai = !r.ai; if (r.ai) r.default = ''; }
     else if (c.dataset.chip === 'uq') r.unique = !r.unique;
+    if (a && a.dataset.fkact === 'done') fkSnapshot = undefined;
     render(); changed();
     document.querySelector(a ? '[data-chip="fk"][data-i="' + i + '"]' : openFk === i && c.dataset.chip === 'fk' ? '[data-fk="table"]' : '[data-chip="' + c.dataset.chip + '"][data-i="' + i + '"]')?.focus();
     return;
@@ -314,7 +367,39 @@ $('refresh')?.addEventListener('click', () => vscode.postMessage({ type: 'refres
 $('revert')?.addEventListener('click', () => { rows = orig.map((c) => ({ ...c, orig: c.name })); render(); changed(); });
 $('tableName')?.addEventListener('input', changed);
 $('tableSchema')?.addEventListener('change', changed);
-$('grid').addEventListener('keydown', (e) => { if (e.key === 'Escape' && openFk >= 0) { const i = openFk; openFk = -1; render(); document.querySelector('[data-chip="fk"][data-i="' + i + '"]')?.focus(); } });
+$('grid').addEventListener('pointerdown', (e) => {
+  const grip = e.target.closest('.grip'), tr = grip && grip.closest('tr[data-i]');
+  if (!reorder || !grip || grip.disabled || !tr) return;
+  grip.setPointerCapture(e.pointerId);
+  grip.dataset.drag = tr.dataset.i;
+});
+$('grid').addEventListener('pointerup', (e) => {
+  const grip = e.target.closest('.grip');
+  if (!grip || grip.dataset.drag === undefined) return;
+  const from = +grip.dataset.drag;
+  delete grip.dataset.drag;
+  const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest('tr');
+  const to = hit?.dataset.i !== undefined ? +hit.dataset.i : hit?.dataset.fkrow !== undefined ? +hit.dataset.fkrow : -1;
+  moveRow(from, to, grip);
+});
+$('grid').addEventListener('pointercancel', (e) => { const grip = e.target.closest('.grip'); if (grip) delete grip.dataset.drag; });
+$('grid').addEventListener('keydown', (e) => {
+  if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    if (!reorder) return;
+    const tr = e.target.closest('tr[data-i]');
+    if (!tr) return;
+    e.preventDefault();
+    moveRow(+tr.dataset.i, +tr.dataset.i + (e.key === 'ArrowUp' ? -1 : 1), e.target);
+    return;
+  }
+  if (e.key === 'Escape' && openFk >= 0) {
+    const i = openFk, r = rows[i];
+    if (fkSnapshot) r.fk = { ...fkSnapshot }; else delete r.fk;
+    openFk = -1; fkSnapshot = undefined;
+    render(); changed();
+    document.querySelector('[data-chip="fk"][data-i="' + i + '"]')?.focus();
+  }
+});
 $('openSql').addEventListener('click', () => send('open'));
 $('execute')?.addEventListener('click', () => send('execute'));
 
@@ -330,9 +415,9 @@ $('splitter').addEventListener('pointerdown', (e) => {
 });
 $('splitter').addEventListener('keydown', (e) => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); setH(pending.offsetHeight + (e.key === 'ArrowUp' ? 24 : -24)); } });
 
-const KW = /\\b(ALTER|TABLE|ADD|DROP|COLUMN|CONSTRAINT|DEFAULT|FOR|EXEC|DECLARE|SELECT|FROM|WHERE|AND|IF|IS|NOT|NULL|BEGIN|END|SET|CHANGE|MODIFY|RENAME|TO|TYPE|USING|CREATE|INSERT|INTO|PRAGMA|COMMIT|PRIMARY|KEY|UNIQUE|FOREIGN|REFERENCES|IDENTITY|ON|DELETE|UPDATE|CASCADE|NO|ACTION)\\b/g;
+const KW = /\\b(ALTER|TABLE|ADD|DROP|COLUMN|CONSTRAINT|DEFAULT|FOR|EXEC|DECLARE|SELECT|FROM|WHERE|AND|IF|IS|NOT|NULL|BEGIN|END|SET|CHANGE|MODIFY|RENAME|TO|TYPE|USING|CREATE|INSERT|INTO|PRAGMA|COMMIT|PRIMARY|KEY|UNIQUE|FOREIGN|REFERENCES|IDENTITY|ON|DELETE|UPDATE|CASCADE|NO|ACTION|AFTER|FIRST|AUTO_INCREMENT|INDEX|GENERATED|BY|AS|TRANSACTION|XACT_ABORT|NOEXEC|GO)\\b/g;
 const sqlHtml = (s) => h(s).replace(/(N?'(?:[^']|'')*')|\\b([A-Z_]+)\\b/g, (m, str, w) => str ? '<span class="str">' + str + '</span>' : (KW.lastIndex = 0, KW.test(w) ? '<span class="kw">' + w + '</span>' : w));
-const what = (s) => s.kind === 'create' ? 'Create table <code>' + h(s.column) + '</code>'
+const what = (s) => s.title ? h(s.title) : s.kind === 'create' ? 'Create table <code>' + h(s.column) + '</code>'
   : s.kind === 'rebuild' ? 'Rebuild table <code>' + h(s.column) + '</code> (copy data to a new table)'
   : s.kind === 'drop' ? 'Delete <code>' + h(s.column) + '</code>'
   : s.kind === 'add' ? 'Add <code>' + h(s.column) + '</code>'
@@ -342,13 +427,17 @@ window.addEventListener('message', ({ data: m }) => {
   if (m.type === 'load') {
     orig = m.cols; info = m.info; types = m.types || []; newType = m.newType || '';
     rows = mode === 'create' ? m.rows : orig.map((c) => ({ ...c, orig: c.name }));
+    keys = !!m.keys; reorder = !!m.reorder; aiExisting = !!m.aiExisting; aiTypes = m.aiTypes || [];
+    fkActions = m.fkActions || []; schema = m.schema || ''; orderNote = m.orderNote || '';
+    tables = m.tables || []; fkTablesRequested = false; fkSnapshot = undefined;
+    if (reorder && !$('live')) document.body.insertAdjacentHTML('beforeend', '<div id="live" aria-live="polite" class="sr"></div>');
     if (mode === 'create') {
-      tables = m.tables || []; schemas = m.schemas || []; fkActions = m.fkActions || [];
+      schemas = m.schemas || [];
       // driver tanpa auto increment / foreign key (MongoDB): chip AI / FK disembunyikan
       canAi = m.ai !== false; canFk = m.fk !== false;
       $('tableSchema').innerHTML = schemas.map((x) => '<option' + (x === m.defaultSchema ? ' selected' : '') + '>' + h(x) + '</option>').join('');
       $('tableSchema').hidden = !schemas.length;
-    }
+    } else { canAi = aiTypes.length > 0; canFk = fkActions.length > 0; }
     render(); status(''); changed();
   } else if (m.type === 'script') {
     $('preview').innerHTML = m.steps.length ? m.steps.map((s) => '<li class="' + s.kind + '"><p class="what">' + what(s) + '</p>'
@@ -359,7 +448,8 @@ window.addEventListener('message', ({ data: m }) => {
     if ($('execute')) $('execute').disabled = !m.count;
     $('openSql').disabled = !m.count;
     if ($('revert')) $('revert').disabled = !m.count && !m.errors.length;
-  } else if (m.type === 'fkColumns') { fkCols[m.key] = m.columns; render(); }
+  } else if (m.type === 'fkTables') { tables = m.tables || []; render(); }
+  else if (m.type === 'fkColumns') { fkCols[m.key] = m.columns; render(); }
   else if (m.type === 'status') status(m.text, m.error);
 });
 vscode.postMessage({ type: 'ready' });

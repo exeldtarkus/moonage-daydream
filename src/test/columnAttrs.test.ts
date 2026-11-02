@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import { checkRows, columnChanges, columnsConfirm, drivers, execScript, moveSteps, showColumns, type ColumnDdl, type ColumnDef,
   type ColumnRow, type DbObject, type NewColumn, type QueryResult, type Session } from '../db';
 import { splitBatches } from '../mssql';
+import { columnsHtml } from '../columnsHtml';
 
 const COLS = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'ai', 'primary_key', 'pk_name', 'uq_name', 'uq_index',
   'fk_name', 'fk_schema', 'fk_table', 'fk_column', 'fk_delete', 'fk_update', 'gen', 'keys'];
@@ -509,4 +510,28 @@ test('PostgreSQL drops key constraints before a deleted key column and restores 
     'Add primary key PK_or"ders (id)',
   ]);
   for (const step of result.steps) assert.doesNotMatch(step.sql, /DROP[^;]*CASCADE/);
+});
+
+test('columns page: edit mode reuses chips and FK row when keys are editable', () => {
+  const h = columnsHtml('csp', { conn: 'l', db: 'shop', table: 'order_item' }, false);
+  for (const fragment of ['mode === \'create\' || keys', 'aria-disabled', 'Identity cannot be added to or removed from an existing column on SQL Server',
+    'role="group"', 'Foreign key for ', "type: 'fkTables'"]) {
+    assert.ok(h.includes(fragment), `Missing ${fragment}`);
+  }
+});
+
+test('columns page: grip, Alt+arrows, and live region are gated by reorder capability', () => {
+  const h = columnsHtml('csp', { conn: 'l', db: 'shop', table: 'order_item' }, false);
+  for (const fragment of ['class="grip"', 'Drag, or Alt+↑ / Alt+↓', 'aria-live="polite"', 'e.altKey', 'if (!reorder)']) {
+    assert.ok(h.includes(fragment), `Missing ${fragment}`);
+  }
+});
+
+test('columns page: read-only disables chips and grips', () => {
+  const h = columnsHtml('csp', { conn: 'l', db: 'shop', table: 'order_item' }, true);
+  assert.ok(h.includes('const readOnly = true'));
+  assert.ok(!h.includes('id="execute"'));
+  assert.ok(h.includes('class="grip"'));
+  assert.ok(h.includes('data-chip='));
+  assert.ok(h.includes('lock'));
 });
