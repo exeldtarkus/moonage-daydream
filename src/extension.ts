@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnRow, ConnectionInfo, Driver, NewColumn, TableKey, createTable, readKeys, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ConnectionInfo, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -16,29 +16,29 @@ import { CONN_COLORS, colorLabel, isConnColor } from './connColor';
 import type { ConnColor } from './connColor';
 import { formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
-import { columnsHtml } from './columnsHtml';
 import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
 import { DB_INFO_PARTS, dbInfoHtml, type PartResult } from './dbInfo';
 import { newObjectTemplates } from './msTemplates';
 import { objectTemplates } from './objTemplates';
-import { mongoChanges, mongoFindCollection } from './mongo';
+import { mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
-import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, changeStatements, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
-import { monitorKit } from './monitorKits';
-import { ConsulFs, backupWriter, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
-import { ConsulClient, consulTarget, dashboardData, deleteKv, detectFormat, kvChildren, saveKv } from './consul';
-import { consulDashboardHtml } from './consulDashHtml';
-import { monitorHtml } from './monitorHtml';
-import { permissionHint } from './mssqlTree';
+import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
+import { ConsulClient, consulTarget } from './consul';
 import { importDbcode } from './connString';
 import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
-import { ttlCache } from './memo';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
+import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
+import { columnsEditor, newTable } from './tablePanels';
+import { consulDashboard } from './consulDashboard';
+import { liveMonitor } from './monitorPanel';
+// tetap diekspor dari extension: dipakai test real lewat modul extension
+export { editScript, loadMore, saveGrid };
 
-let log: vscode.LogOutputChannel;
+export let log: vscode.LogOutputChannel;
 export let conns: Connections;
 let status: vscode.StatusBarItem;
 export let results: Results;
@@ -61,7 +61,7 @@ const LINT_SOURCE = 'Moonage';
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : String(e));
 
-let extCtx: vscode.ExtensionContext;
+export let extCtx: vscode.ExtensionContext;
 
 export function activate(ctx: vscode.ExtensionContext) {
   extCtx = ctx;
@@ -449,7 +449,7 @@ const sqlUri = () => {
 };
 
 /** koneksi untuk file: binding file, kalau belum ada pakai koneksi aktif; database binding menimpa default koneksi */
-function fileConn(uri: vscode.Uri | undefined): ConnectionInfo | undefined {
+export function fileConn(uri: vscode.Uri | undefined): ConnectionInfo | undefined {
   const b = uri && conns.binding(uri.toString());
   const c = conns.get(b?.conn ?? conns.active);
   return c && b?.db ? { ...c, database: b.db } : c;
@@ -694,7 +694,7 @@ async function pickConnection(title: string): Promise<ConnectionInfo | undefined
  * Script edit / run dengan parameter tidak pernah dijalankan otomatis.
  */
 /** tab SQL baru terikat ke koneksi + database; run = langsung dijalankan (query baca: activity / info) */
-async function openScript(c: ConnectionInfo, db: string, content: string, run = false) {
+export async function openScript(c: ConnectionInfo, db: string, content: string, run = false) {
   const doc = await vscode.workspace.openTextDocument({ language: 'sql', content });
   await conns.bind(doc.uri.toString(), { conn: c.name, db });
   await vscode.window.showTextDocument(doc, { preview: false });
@@ -728,103 +728,6 @@ async function scriptAsCommand(n?: Node) {
   }
 }
 
-/** editor Columns per tabel (satu tab per koneksi / database / tabel) */
-const columnPanels = new Map<string, vscode.WebviewPanel>();
-
-async function fkColumnList(d: Driver, c: ConnectionInfo, pw: string, db: string, schema: string, name: string): Promise<string[]> {
-  const obj = { schema, name };
-  const [cols, pk] = await Promise.all([d.columns(c, pw, db, obj), d.primaryKey(c, pw, db, obj)]);
-  const pkSet = new Set(pk);
-  return [
-    ...pk.filter((column) => cols.some((c) => c.name === column)),
-    ...cols.map((c) => c.name).filter((name) => !pkSet.has(name)),
-  ];
-}
-
-/**
- * klik kanan tabel -> Columns: grid kolom bisa diedit, script ALTER tampil di SQL preview (seperti DBeaver);
- * Execute menjalankan script setelah konfirmasi, Open in SQL Editor = tab SQL tanpa dijalankan.
- */
-function columnsEditor(n?: Node) {
-  if (n?.kind !== 'obj' || !drivers[n.c.type].columnDdl) return;
-  const { c: conn, db, obj } = n;
-  const d = drivers[conn.type];
-  const ddl = d.columnDdl!;
-  const table = `${obj.schema ? `${obj.schema}.` : ''}${obj.name}`;
-  const key = `${conn.name}\u0000${db}\u0000${table}`;
-  const open = columnPanels.get(key);
-  if (open) return open.reveal();
-  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.columns', `Columns: ${table}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
-  columnPanels.set(key, panel);
-  panel.onDidDispose(() => columnPanels.delete(key));
-  panel.webview.html = columnsHtml(panel.webview.cspSource, { conn: conn.name, db, table }, !!conn.readOnly);
-  const c = { ...conn, database: db }; // script memakai nama dua bagian: dijalankan di database tabel
-  let original: ColumnRow[] = [];
-  let originalKeys: TableKey[] = [];
-  let info: ReturnType<typeof showColumns>['info'] = { columns: [], rows: [] };
-  const post = (m: unknown) => void panel.webview.postMessage(m);
-  async function load() {
-    try {
-      post({ type: 'status', text: 'Loading…' });
-      const rs = (await d.run(c, await conns.password(conn.name), ddl.show(obj))).resultSets[0];
-      const shown = showColumns(rs ?? { columns: [], rows: [] });
-      const { cols } = shown;
-      original = cols;
-      info = shown.info;
-      // key lebih dari satu kolom untuk tabel Keys (driver tanpa query keys: kosong)
-      originalKeys = ddl.keys ? readKeys((await d.run(c, await conns.password(conn.name), ddl.keys(obj))).resultSets[0] ?? { columns: [], rows: [] }) : [];
-      post({ type: 'load', cols, info, tableKeys: originalKeys, keysTable: !!ddl.keys, types: ddl.types, newType: ddl.newType, keys: !!ddl.addPk, reorder: !!ddl.move,
-        aiExisting: !!ddl.setAi, aiTypes: ddl.aiTypes ?? [], fkActions: ddl.fkActions ?? [], schema: obj.schema,
-        orderNote: ddl.addPk && !ddl.move ? `Column order cannot be changed on ${d.label} (needs a table rebuild)` : '' });
-    } catch (e) {
-      log.error(`columnsEditor load - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${table}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      post({ type: 'status', text: `Load failed: ${errMsg(e)}`, error: true });
-    }
-  }
-  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[]; tableKeys?: TableKey[]; schema?: string; name?: string }) => {
-    if (m.type === 'ready' || m.type === 'refresh') return load();
-    if (m.type === 'fkTables') {
-      try {
-        const tables = await d.objects(c, await conns.password(conn.name), db, 'table');
-        return post({ type: 'fkTables', tables });
-      } catch (e) {
-        log.error(`columnsEditor fkTables - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        return post({ type: 'status', text: `Could not list tables for foreign keys: ${errMsg(e)}`, error: true });
-      }
-    }
-    if (m.type === 'fkColumns') {
-      try {
-        const columns = await fkColumnList(d, c, await conns.password(conn.name), db, m.schema ?? '', m.name ?? '');
-        return post({ type: 'fkColumns', key: `${m.schema ?? ''}.${m.name ?? ''}`, columns });
-      } catch (e) {
-        log.error(`columnsEditor fkColumns - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${m.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        return post({ type: 'status', text: `Could not read columns of ${m.name}: ${errMsg(e)}`, error: true });
-      }
-    }
-    // pesan tanpa tableKeys (UI lama) = key tidak berubah
-    const r = columnChanges(ddl, obj, original, m.rows ?? [], m.tableKeys ?? originalKeys, originalKeys);
-    if (m.type === 'change') return post({ type: 'script', ...r });
-    if (!r.sql) return;
-    if (m.type === 'open') return openScript(conn, db, r.sql);
-    if (m.type !== 'execute' || conn.readOnly) return;
-    const ok = await vscode.window.showWarningMessage(`Apply ${r.count} column change(s) to ${table} on ${conn.name} / ${db}?`,
-      { modal: true, detail: columnsConfirm(ddl, r.steps, m.rows ?? [], originalKeys) }, 'Execute');
-    if (!ok) return;
-    try {
-      post({ type: 'status', text: 'Executing…' });
-      await execScript(d, c, await conns.password(conn.name), r.sql, conn.type === 'mssql');
-      log.info(`columnsEditor execute: ${conn.name} / ${db} / ${table}: ${r.count} change(s)`);
-      gridMeta.clear(); // PK / kolom generated bisa berubah
-      await load();
-      post({ type: 'status', text: `Saved ${r.count} change(s)` });
-      explorer.refresh();
-    } catch (e) {
-      log.error(`columnsEditor execute - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${table}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      post({ type: 'status', text: `Execute failed: ${errMsg(e)}`, error: true });
-      showError(`Columns: execute failed: ${errMsg(e)}`);
-    }
-  });
-}
 
 /** SQL Server Agent: start / stop job setelah konfirmasi */
 async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
@@ -842,85 +745,6 @@ async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
   }
 }
 
-/** New Table per koneksi / database (dibuka lagi = tab yang sama di-reveal) */
-const newTablePanels = new Map<string, vscode.WebviewPanel>();
-
-/** klik kanan database / folder Tables -> New Table…: grid kolom + chip PK / AI / UQ / FK, script CREATE TABLE live, Create (konfirmasi) */
-function newTable(n?: Node) {
-  if (n?.kind !== 'db' && !(n?.kind === 'mfolder' && n.folder === 'tables') && !(n?.kind === 'folder' && n.objKind === 'table')) return;
-  const db = n.db;
-  if (!db) return;
-  // menu dipasang per kelompok koneksi (conn.live = MySQL / MariaDB / PostgreSQL): driver yang belum didukung diberi tahu
-  if (!drivers[n.c.type].columnDdl?.create) return void vscode.window.showInformationMessage(`New Table is not available for ${drivers[n.c.type].label} yet.`);
-  const conn = n.c;
-  const d = drivers[conn.type];
-  const ddl = d.columnDdl!;
-  const key = `${conn.name}\u0000${db}`;
-  const open = newTablePanels.get(key);
-  if (open) return open.reveal();
-  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.newTable', `New Table: ${db}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
-  newTablePanels.set(key, panel);
-  panel.onDidDispose(() => newTablePanels.delete(key));
-  panel.webview.html = columnsHtml(panel.webview.cspSource, { conn: conn.name, db, table: 'New table' }, !!conn.readOnly, 'create');
-  const c = { ...conn, database: db };
-  const post = (m: unknown) => void panel.webview.postMessage(m);
-  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: NewColumn[]; tableKeys?: TableKey[]; table?: { schema: string; name: string }; schema?: string; name?: string }) => {
-    if (m.type === 'ready') {
-      let tables: { schema: string; name: string }[] = [];
-      try {
-        tables = await d.objects(c, await conns.password(conn.name), db, 'table');
-      } catch (e) {
-        // daftar tabel untuk FK gagal: tabel tetap bisa dibuat, FK tidak bisa dipilih
-        log.error(`newTable tables - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        post({ type: 'status', text: `Could not list tables for foreign keys: ${errMsg(e)}`, error: true });
-      }
-      let schemas = [...new Set([d.defaultSchema, ...tables.map((x) => x.schema)].filter(Boolean))].sort();
-      if (d.schemas) {
-        try {
-          schemas = await d.schemas(c, await conns.password(conn.name), db);
-        } catch (e) {
-          // daftar schema dari server gagal (mis. izin): pakai schema dari tabel yang ada
-          log.error(`newTable schemas - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        }
-      }
-      const intType = ddl.aiTypes?.find((x) => /^int(eger)?$/.test(x)) ?? ddl.newType;
-      // tanpa auto increment (MongoDB): baris awal _id objectId
-      const first = !ddl.aiTypes && ddl.types.some((x) => x.name === 'objectId') ? { name: '_id', type: 'objectId' } : { name: 'id', type: intType };
-      return post({ type: 'load', cols: [], info: { columns: [], rows: [] }, types: ddl.types, newType: ddl.newType, tables, schemas, defaultSchema: d.defaultSchema,
-        fkActions: ddl.fkActions ?? [], ai: !!ddl.aiTypes, fk: !!ddl.fkActions, keysTable: !!ddl.fkActions, rows: [{ ...first, nullable: false, default: '', pk: true, ai: !!ddl.aiTypes }] });
-    }
-    if (m.type === 'fkColumns') {
-      try {
-        const columns = await fkColumnList(d, c, await conns.password(conn.name), db, m.schema ?? '', m.name ?? '');
-        return post({ type: 'fkColumns', key: `${m.schema ?? ''}.${m.name}`, columns });
-      } catch (e) {
-        log.error(`newTable fkColumns - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${m.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        return post({ type: 'status', text: `Could not read columns of ${m.name}: ${errMsg(e)}`, error: true });
-      }
-    }
-    const t = { schema: m.table?.schema ?? d.defaultSchema, name: m.table?.name ?? '' };
-    const r = createTable(ddl, t, m.rows ?? [], m.tableKeys ?? []);
-    const label = `${t.schema ? `${t.schema}.` : ''}${t.name.trim()}`;
-    if (m.type === 'change') return post({ type: 'script', ...r, count: r.sql ? 1 : 0, steps: r.sql ? [{ kind: 'create', column: label, sql: r.sql }] : [] });
-    if (!r.sql) return;
-    if (m.type === 'open') return openScript(conn, db, r.sql);
-    if (m.type !== 'execute' || conn.readOnly) return;
-    const ok = await vscode.window.showWarningMessage(`Create table ${label} on ${conn.name} / ${db}?`, { modal: true, detail: r.sql }, 'Create');
-    if (!ok) return;
-    try {
-      post({ type: 'status', text: 'Creating…' });
-      await d.run(c, await conns.password(conn.name), r.sql);
-      log.info(`newTable: ${conn.name} / ${db} / ${label}`);
-      explorer.refresh();
-      vscode.window.showInformationMessage(`Table ${label} created on ${conn.name} / ${db}.`);
-      panel.dispose();
-    } catch (e) {
-      log.error(`newTable execute - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      post({ type: 'status', text: `Create failed: ${errMsg(e)}`, error: true });
-      showError(`New Table failed: ${errMsg(e)}`);
-    }
-  });
-}
 
 /** tombol (+) folder SQL Server (procedure, function, trigger, type, sequence, view): template di tab baru, tidak dijalankan */
 async function newObject(n?: Node) {
@@ -1225,229 +1049,7 @@ async function killCommand(n?: Node) {
   }
 }
 
-/** Live Monitor (SQL Server): grafik + tabel dari MONITOR_SQL tiap interval; tidak menumpuk request, berhenti saat tab tersembunyi / ditutup */
-function liveMonitor(n?: Node) {
-  if (n?.kind !== 'conn' && n?.kind !== 'db') return;
-  const node = n;
-  const found = monitorKit(node.c.type);
-  if (!found) return void vscode.window.showInformationMessage(`Live Monitor is not available for ${drivers[node.c.type].label}`);
-  const kit = found; // tetap ter-narrow di dalam fungsi tick
-  // klik kanan database = monitoring database itu saja; koneksi = seluruh server
-  const db = node.kind === 'db' ? node.db : undefined;
-  const parts = kit.parts(db);
-  const title = db ? `${node.c.name} / ${db}` : node.c.name;
-  // SQL Server: DMV dibaca dari master; MySQL / PostgreSQL: database koneksi (statistik server tetap terbaca)
-  const c = node.c.type === 'mssql' ? { ...node.c, database: 'master' } : node.c;
-  const d = drivers[node.c.type];
-  const panel = trackPanel(node.c.name, vscode.window.createWebviewPanel('moonageDaydream.monitor', `Monitor: ${title}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
-  panel.webview.html = monitorHtml(panel.webview.cspSource, title, db !== undefined, kit);
-  let interval = 5000;
-  let paused = false;
-  let disposed = false;
-  let busy = false;
-  let timer: NodeJS.Timeout | undefined;
-  let prev: { res: Record<string, ResultSet[] | Error>; t: number } | undefined;
-  const schedule = () => {
-    if (!disposed && !timer) timer = setTimeout(tick, interval);
-  };
-  async function tick() {
-    timer = undefined;
-    if (disposed) return;
-    if (paused || !panel.visible || busy) return schedule(); // tersembunyi / pause: tidak ada query ke server
-    busy = true;
-    try {
-      const pw = await conns.password(node.c.name);
-      const res: Record<string, ResultSet[] | Error> = {};
-      for (const part of parts) {
-        try {
-          res[part.id] = (await d.run(c, pw, part.sql)).resultSets;
-        } catch (e) {
-          if (!part.optional) throw e;
-          // bagian opsional (performance_schema / pg_stat_statements tidak aktif): pesan di tab-nya, grafik tetap jalan
-          log.error(`liveMonitor ${part.id} - EXCEPTION CAUGHT | ${node.c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-          res[part.id] = e instanceof Error ? e : new Error(String(e));
-        }
-      }
-      const t = Date.now();
-      const s = kit.sample(res, t, prev, db);
-      prev = { res, t };
-      void panel.webview.postMessage({ type: 'sample', ...s });
-    } catch (e) {
-      log.error(`liveMonitor - EXCEPTION CAUGHT | ${node.c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'error', message: (node.c.type === 'mssql' && permissionHint('monitor', e)) || errMsg(e) });
-    } finally {
-      busy = false;
-      schedule();
-    }
-  }
-  const restart = () => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-    void tick();
-  };
-  panel.onDidChangeViewState(() => panel.visible && !paused && restart());
-  panel.onDidDispose(() => {
-    disposed = true;
-    if (timer) clearTimeout(timer);
-  });
-  panel.webview.onDidReceiveMessage(async (m: { type: string; ms?: number; paused?: boolean; id?: string; tab?: string }) => {
-    if (m.type === 'interval' && m.ms) {
-      interval = Math.min(60000, Math.max(1000, m.ms));
-      restart();
-    } else if (m.type === 'pause') {
-      paused = !!m.paused;
-      if (!paused) restart();
-    } else if (m.type === 'open' && m.tab && kit.query(m.tab, db)) {
-      await openScript(node.c, c.database, kit.query(m.tab, db)!, true);
-    } else if (m.type === 'kill' && m.id) {
-      const ok = await vscode.window.showWarningMessage(`Kill session ${m.id} on ${node.c.name}? Its open transaction is rolled back.`, { modal: true }, 'Kill');
-      if (!ok) return;
-      try {
-        await d.run(c, await conns.password(node.c.name), kit.kill(m.id));
-        log.info(`kill session ${m.id} (live monitor): ${node.c.name}`);
-        restart();
-      } catch (e) {
-        log.error(`liveMonitor kill - EXCEPTION CAUGHT | ${node.c.name} / ${m.id}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        showError(`Kill session failed: ${errMsg(e)}`);
-      }
-    }
-  });
-  void tick();
-}
 
-/** Consul Dashboard: ringkasan cluster (saat dibuka / Refresh) + KV (Key & Value): browse folder, view nilai & metadata, edit, save, add, delete */
-function consulDashboard(c: ConnectionInfo) {
-  const panel = trackPanel(c.name, vscode.window.createWebviewPanel('moonageDaydream.consulDashboard', `Consul: ${c.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
-  panel.webview.html = consulDashboardHtml(panel.webview.cspSource, c.database ? `${c.name} / ${c.database}` : c.name);
-  let cachedClient: ConsulClient | undefined;
-  const getClient = async () => {
-    if (!cachedClient) cachedClient = new ConsulClient(consulTarget(c), await conns.password(c.name));
-    return cachedClient;
-  };
-
-  async function cluster() {
-    try {
-      void panel.webview.postMessage({ type: 'cluster', data: await dashboardData(await getClient()) });
-    } catch (e) {
-      log.error(`consulDashboard cluster - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'clusterError', message: errMsg(e) });
-    }
-  }
-
-  /** KV browse: list folders + keys satu level di bawah prefix secara instan (1 request) */
-  async function kvBrowse(prefix: string) {
-    try {
-      const client = await getClient();
-      const allKeys = await client.keys(prefix);
-      const { folders, keys: leafKeys } = kvChildren(allKeys, prefix);
-      void panel.webview.postMessage({ type: 'kv', prefix, folders, keys: leafKeys.map((key) => ({ key, value: '' })) });
-    } catch (e) {
-      log.error(`consulDashboard kvBrowse - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'kvError', message: errMsg(e) });
-    }
-  }
-
-  /** KV get value: ambil satu key dengan metadata lengkap saat diklik */
-  async function kvGetValue(key: string) {
-    try {
-      const client = await getClient();
-      const entry = await client.get(key);
-      if (!entry) {
-        void panel.webview.postMessage({ type: 'kvValue', key, error: `Key "${key}" not found` });
-        return;
-      }
-      const format = detectFormat(entry.value);
-      const size = Buffer.byteLength(entry.value, 'utf8');
-      void panel.webview.postMessage({
-        type: 'kvValue', key: entry.key, value: entry.value, flags: entry.flags, modifyIndex: entry.modifyIndex, session: entry.session,
-        format, size: size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`,
-      });
-    } catch (e) {
-      log.error(`consulDashboard kvGetValue - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'kvValue', key, error: errMsg(e) });
-    }
-  }
-
-  /** KV save: simpan perubahan / buat key baru dengan validasi format, backup, dan CAS */
-  async function kvSave(key: string, value: string, cas: number, isNew?: boolean) {
-    if (c.readOnly) {
-      void panel.webview.postMessage({ type: 'kvSaveResult', success: false, key, error: `Connection "${c.name}" is read-only` });
-      return;
-    }
-    const ok = await vscode.window.showWarningMessage(`Save "${key}" to Consul?`, {
-      modal: true, detail: `${c.name}${c.database ? ` / ${c.database}` : ''}\n\n${isNew ? 'New key.' : 'The current value is backed up first.'} The change is applied at once (Consul has no transactions).`,
-    }, 'Save');
-    if (ok !== 'Save') {
-      void panel.webview.postMessage({ type: 'kvSaveResult', success: false, key, error: 'Save cancelled' });
-      return;
-    }
-    try {
-      const client = await getClient();
-      const r = await saveKv(client, key, value, cas, backupWriter(extCtx, c.name, key));
-      const updated = await client.get(key);
-      const size = Buffer.byteLength(value, 'utf8');
-      const format = detectFormat(value);
-      void panel.webview.postMessage({
-        type: 'kvSaveResult',
-        success: true,
-        key,
-        modifyIndex: updated?.modifyIndex ?? 0,
-        size: size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`,
-        format,
-        isNew: !!isNew,
-      });
-      explorer.refresh();
-      vscode.window.showInformationMessage(`Saved "${key}" to Consul.${r.backup ? ` Backup: ${r.backup}` : ''}`);
-    } catch (e) {
-      log.error(`consulDashboard kvSave - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      showError(`Save failed: ${errMsg(e)}`);
-      void panel.webview.postMessage({ type: 'kvSaveResult', success: false, key, error: errMsg(e) });
-    }
-  }
-
-  /** KV delete: hapus key setelah konfirmasi dan backup */
-  async function handleKvDelete(key: string) {
-    if (c.readOnly) {
-      vscode.window.showWarningMessage(`The connection "${c.name}" is read-only`);
-      return;
-    }
-    const ok = await vscode.window.showWarningMessage(`Delete key "${key}" from Consul?`, {
-      modal: true, detail: `${c.name}${c.database ? ` / ${c.database}` : ''}\n\nExisting value is backed up first (consul kv export format).`,
-    }, 'Delete');
-    if (ok !== 'Delete') return;
-    try {
-      const client = await getClient();
-      const r = await deleteKv(client, key, backupWriter(extCtx, c.name, key));
-      log.info(`consul dashboard delete ${c.name} / ${key}: backup ${r.backup ?? '-'}`);
-      vscode.window.showInformationMessage(`Deleted "${key}" from Consul.${r.backup ? ` Backup: ${r.backup}` : ''}`);
-      void panel.webview.postMessage({ type: 'kvDeleteResult', success: true, key });
-      explorer.refresh();
-    } catch (e) {
-      log.error(`consulDashboard kvDelete - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      showError(`Delete failed: ${errMsg(e)}`);
-      void panel.webview.postMessage({ type: 'kvDeleteResult', success: false, key, error: errMsg(e) });
-    }
-  }
-
-  panel.webview.onDidReceiveMessage((m: { type: string; prefix?: string; key?: string; value?: string; cas?: number; isNew?: boolean }) => {
-    if (m.type === 'cluster') {
-      void cluster();
-    } else if (m.type === 'kvBrowse') {
-      void kvBrowse(m.prefix ?? '');
-    } else if (m.type === 'kvGetValue' && m.key) {
-      void kvGetValue(m.key);
-    } else if (m.type === 'kvSave' && m.key !== undefined && m.value !== undefined) {
-      void kvSave(m.key, m.value, m.cas ?? 0, m.isNew);
-    } else if (m.type === 'kvDelete' && m.key) {
-      void handleKvDelete(m.key);
-    } else if (m.type === 'kvOpenEditor' && m.key) {
-      void openConsulKey(c, m.key).catch((e: unknown) => {
-        log.error(`consulDashboard kvOpenEditor - EXCEPTION CAUGHT | ${c.name} / ${m.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        showError(`Open key failed: ${errMsg(e)}`);
-      });
-    }
-  });
-}
 
 /** Backup / Restore (SQL Server): script di tab baru ke folder backup default server, dijalankan sendiri */
 async function backupCommand(n: Node | undefined, action: 'backup' | 'restore') {
@@ -1706,7 +1308,7 @@ let consulFs: ConsulFs;
 
 /** panel Live Monitor / Dashboard per koneksi (Disconnect menutupnya; koneksi dianggap connected selama ada) */
 const connPanels = new Map<string, Set<vscode.WebviewPanel>>();
-function trackPanel(conn: string, p: vscode.WebviewPanel): vscode.WebviewPanel {
+export function trackPanel(conn: string, p: vscode.WebviewPanel): vscode.WebviewPanel {
   const set = connPanels.get(conn) ?? new Set();
   connPanels.set(conn, set.add(p));
   p.onDidDispose(() => {
@@ -1842,7 +1444,7 @@ async function closeTx(key: string, tx: { session: Session }, how: 'commit' | 'r
 }
 
 /** sesi transaksi terbuka file key untuk Load more / Export All Data (lihat openSession) */
-const openTx = (key: string, c: ConnectionInfo) => openSession(txs.get(key), c, running.has(key));
+export const openTx = (key: string, c: ConnectionInfo) => openSession(txs.get(key), c, running.has(key));
 
 /** PostgreSQL: error di dalam transaksi -> transaksi aborted, semua statement ditolak sampai ROLLBACK */
 async function warnAborted(key: string) {
@@ -1983,201 +1585,6 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
 }
 
 /** alasan result set tidak bisa diedit (bukan error sistem): tombol edit dinonaktifkan dengan pesan ini */
-/** notifikasi error + tombol Show Log (detail lengkap ada di output channel "Moonage Daydream", sudah dicatat pemanggil) */
-function showError(message: string): void {
-  void vscode.window.showErrorMessage(message, 'Show Log').then((pick) => { if (pick) log.show(true); });
-}
-
-class NotEditable extends Error {}
-// metadata tabel untuk penanda edit grid (PK, schema, kolom generated): dipakai ulang 60 detik setelah SELECT; Save / script selalu baca ulang
-const gridMeta = ttlCache(60_000);
-
-/** tabel / koleksi asal result set yang diedit: SELECT satu tabel + primary key, atau find() satu koleksi MongoDB (_id) */
-async function gridTarget(m: ResultMessage, o = results.current?.outcome, cached = false) {
-  if (!o) throw new NotEditable('No result to edit');
-  const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
-  const single = part ? part.o : o;
-  if (!('result' in single)) throw new NotEditable('No result to edit');
-  const rs = single.result.resultSets[m.set ?? 0];
-  const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
-  const c = src && fileConn(vscode.Uri.parse(src.uri));
-  if (!rs || !src || !c) throw new NotEditable('Editing needs the result of a single SELECT');
-  const d = drivers[c.type];
-  if (src.mongo) {
-    const coll = mongoFindCollection(src.sql);
-    if (!coll) throw new NotEditable('Editing needs a find() on one collection');
-    if (!rs.columns.includes('_id')) throw new NotEditable('The _id field must be part of the result to edit documents');
-    const db = c.database || d.defaultDb;
-    return { c, d, pw: await conns.password(c.name), rs, src, pk: ['_id'], table: coll, label: `${db}.${coll}`, mongo: true, generated: [] as string[] };
-  }
-  if (!['mssql', 'mysql', 'postgres', 'sqlite'].includes(d.dialect)) throw new NotEditable(`Editing rows is not available for ${d.label} yet`);
-  const refs = tableRefs(src.sql);
-  if (refs.length !== 1) throw new NotEditable('Editing needs a SELECT from exactly one table (no JOIN)');
-  const parts = refs[0].parts;
-  const name = parts[parts.length - 1];
-  // MySQL: `db.tabel` (schema = database); lainnya `db.schema.tabel` / `schema.tabel`
-  const db = parts.length === 3 || (d.dialect === 'mysql' && parts.length === 2) ? parts[0] : c.database || d.defaultDb;
-  const pw = await conns.password(c.name);
-  const key = `${c.name}\u0000${db}\u0000`;
-  const schema = d.dialect === 'mysql' ? db : (parts.length >= 2 && parts[parts.length - 2])
-    || (await gridMeta.get(`${key}tables`, () => d.objects(c, pw, db, 'table'), !cached)).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
-  const tkey = `${key}${schema}\u0000${name}\u0000`;
-  const pk = await gridMeta.get(`${tkey}pk`, () => d.primaryKey(c, pw, db, { schema, name }), !cached);
-  if (!pk.length) throw new NotEditable(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
-  const q = d.quote;
-  const table = d.dialect === 'mssql' ? `${q(db)}.${q(schema)}.${q(name)}` : d.dialect === 'mysql' ? `${q(db)}.${q(name)}`
-    : d.dialect === 'postgres' ? `${q(schema)}.${q(name)}` : q(name);
-  if (!pk.every((k) => rs.columns.some((x) => k.toLowerCase() === x.toLowerCase()))) throw new NotEditable(`The primary key (${pk.join(', ')}) must be part of the SELECT to edit rows`);
-  // kolom generated / computed / identity: tidak boleh diisi di baris baru / diedit
-  const generated = (await gridMeta.get(`${tkey}cols`, () => d.columns(c, pw, db, { schema, name }), !cached)).filter((x) => x.generated).map((x) => x.name);
-  return { c, d, pw, rs, src, pk, table, label: `${db}.${schema}.${name}`, mongo: false, generated };
-}
-
-/**
- * setelah hasil tampil: result set yang tidak bisa diedit (atau koneksi read-only) diberi alasan -> tombol edit nonaktif + tooltip.
- * Error lain (mis. gagal membaca primary key) dicatat dan tombol tetap aktif: Save akan melaporkannya.
- */
-async function markEditable(o: Outcome) {
-  const singles = 'parts' in o ? o.parts.map((p, part) => ({ s: p.o, part })) : [{ s: o, part: undefined }];
-  let changed = false;
-  for (const { s, part } of singles) {
-    if (!('result' in s) || !s.result.resultSets.length) continue;
-    try {
-      const t = await gridTarget({ type: 'saveGrid', set: 0, part } as ResultMessage, o, true);
-      if (t.c.readOnly) throw new NotEditable(`${t.c.name} is a read-only connection`);
-      if (t.generated.length) {
-        s.genCols = t.generated;
-        changed = true;
-      }
-    } catch (e) {
-      if (!(e instanceof NotEditable)) {
-        log.error(`markEditable - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        continue;
-      }
-      s.editBlock = e.message;
-      changed = true;
-    }
-  }
-  if (changed && results.current?.outcome === o) results.refresh();
-}
-
-/**
- * Edit grid -> script UPDATE di tab baru (BEGIN TRAN, WHERE primary key); tidak pernah dijalankan otomatis.
- * Syarat: statement asal SELECT dari satu tabel yang punya primary key, kolom PK ikut di-SELECT.
- */
-export async function editScript(m: ResultMessage): Promise<vscode.TextDocument | undefined> {
-  if (!m.edits?.length) return;
-  try {
-    const t = await gridTarget(m);
-    const script = t.mongo ? mongoChanges(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, { edits: m.edits }).join('\n')
-      : updateScript(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, m.edits, t.d.quote, t.d.dialect);
-    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: script });
-    await conns.bind(doc.uri.toString(), { conn: t.c.name, db: t.c.database || undefined });
-    await vscode.window.showTextDocument(doc, { preview: false });
-    log.info(`edit script: ${m.edits.length} cell(s) on ${t.label}`);
-    return doc;
-  } catch (e) {
-    log.error(`editScript - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    showError(`Cannot generate UPDATE script: ${errMsg(e)}`);
-  }
-}
-
-/**
- * Save di grid: edit sel + hapus baris + baris baru jadi satu transaksi (gagal = rollback), setelah konfirmasi modal;
- * sukses = query asal dijalankan ulang. Mengembalikan true bila tersimpan.
- */
-export async function saveGrid(m: ResultMessage): Promise<boolean> {
-  const ch = { edits: m.edits ?? [], deletes: m.deletes ?? [], inserts: m.inserts ?? [] };
-  if (!ch.edits.length && !ch.deletes.length && !ch.inserts.length) return false;
-  let c: ConnectionInfo | undefined;
-  try {
-    const t = await gridTarget(m);
-    c = t.c;
-    if (c.readOnly) throw new Error(`${c.name} is read-only`);
-    const stmts = t.mongo ? mongoChanges(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, ch)
-      : changeStatements(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, ch, t.d.quote, t.d.dialect, t.generated);
-    if (!stmts.length) return false;
-    const how = t.mongo ? 'MongoDB has no transaction here: commands run one by one and stop at the first error (earlier ones stay saved).'
-      : 'One transaction; any error rolls everything back.';
-    const detail = `${t.label}: ${ch.edits.length ? `${new Set(ch.edits.map((e) => e.row)).size} row(s) updated, ` : ''}${new Set(ch.deletes).size} deleted, ${ch.inserts.length} inserted. ${how}\n\n${stmts.join('\n')}`;
-    const ok = await vscode.window.showWarningMessage(`Save changes to ${t.label} on ${c.name}?`, { modal: true, detail: detail.length > 4000 ? `${detail.slice(0, 4000)}\n…` : detail }, 'Save');
-    if (ok !== 'Save') return false;
-    if (t.mongo) {
-      // shortcut: tanpa transaksi (perlu replica set); perintah dijalankan berurutan, berhenti di error pertama
-      let done = 0;
-      try {
-        for (const st of stmts) {
-          await t.d.run(c, t.pw, st);
-          done++;
-        }
-      } catch (e) {
-        log.error(`saveGrid mongo - EXCEPTION CAUGHT | ${c.name}: ${done} of ${stmts.length} saved: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        showError(`Save stopped after ${done} of ${stmts.length} command(s): ${errMsg(e)}`);
-        await applyWhere('', m.part);
-        return false;
-      }
-      log.info(`saveGrid: ${t.label} ${stmts.length} command(s)`);
-      await applyWhere('', m.part);
-      return true;
-    }
-    const session = await t.d.session(c, t.pw);
-    try {
-      for (const st of stmts) await session.run(st);
-      await session.commit();
-    } catch (e) {
-      try {
-        await session.rollback();
-      } catch (re) {
-        log.error(`saveGrid rollback - EXCEPTION CAUGHT | ${c.name}: ${errMsg(re)} - stack-trace: ${errStack(re)}`);
-      }
-      throw e;
-    } finally {
-      await session.close();
-    }
-    log.info(`saveGrid: ${t.label} ${stmts.length} statement(s)`);
-    await applyWhere(t.src.where ?? '', m.part);
-    return true;
-  } catch (e) {
-    log.error(`saveGrid - EXCEPTION CAUGHT | ${c?.name ?? ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    showError(`Save failed (nothing was changed): ${errMsg(e)}`);
-    return false;
-  }
-}
-
-/**
- * Load more: statement asal (+ WHERE aktif) dijalankan ulang, baris yang sudah dimuat dilewati, PAGE_ROWS berikutnya ditambahkan.
- * shortcut: urutan baris hanya stabil dengan ORDER BY; tanpa itu SQL Server boleh mengembalikan urutan lain.
- */
-export async function loadMore(m: ResultMessage): Promise<number | undefined> {
-  const o = results.current?.outcome;
-  if (!o || m.set !== 0) return;
-  const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
-  const single = part ? part.o : o;
-  if (!('result' in single)) return;
-  const rs = single.result.resultSets[0];
-  const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
-  const c = src && fileConn(vscode.Uri.parse(src.uri));
-  if (!rs || !src || !c) return;
-  const offset = rs.rows.length;
-  try {
-    const sql = src.where ? addWhere(src.sql, src.where) : src.sql;
-    const tx = openTx(src.uri, c);
-    const next = (await (tx ? tx.run(sql, undefined, offset + PAGE_ROWS, offset)
-      : drivers[c.type].run(c, await conns.password(c.name), sql, undefined, offset + PAGE_ROWS, offset))).resultSets[0];
-    rs.rows.push(...(next?.rows ?? []));
-    if (rs.limited) {
-      rs.total = next?.total ?? rs.total; // auto limit: total = baris yang terbaca sejauh ini
-      rs.limited = next?.limited ? offset + PAGE_ROWS : undefined;
-    }
-    log.info(`load more: +${next?.rows.length ?? 0} rows (now ${rs.rows.length})`);
-    return next?.rows.length ?? 0;
-  } catch (e) {
-    log.error(`loadMore - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    showError(`Load more failed: ${errMsg(e)}`);
-  } finally {
-    results.refresh();
-  }
-}
 
 /** tombol Open XML di hasil plan: XML asli di tab baru */
 async function openPlanXml(outcome?: Outcome) {

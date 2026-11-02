@@ -20,9 +20,12 @@ test('every catch logs an ERROR, rethrows, or says in a comment why it is ignore
   assert.deepEqual(bad, []);
 });
 
-test('error notifications go through showError (with a Show Log button)', () => {
-  const ext = readFileSync(join(SRC, 'extension.ts'), 'utf8');
-  assert.match(ext, /function showError\(/);
-  assert.match(ext, /'Show Log'/);
-  assert.equal(ext.match(/vscode\.window\.showErrorMessage\(/g)?.length, 1, 'only inside showError');
+test('every error notification has a Show Log button', () => {
+  const bad: string[] = [];
+  for (const f of files) {
+    readFileSync(join(SRC, f), 'utf8').split('\n').forEach((line, i) => {
+      if (line.includes('showErrorMessage(') && !line.includes("'Show Log'")) bad.push(`${f}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(bad, []);
 });
