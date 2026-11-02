@@ -273,7 +273,7 @@ export function sqlFilesDnd(sqlFiles: SqlFiles, conns: Connections, log: vscode.
         await moveSqlNodes(sqlFiles, conns, nodes, target);
       } catch (e) {
         log.error(`sqlFilesDnd.handleDrop - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
-        vscode.window.showErrorMessage(`Move failed: ${e instanceof Error ? e.message : e}`);
+        void vscode.window.showErrorMessage(`Move failed: ${e instanceof Error ? e.message : e}`, 'Show Log').then((pick) => { if (pick) log.show(true); });
       }
     },
   };

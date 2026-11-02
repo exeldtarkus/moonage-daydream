@@ -148,7 +148,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         return await newSqlFile(sqlFiles, n, name);
       } catch (e) {
         log.error(`newSqlFile - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        vscode.window.showErrorMessage(`New SQL file failed: ${errMsg(e)}`);
+        showError(`New SQL file failed: ${errMsg(e)}`);
       }
     }),
     // klik kanan / F2 / Delete di SQL Files: node dari menu, atau item terpilih bila dari keybinding
@@ -167,7 +167,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         return await f(node);
       } catch (e) {
         log.error(`${id} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        vscode.window.showErrorMessage(`${what} failed: ${errMsg(e)}`);
+        showError(`${what} failed: ${errMsg(e)}`);
       }
     })),
     sqlWatcher(),
@@ -196,7 +196,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.workspace.registerFileSystemProvider('moonage-consul', consulFs = new ConsulFs(ctx, conns, log, () => explorer.refresh())),
     vscode.commands.registerCommand('moonageDaydream.consulOpenKey', (n?: Node) => n?.kind === 'kv' && openConsulKey(n.c, n.key).catch((e: unknown) => {
       log.error(`consulOpenKey - EXCEPTION CAUGHT | ${n.c.name} / ${n.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      vscode.window.showErrorMessage(`Open key failed: ${errMsg(e)}`);
+      showError(`Open key failed: ${errMsg(e)}`);
     })),
     vscode.commands.registerCommand('moonageDaydream.consulNewKey', (n?: Node) => (n?.kind === 'conn' || n?.kind === 'kv') && newConsulKey(consulFs, n.c, n.kind === 'kv' ? n.key : '')),
     vscode.commands.registerCommand('moonageDaydream.consulDeleteKey', async (n?: Node) => {
@@ -575,7 +575,7 @@ async function setFileDatabase(uri: vscode.Uri | undefined = sqlUri()) {
     dbs = await drivers[c.type].databases(c, await conns.password(c.name));
   } catch (e) {
     log.error(`setFileDatabase - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Moonage Daydream: cannot list databases of ${c.name}: ${errMsg(e)}`);
+    showError(`Moonage Daydream: cannot list databases of ${c.name}: ${errMsg(e)}`);
     return;
   }
   const db = await vscode.window.showQuickPick(
@@ -612,7 +612,7 @@ export async function renameConnection(n?: Node, input?: string): Promise<void> 
     updateStatus();
   } catch (e) {
     log.error(`renameConnection - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Rename connection failed: ${errMsg(e)}`);
+    showError(`Rename connection failed: ${errMsg(e)}`);
   }
 }
 
@@ -638,7 +638,7 @@ export async function changeConnectionColor(n?: Node, color?: string): Promise<v
     updateStatus();
   } catch (e) {
     log.error(`changeConnectionColor - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Change color failed: ${errMsg(e)}`);
+    showError(`Change color failed: ${errMsg(e)}`);
   }
 }
 
@@ -656,7 +656,7 @@ export async function moveToGroup(n?: Node, pick?: string): Promise<void> {
     explorer.refresh();
   } catch (e) {
     log.error(`moveToGroup - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Move to group failed: ${errMsg(e)}`);
+    showError(`Move to group failed: ${errMsg(e)}`);
   }
 }
 
@@ -670,7 +670,7 @@ export async function renameGroup(n?: Node, name?: string): Promise<void> {
     explorer.refresh();
   } catch (e) {
     log.error(`renameGroup - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Rename group failed: ${errMsg(e)}`);
+    showError(`Rename group failed: ${errMsg(e)}`);
   }
 }
 
@@ -724,7 +724,7 @@ async function scriptAsCommand(n?: Node) {
     await openScript(n.c, n.db, content);
   } catch (e) {
     log.error(`scriptAs ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.db} / ${n.obj.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Script as ${action} failed: ${errMsg(e)}`);
+    showError(`Script as ${action} failed: ${errMsg(e)}`);
   }
 }
 
@@ -821,7 +821,7 @@ function columnsEditor(n?: Node) {
     } catch (e) {
       log.error(`columnsEditor execute - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${table}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Execute failed: ${errMsg(e)}`, error: true });
-      vscode.window.showErrorMessage(`Columns: execute failed: ${errMsg(e)}`);
+      showError(`Columns: execute failed: ${errMsg(e)}`);
     }
   });
 }
@@ -838,7 +838,7 @@ async function jobCommand(n: Node | undefined, action: 'start' | 'stop') {
     explorer.refresh();
   } catch (e) {
     log.error(`jobCommand ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`${action === 'start' ? 'Start' : 'Stop'} job failed: ${errMsg(e)}`);
+    showError(`${action === 'start' ? 'Start' : 'Stop'} job failed: ${errMsg(e)}`);
   }
 }
 
@@ -917,7 +917,7 @@ function newTable(n?: Node) {
     } catch (e) {
       log.error(`newTable execute - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Create failed: ${errMsg(e)}`, error: true });
-      vscode.window.showErrorMessage(`New Table failed: ${errMsg(e)}`);
+      showError(`New Table failed: ${errMsg(e)}`);
     }
   });
 }
@@ -1065,7 +1065,7 @@ function formTab(conn: ConnectionInfo, nd: NewDatabase, title: string, what: str
     } catch (e) {
       log.error(`${title} execute - EXCEPTION CAUGHT | ${conn.name} / ${name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Create failed: ${errMsg(e)}`, error: true });
-      vscode.window.showErrorMessage(`${title} failed: ${errMsg(e)}`);
+      showError(`${title} failed: ${errMsg(e)}`);
     }
   });
 }
@@ -1089,7 +1089,7 @@ async function newSqliteDatabase(conn: ConnectionInfo) {
     vscode.window.showInformationMessage(`SQLite database ${path.basename(file)} created, connection ${name} added.`);
   } catch (e) {
     log.error(`newSqliteDatabase - EXCEPTION CAUGHT | ${file}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
+    showError(`New Database failed: ${errMsg(e)}`);
   }
 }
 
@@ -1114,7 +1114,7 @@ async function addData(n?: Node) {
     cols = await d.columns(conn, await conns.password(conn.name), n.db, n.obj);
   } catch (e) {
     log.error(`addData columns - EXCEPTION CAUGHT | ${conn.name} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    return void vscode.window.showErrorMessage(`Add Data failed: ${errMsg(e)}`);
+    return void showError(`Add Data failed: ${errMsg(e)}`);
   }
   if (!cols.length) return void vscode.window.showInformationMessage(`${label} has no columns to fill${d.dialect === 'mongodb' ? ' (empty collection: no sample document)' : ''}.`);
   const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.addData', `Add Data: ${n.obj.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
@@ -1139,7 +1139,7 @@ async function addData(n?: Node) {
     } catch (e) {
       log.error(`addData insert - EXCEPTION CAUGHT | ${conn.name} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Insert failed: ${errMsg(e)}`, error: true });
-      vscode.window.showErrorMessage(`Add Data failed: ${errMsg(e)}`);
+      showError(`Add Data failed: ${errMsg(e)}`);
     }
   });
 }
@@ -1165,7 +1165,7 @@ async function dropDatabase(n?: Node) {
     vscode.window.showInformationMessage(`Database ${n.db} dropped on ${c.name}.`);
   } catch (e) {
     log.error(`dropDatabase - EXCEPTION CAUGHT | ${c.name} / ${n.db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Drop Database failed: ${errMsg(e)}`);
+    showError(`Drop Database failed: ${errMsg(e)}`);
   }
 }
 
@@ -1202,7 +1202,7 @@ async function dropTable(n?: Node) {
     vscode.window.showInformationMessage(`Table ${label} dropped.`);
   } catch (e) {
     log.error(`dropTable - EXCEPTION CAUGHT | ${c.name} / ${n.db} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Drop Table failed: ${errMsg(e)}`);
+    showError(`Drop Table failed: ${errMsg(e)}`);
   }
 }
 
@@ -1221,7 +1221,7 @@ async function killCommand(n?: Node) {
     vscode.window.showInformationMessage(`Session ${id} killed.`);
   } catch (e) {
     log.error(`killCommand - EXCEPTION CAUGHT | ${n.c.name} / ${id}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Kill session failed: ${errMsg(e)}`);
+    showError(`Kill session failed: ${errMsg(e)}`);
   }
 }
 
@@ -1308,7 +1308,7 @@ function liveMonitor(n?: Node) {
         restart();
       } catch (e) {
         log.error(`liveMonitor kill - EXCEPTION CAUGHT | ${node.c.name} / ${m.id}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        vscode.window.showErrorMessage(`Kill session failed: ${errMsg(e)}`);
+        showError(`Kill session failed: ${errMsg(e)}`);
       }
     }
   });
@@ -1400,7 +1400,7 @@ function consulDashboard(c: ConnectionInfo) {
       vscode.window.showInformationMessage(`Saved "${key}" to Consul.${r.backup ? ` Backup: ${r.backup}` : ''}`);
     } catch (e) {
       log.error(`consulDashboard kvSave - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      vscode.window.showErrorMessage(`Save failed: ${errMsg(e)}`);
+      showError(`Save failed: ${errMsg(e)}`);
       void panel.webview.postMessage({ type: 'kvSaveResult', success: false, key, error: errMsg(e) });
     }
   }
@@ -1424,7 +1424,7 @@ function consulDashboard(c: ConnectionInfo) {
       explorer.refresh();
     } catch (e) {
       log.error(`consulDashboard kvDelete - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      vscode.window.showErrorMessage(`Delete failed: ${errMsg(e)}`);
+      showError(`Delete failed: ${errMsg(e)}`);
       void panel.webview.postMessage({ type: 'kvDeleteResult', success: false, key, error: errMsg(e) });
     }
   }
@@ -1443,7 +1443,7 @@ function consulDashboard(c: ConnectionInfo) {
     } else if (m.type === 'kvOpenEditor' && m.key) {
       void openConsulKey(c, m.key).catch((e: unknown) => {
         log.error(`consulDashboard kvOpenEditor - EXCEPTION CAUGHT | ${c.name} / ${m.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        vscode.window.showErrorMessage(`Open key failed: ${errMsg(e)}`);
+        showError(`Open key failed: ${errMsg(e)}`);
       });
     }
   });
@@ -1462,7 +1462,7 @@ async function backupCommand(n: Node | undefined, action: 'backup' | 'restore') 
     if (file) await openScript(n.c, 'master', restoreScript(n.db, file));
   } catch (e) {
     log.error(`backupCommand ${action} - EXCEPTION CAUGHT | ${n.c.name} / ${n.db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`${action === 'backup' ? 'Backup' : 'Restore'} script failed: ${errMsg(e)}`);
+    showError(`${action === 'backup' ? 'Backup' : 'Restore'} script failed: ${errMsg(e)}`);
   }
 }
 
@@ -1489,7 +1489,7 @@ async function objectScript(n: Node | undefined, mode: 'show' | 'edit' | 'run') 
     if (mode === 'run' && !params) await runQuery(); // tanpa argumen: tidak ada yang perlu diisi, langsung jalan seperti Select Top
   } catch (e) {
     log.error(`objectScript ${mode} - EXCEPTION CAUGHT | ${n.c.name} / ${n.db} / ${n.obj.schema}.${n.obj.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`${mode === 'run' ? 'Run procedure' : mode === 'edit' ? 'Edit' : 'Show definition'} failed: ${errMsg(e)}`);
+    showError(`${mode === 'run' ? 'Run procedure' : mode === 'edit' ? 'Edit' : 'Show definition'} failed: ${errMsg(e)}`);
   }
 }
 
@@ -1595,7 +1595,7 @@ export async function applyWhere(where: string, part?: number) {
     sql = addWhere(src.sql, where);
   } catch (e) {
     log.error(`applyWhere - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(errMsg(e));
+    showError(errMsg(e));
     return;
   }
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(src.uri));
@@ -1671,7 +1671,7 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
       } catch (e) {
         await sink.abort();
         log.error(`exportResult - EXCEPTION CAUGHT | ${toClipboard ? '(clipboard) ' : ''}${token.isCancellationRequested ? '(cancelled by user) ' : ''}${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        if (!token.isCancellationRequested && !quiet) vscode.window.showErrorMessage(`${toClipboard ? 'Copy' : 'Export'} failed: ${errMsg(e)}`);
+        if (!token.isCancellationRequested && !quiet) showError(`${toClipboard ? 'Copy' : 'Export'} failed: ${errMsg(e)}`);
         if (quiet) throw e;
         return undefined;
       }
@@ -1762,7 +1762,7 @@ async function connectCommand(c: ConnectionInfo) {
     vscode.window.showInformationMessage(`Connected to ${c.name}${info ? ` (${info})` : ''} in ${Date.now() - t} ms`);
   } catch (e) {
     log.error(`connect - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Connect to ${c.name} failed: ${errMsg(e)}`);
+    showError(`Connect to ${c.name} failed: ${errMsg(e)}`);
   }
 }
 
@@ -1864,7 +1864,7 @@ export async function endTransaction(how: 'commit' | 'rollback', uriArg?: vscode
     tx.statements = 0;
   } catch (e) {
     log.error(`endTransaction ${how} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`${how} failed: ${errMsg(e)}`);
+    showError(`${how} failed: ${errMsg(e)}`);
   }
   updateFileStatus();
 }
@@ -1983,6 +1983,11 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
 }
 
 /** alasan result set tidak bisa diedit (bukan error sistem): tombol edit dinonaktifkan dengan pesan ini */
+/** notifikasi error + tombol Show Log (detail lengkap ada di output channel "Moonage Daydream", sudah dicatat pemanggil) */
+function showError(message: string): void {
+  void vscode.window.showErrorMessage(message, 'Show Log').then((pick) => { if (pick) log.show(true); });
+}
+
 class NotEditable extends Error {}
 // metadata tabel untuk penanda edit grid (PK, schema, kolom generated): dipakai ulang 60 detik setelah SELECT; Save / script selalu baca ulang
 const gridMeta = ttlCache(60_000);
@@ -2073,7 +2078,7 @@ export async function editScript(m: ResultMessage): Promise<vscode.TextDocument 
     return doc;
   } catch (e) {
     log.error(`editScript - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Cannot generate UPDATE script: ${errMsg(e)}`);
+    showError(`Cannot generate UPDATE script: ${errMsg(e)}`);
   }
 }
 
@@ -2107,7 +2112,7 @@ export async function saveGrid(m: ResultMessage): Promise<boolean> {
         }
       } catch (e) {
         log.error(`saveGrid mongo - EXCEPTION CAUGHT | ${c.name}: ${done} of ${stmts.length} saved: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        vscode.window.showErrorMessage(`Save stopped after ${done} of ${stmts.length} command(s): ${errMsg(e)}`);
+        showError(`Save stopped after ${done} of ${stmts.length} command(s): ${errMsg(e)}`);
         await applyWhere('', m.part);
         return false;
       }
@@ -2134,7 +2139,7 @@ export async function saveGrid(m: ResultMessage): Promise<boolean> {
     return true;
   } catch (e) {
     log.error(`saveGrid - EXCEPTION CAUGHT | ${c?.name ?? ''}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Save failed (nothing was changed): ${errMsg(e)}`);
+    showError(`Save failed (nothing was changed): ${errMsg(e)}`);
     return false;
   }
 }
@@ -2168,7 +2173,7 @@ export async function loadMore(m: ResultMessage): Promise<number | undefined> {
     return next?.rows.length ?? 0;
   } catch (e) {
     log.error(`loadMore - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Load more failed: ${errMsg(e)}`);
+    showError(`Load more failed: ${errMsg(e)}`);
   } finally {
     results.refresh();
   }

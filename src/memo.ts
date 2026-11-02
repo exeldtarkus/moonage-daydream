@@ -8,7 +8,7 @@ export function ttlCache(ms: number, now: () => number = Date.now) {
       const value = load();
       map.set(key, { at: now(), value });
       // gagal: dibuang supaya percobaan berikutnya memuat ulang (error tetap sampai ke pemanggil)
-      value.catch(() => { if (map.get(key)?.value === value) map.delete(key); });
+      value.catch(() => { if (map.get(key)?.value === value) map.delete(key); }); // error dicatat pemanggil
       return value;
     },
     clear: () => map.clear(),

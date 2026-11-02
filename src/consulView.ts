@@ -143,7 +143,7 @@ export async function deleteConsulKey(ctx: vscode.ExtensionContext, conns: Conne
     return true;
   } catch (e) {
     log.error(`deleteConsulKey - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-    vscode.window.showErrorMessage(`Delete failed: ${errMsg(e)}`);
+    void vscode.window.showErrorMessage(`Delete failed: ${errMsg(e)}`, 'Show Log').then((pick) => { if (pick) log.show(true); });
     return false;
   }
 }

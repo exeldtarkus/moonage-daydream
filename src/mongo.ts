@@ -227,7 +227,10 @@ async function run(conn: ConnectionInfo, password: string, text: string, signal?
   let killFailed: unknown;
   const cancel = () => {
     void cursor?.close();
-    killByComment(db, comment).catch((e: unknown) => (killFailed = e));
+    killByComment(db, comment).catch((e: unknown) => {
+      killFailed = e;
+      driverLog.error(`mongo cancel - EXCEPTION CAUGHT | ${conn.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+    });
   };
   signal?.addEventListener('abort', cancel);
   try {
