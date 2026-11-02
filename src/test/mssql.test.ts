@@ -6,9 +6,16 @@ import { formatSql, leadingCommas } from '../sqlFormat';
 import { affectedStatements, readOnlyBlocked, txEndStatement, ident, identifierChain, maskSql, parallelSafe, preview, readOnly, splitStatements, statementAt, statementSegments, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
 
 test('splitBatches splits on GO lines only', () => {
-  assert.deepEqual(splitBatches('select 1\nGO\nselect 2\n  go 5  \r\nselect 3\ngo -- end\n'), ['select 1', 'select 2', 'select 3']);
+  assert.deepEqual(splitBatches('select 1\nGO\nselect 2\n  go 3  \r\nselect 3\ngo -- end\n'), ['select 1', 'select 2', 'select 2', 'select 2', 'select 3']);
   assert.deepEqual(splitBatches('select good from t\nselect 1 -- GO'), ['select good from t\nselect 1 -- GO']);
   assert.deepEqual(splitBatches('\nGO\n'), []);
+});
+
+test('splitBatches: GO inside a string or a block comment is not a separator; GO 0 runs once', () => {
+  const str = "insert t values ('a\nGO\nb')\nGO\nselect 2";
+  assert.deepEqual(splitBatches(str), ["insert t values ('a\nGO\nb')", 'select 2']);
+  assert.deepEqual(splitBatches('select 1 /* note\nGO\n*/\nGO\nselect 2'), ['select 1 /* note\nGO\n*/', 'select 2']);
+  assert.deepEqual(splitBatches('select 1\nGO 0\n'), ['select 1']);
 });
 
 test('cell formats values and escapes', () => {

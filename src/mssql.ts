@@ -54,11 +54,23 @@ function pool(conn: ConnectionInfo, password: string): Promise<sql.ConnectionPoo
 }
 
 /**
- * Pecah script per baris `GO` (separator batch SSMS/sqlcmd, bukan T-SQL).
- * shortcut: `GO` di dalam string/komentar multi-baris ikut dianggap separator, dan `GO n` tidak diulang n kali; perbaiki bila ada yang butuh.
+ * Pecah script per baris `GO` (separator batch SSMS/sqlcmd, bukan T-SQL). `GO` di dalam string / komentar diabaikan (dicari di
+ * teks yang sudah di-mask); `GO n` mengulang batch sebelumnya n kali seperti sqlcmd.
  */
 export function splitBatches(text: string): string[] {
-  return text.split(/^[ \t]*GO(?:[ \t]+\d+)?[ \t]*(?:--.*)?$/gim).map((b) => b.trim()).filter(Boolean);
+  const out: string[] = [];
+  const push = (batch: string, times = 1) => {
+    const b = batch.trim();
+    if (b) for (let i = 0; i < times; i++) out.push(b);
+  };
+  let start = 0;
+  // komentar -- setelah GO sudah jadi spasi di teks yang di-mask
+  for (const m of maskSql(text).matchAll(/^[ \t]*GO(?:[ \t]+(\d+))?[ \t]*$/gim)) {
+    push(text.slice(start, m.index), Math.max(1, Number(m[1] ?? 1)));
+    start = m.index + m[0].length;
+  }
+  push(text.slice(start));
+  return out;
 }
 
 /** quote identifier T-SQL: [nama]] aneh] */
