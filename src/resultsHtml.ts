@@ -39,7 +39,7 @@ export interface PlanOutcome {
   /** Analyze: jumlah baris hasil query per result set */
   rows?: number[];
 }
-export type Single = PlanOutcome | { result: QueryResult; source?: Source; editBlock?: string } | { error: string; source?: Source } | { loading: true; uri?: string; cancelling?: boolean };
+export type Single = PlanOutcome | { result: QueryResult; source?: Source; editBlock?: string; genCols?: string[] } | { error: string; source?: Source } | { loading: true; uri?: string; cancelling?: boolean };
 /** run paralel: satu Part per statement, diperbarui begitu statement itu selesai */
 export interface Part {
   sql: string;
@@ -84,7 +84,8 @@ function whereBar(where: string | undefined, part?: number): string {
 
 /** canMore: statement asal diketahui (satu SELECT) -> tombol Load more di result set pertama */
 /** editBlock: alasan result set tidak bisa diedit (dicek extension setelah hasil tampil) -> tombol edit nonaktif */
-function resultHtml(r: QueryResult, canMore = false, editBlock?: string): string {
+function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols: string[] = []): string {
+  const gen = new Set(genCols.map((g) => g.toLowerCase()));
   const sets = r.resultSets.map((s, i) => {
     // kolom angka rata kanan; tanpa info tipe: tebak dari nilai baris pertama
     const num = s.columns.map((_, c) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number'));
@@ -93,7 +94,7 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string): string
     const more = s.limited ? ` · auto limit ${s.limited}` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
     const head = s.columns.map((c, k) => {
       const t = s.types?.[k] ?? '';
-      return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
+      return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${canMore && i === 0 && gen.has(c.toLowerCase()) ? ' data-gen="1"' : ''}${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
     return `<div class="blk"><h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
@@ -139,7 +140,7 @@ function partHtml(p: Part, i: number, uri: string, pinned: boolean): string {
   const state = 'loading' in o ? (o.cancelling ? 'cancelling' : 'running') : 'error' in o ? 'failed' : `${o.result.durationMs} ms`;
   const head = `<h2>Query ${i + 1} <span>${esc(preview(p.sql))} · ${state}</span></h2>`;
   if ('loading' in o) return `<section data-part="${i}">${head}<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div></section>`;
-  return `<section data-part="${i}">${head}${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned, o.editBlock)}</section>`;
+  return `<section data-part="${i}">${head}${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned, o.editBlock, o.genCols)}</section>`;
 }
 
 /** pinned: snapshot di tab sendiri (tanpa toolbar WHERE / tombol Pin; filter, sort, export tetap) */
@@ -167,7 +168,7 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
     body = `${o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = `${o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned, o.editBlock)}`;
+    body = `${o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned, o.editBlock, o.genCols)}`;
   }
   return `<!DOCTYPE html>
 <html>
@@ -663,7 +664,9 @@ const GRID_SCRIPT = `(() => {
     for (const c of order(t)) {
       const td = tr.insertCell();
       td.hidden = s.hidden.has(c);
-      td.innerHTML = '<input class="cell" spellcheck="false" data-c="' + c + '" placeholder="default">';
+      // kolom generated (computed / identity): diisi server, tidak bisa diketik
+      td.innerHTML = t.tHead.querySelector('th[data-c="' + c + '"]')?.dataset.gen ? '<input class="cell" data-c="' + c + '" placeholder="generated" disabled>'
+        : '<input class="cell" spellcheck="false" data-c="' + c + '" placeholder="default">';
     }
     tr.querySelector('input.cell:not([hidden])')?.focus();
     syncEdits(t);
@@ -693,6 +696,7 @@ const GRID_SCRIPT = `(() => {
     const td = e.target.closest('tbody td');
     const t = td?.closest('table[data-edit]');
     if (!td || !t || td.classList.contains('n') || td.querySelector('input')) return;
+    if (t.tHead.rows[0].cells[td.cellIndex]?.dataset.gen) return; // kolom generated: tidak bisa diedit
     td.dataset.orig ??= JSON.stringify(text(td));
     const cur = text(td);
     td.innerHTML = '<input class="cell" spellcheck="false">';

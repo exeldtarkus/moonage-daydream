@@ -2000,7 +2000,7 @@ async function gridTarget(m: ResultMessage, o = results.current?.outcome) {
     if (!coll) throw new NotEditable('Editing needs a find() on one collection');
     if (!rs.columns.includes('_id')) throw new NotEditable('The _id field must be part of the result to edit documents');
     const db = c.database || d.defaultDb;
-    return { c, d, pw: await conns.password(c.name), rs, src, pk: ['_id'], table: coll, label: `${db}.${coll}`, mongo: true };
+    return { c, d, pw: await conns.password(c.name), rs, src, pk: ['_id'], table: coll, label: `${db}.${coll}`, mongo: true, generated: [] as string[] };
   }
   if (!['mssql', 'mysql', 'postgres', 'sqlite'].includes(d.dialect)) throw new NotEditable(`Editing rows is not available for ${d.label} yet`);
   const refs = tableRefs(src.sql);
@@ -2018,7 +2018,9 @@ async function gridTarget(m: ResultMessage, o = results.current?.outcome) {
   const table = d.dialect === 'mssql' ? `${q(db)}.${q(schema)}.${q(name)}` : d.dialect === 'mysql' ? `${q(db)}.${q(name)}`
     : d.dialect === 'postgres' ? `${q(schema)}.${q(name)}` : q(name);
   if (!pk.every((k) => rs.columns.some((x) => k.toLowerCase() === x.toLowerCase()))) throw new NotEditable(`The primary key (${pk.join(', ')}) must be part of the SELECT to edit rows`);
-  return { c, d, pw, rs, src, pk, table, label: `${db}.${schema}.${name}`, mongo: false };
+  // kolom generated / computed / identity: tidak boleh diisi di baris baru / diedit
+  const generated = (await d.columns(c, pw, db, { schema, name })).filter((x) => x.generated).map((x) => x.name);
+  return { c, d, pw, rs, src, pk, table, label: `${db}.${schema}.${name}`, mongo: false, generated };
 }
 
 /**
@@ -2034,6 +2036,10 @@ async function markEditable(o: Outcome) {
     try {
       const t = await gridTarget({ type: 'saveGrid', set: 0, part } as ResultMessage, o);
       if (t.c.readOnly) throw new NotEditable(`${t.c.name} is a read-only connection`);
+      if (t.generated.length) {
+        s.genCols = t.generated;
+        changed = true;
+      }
     } catch (e) {
       if (!(e instanceof NotEditable)) {
         log.error(`markEditable - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
@@ -2080,7 +2086,7 @@ export async function saveGrid(m: ResultMessage): Promise<boolean> {
     c = t.c;
     if (c.readOnly) throw new Error(`${c.name} is read-only`);
     const stmts = t.mongo ? mongoChanges(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, ch)
-      : changeStatements(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, ch, t.d.quote, t.d.dialect);
+      : changeStatements(t.table, t.rs.columns, t.rs.types ?? [], t.rs.rows, t.pk, ch, t.d.quote, t.d.dialect, t.generated);
     if (!stmts.length) return false;
     const how = t.mongo ? 'MongoDB has no transaction here: commands run one by one and stop at the first error (earlier ones stay saved).'
       : 'One transaction; any error rolls everything back.';
