@@ -264,6 +264,8 @@ export interface ColumnDdl {
   dropPk?(obj: DbObject, name?: string): string;
   addPk?(obj: DbObject, cols: string[], name?: string): string;
   dropUnique?(obj: DbObject, name: string, index: boolean): string;
+  /** SQLite: perubahan key tabel lewat rebuild tabel (drop / add sudah bernama); dipakai bila tidak ada addUnique / addFk */
+  keyRebuild?(obj: DbObject, original: ColumnRow[], drop: TableKey[], add: TableKey[]): string;
   /** query key tabel lebih dari satu kolom (dibaca readKeys); tidak ada = tabel Keys hanya untuk key baru */
   keys?(obj: DbObject): string;
   /** default nama: UQ_<tabel>_<kolom...> */
@@ -550,7 +552,7 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
     }
   }
   for (const k of editable) if (!kept.has(k)) keyAdds.push({ key: k, name: k.name?.trim() || keyName(obj, k.kind, k.cols, ddl.nameMax) });
-  if ((keyDrops.length || keyAdds.length) && (!ddl.addUnique || !ddl.dropUnique || (ddl.fkActions && (!ddl.addFk || !ddl.dropFk)))) {
+  if ((keyDrops.length || keyAdds.length) && !ddl.keyRebuild && (!ddl.addUnique || !ddl.dropUnique || (ddl.fkActions && (!ddl.addFk || !ddl.dropFk)))) {
     return { sql: '', errors: ['Changing table keys is not supported here yet'], count: 0, steps: [] };
   }
 
@@ -692,6 +694,18 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
     for (const { key: k, name, detail } of keyAdds.filter((x) => x.key.kind === 'fk')) {
       steps.push({ kind: 'addKey', column: k.cols.join(', '), sql: ddl.addFk!(obj, k.cols, k.ref!, name),
         title: `Add foreign key ${name} (${k.cols.join(', ')}) → ${k.ref!.table}(${k.ref!.columns.join(', ')})${fkActs(k.ref!)}`, ...(detail ? { detail } : {}) });
+    }
+  }
+  if (ddl.keyRebuild && (keyDrops.length || keyAdds.length)) {
+    // rebuild key memakai definisi tabel dari server: tidak digabung dengan perubahan kolom pada Execute yang sama
+    if (steps.length) return { sql: '', errors: ['Apply column changes and key changes separately (each rebuilds the table)'], count: 0, steps: [] };
+    try {
+      steps.push({ kind: 'rebuild', column: obj.name, sql: ddl.keyRebuild(obj, original, keyDrops, keyAdds.map((a) => ({ ...a.key, name: a.name }))),
+        title: 'Rebuild table for key changes', detail: [...keyDrops.map((k) => `drop ${k.name} (${k.cols.join(', ')})`), ...keyAdds.map((a) => `add ${a.name} (${a.key.cols.join(', ')})`)] });
+    } catch (e) {
+      // definisi tabel tidak bisa dipetakan: berhenti (fail closed), tidak ada script
+      driverLog.error(`columnChanges keyRebuild - EXCEPTION CAUGHT | ${obj.name}: ${(e as Error).message} - stack-trace: ${(e as Error).stack}`);
+      return { sql: '', errors: [(e as Error).message], count: 0, steps: [] };
     }
   }
   const sql = steps.map((x) => x.sql).join(ddl.separator);

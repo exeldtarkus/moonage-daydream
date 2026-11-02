@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { checkKeys, columnChanges, createTable, drivers, keyName, readKeys, type ColumnRow, type NewColumn, type TableKey } from '../db';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { checkKeys, columnChanges, createTable, drivers, execScript, keyName, readKeys, showColumns, type ColumnRow, type NewColumn, type TableKey } from '../db';
 
 const t = { schema: 'dbo', name: 'item' };
 const cols: NewColumn[] = [
@@ -67,6 +70,7 @@ test('key DDL: column lists in all SQL drivers', () => {
 
 const row = (name: string, props: Partial<ColumnRow> = {}): ColumnRow => ({ name, type: 'int', nullable: false, orig: name, ...props });
 const ms = drivers.mssql.columnDdl!;
+const sqliteDriver = drivers.sqlite;
 const orig = [row('a'), row('b'), row('c', { nullable: true })];
 const oldUq: TableKey = { kind: 'unique', name: 'UQ_old', cols: ['a', 'b'] };
 const oldFk: TableKey = { kind: 'fk', name: 'FK_old', cols: ['a', 'b'], ref: { schema: 'dbo', table: 'parent', columns: ['x', 'y'] } };
@@ -109,7 +113,7 @@ test('columnChanges keys: deleting a member column or touching a read-only key i
 });
 
 test('columnChanges keys: drivers without key DDL reject key changes', () => {
-  const r = columnChanges(drivers.sqlite.columnDdl!, t, orig.map(stripOrig), orig, [oldUq], []);
+  const r = columnChanges({ ...ms, addUnique: undefined }, t, orig.map(stripOrig), orig, [oldUq], []);
   assert.match(r.errors.join(), /not supported/);
 });
 
@@ -142,5 +146,64 @@ test('keys query: SQL drivers read composite keys of the table', () => {
       assert.match(sql, new RegExp(`\\b${alias}\\b`), `${name} ${alias}`);
     }
     assert.ok(sql.includes(table), name);
+  }
+});
+
+test('SQLite keys end to end on a real file: read, add / drop by rebuild, CHECK / COLLATE / index kept, bad data rolls back', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'moonage-keys-'));
+  try {
+    const file = join(dir, 'lab.db');
+    writeFileSync(file, '');
+    const c = { name: 'lite', type: 'sqlite' as const, host: '', port: 0, user: '', database: '', trustServerCertificate: false, file };
+    const run = (sql: string) => sqliteDriver.run(c, '', sql);
+    const lite = drivers.sqlite.columnDdl!;
+    await run(`CREATE TABLE parent (x INTEGER NOT NULL, y INTEGER NOT NULL, UNIQUE (x, y));
+      CREATE TABLE item (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, name TEXT COLLATE NOCASE CHECK (length(name) < 20),
+        CONSTRAINT UQ_ab UNIQUE (a, b), CONSTRAINT FK_ab FOREIGN KEY (a, b) REFERENCES parent (x, y) ON DELETE CASCADE);
+      CREATE UNIQUE INDEX ix_part ON item (b, name) WHERE name IS NOT NULL;
+      CREATE INDEX ix_name ON item (name);
+      INSERT INTO parent VALUES (1, 1), (2, 2);
+      INSERT INTO item (a, b, name) VALUES (1, 1, 'one'), (2, 2, 'two');`);
+    const o = { schema: 'main', name: 'item' };
+    const keysNow = async () => readKeys((await run(lite.keys!(o))).resultSets[0]);
+    const k0 = await keysNow();
+    assert.deepEqual(k0.map((k) => [k.kind, k.cols.join(','), !!k.readOnly, k.ref?.table ?? '', k.ref?.onDelete ?? '']), [
+      ['unique', 'b,name', true, '', ''],
+      ['unique', 'a,b', false, '', ''],
+      ['fk', 'a,b', false, 'parent', 'CASCADE'],
+    ]);
+    const cols = showColumns((await run(lite.show(o))).resultSets[0]).cols;
+    const rows: ColumnRow[] = cols.map((x) => ({ ...x, orig: x.name }));
+    // UQ (a, b) dihapus, UQ (b, a) + FK baru tanpa aksi; CHECK / COLLATE / index lain tetap
+    const next: TableKey[] = [...k0.filter((k) => k.readOnly), { kind: 'unique', cols: ['b', 'a'] },
+      { kind: 'fk', cols: ['a', 'b'], ref: { schema: 'main', table: 'parent', columns: ['x', 'y'] } }];
+    const r = columnChanges(lite, o, cols, rows, next, k0);
+    assert.deepEqual(r.errors, []);
+    assert.deepEqual(r.steps.map((s) => s.kind), ['rebuild']);
+    await execScript(sqliteDriver, c, '', r.sql, false);
+    const k1 = await keysNow();
+    assert.deepEqual(k1.map((k) => [k.kind, k.cols.join(','), k.ref?.onDelete ?? '']), [
+      ['unique', 'b,name', ''], ['unique', 'b,a', ''], ['fk', 'a,b', '']]);
+    const ddl = String((await run("SELECT group_concat(sql, ';') FROM sqlite_master WHERE tbl_name = 'item'")).resultSets[0].rows[0][0]);
+    assert.match(ddl, /COLLATE NOCASE CHECK \(length\(name\) < 20\)/);
+    assert.match(ddl, /CREATE INDEX ix_name/);
+    assert.match(ddl, /CONSTRAINT "UQ_item_b_a" UNIQUE \("b", "a"\)/);
+    assert.equal((await run('SELECT COUNT(*) FROM item')).resultSets[0].rows[0][0], 2);
+    // FK baru ke baris yang tidak ada: foreign_key_check menggagalkan transaksi, file tidak berubah
+    await run('PRAGMA foreign_keys = OFF; INSERT INTO item (a, b, name) VALUES (9, 9, \'orphan\')');
+    const snapshot = async () => JSON.stringify([(await run('SELECT type, name, sql FROM sqlite_master ORDER BY name')).resultSets[0].rows,
+      (await run('SELECT * FROM item ORDER BY id')).resultSets[0].rows]);
+    const before = await snapshot();
+    const k2 = await keysNow();
+    const cols2 = showColumns((await run(lite.show(o))).resultSets[0]).cols;
+    const r2 = columnChanges(lite, o, cols2, cols2.map((x) => ({ ...x, orig: x.name })),
+      [...k2.filter((k) => k.kind === 'unique'), { kind: 'fk', cols: ['a', 'b'], ref: { schema: 'main', table: 'parent', columns: ['x', 'y'], onDelete: 'CASCADE' } }], k2);
+    await assert.rejects(execScript(sqliteDriver, c, '', r2.sql, false), /foreign_key_check_failed/);
+    assert.equal(await snapshot(), before);
+    // perubahan key + perubahan kolom sekaligus ditolak (rebuild dari definisi asal)
+    const mixed = cols2.map((x) => ({ ...x, orig: x.name, ...(x.name === 'id' ? { name: 'item_id' } : {}) }));
+    assert.match(columnChanges(lite, o, cols2, mixed, [...k2, { kind: 'unique', cols: ['item_id', 'a'] }], k2).errors.join(), /separately/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

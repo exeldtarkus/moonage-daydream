@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { stat, unlink } from 'fs/promises';
 import type { Database, SqlJsStatic } from 'sql.js';
-import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, NewColumn, TypeSpec } from './db';
+import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, NewColumn, TableKey, TypeSpec } from './db';
 import { fkActs } from './db';
 import { maskSql, splitStatements } from './sqlContext';
 import { driverLog } from './log';
@@ -199,18 +199,24 @@ function rewriteColumn(def: string, c: ColumnDef): string {
  * yang berubah ditulis ulang, salin data, drop, rename, index / trigger dibuat lagi. bundle = JSON { create, extras } dari Show.
  */
 export function sqliteRebuild(o: DbObject, bundle: string, copy: string[], changed: ColumnDef[]): string {
+  return rebuildWith(o, bundle, copy, (parts) => parts.map((part) => {
+    const name = tokens(part)[0] ?? '';
+    const c = !START.has(name.toUpperCase()) && name.toUpperCase() !== 'FOREIGN' && changed.find((x) => x.name.toLowerCase() === unquote(name));
+    return c ? `${/^\s*/.exec(part)![0]}${rewriteColumn(part, c)}` : part;
+  }));
+}
+
+/** CREATE asli -> tabel baru dengan body hasil edit, salin data, drop, rename, index / trigger (extras) dibuat lagi */
+function rebuildWith(o: DbObject, bundle: string, copy: string[], edit: (parts: string[]) => string[], keepExtra = (_x: string) => true, fkCheck = false): string {
   const { create, extras } = JSON.parse(bundle) as { create: string; extras: string[] };
   const t = tokens(create);
   const group = t.find((x) => x.startsWith('('));
   if (!group) throw new Error(`Cannot read the definition of table ${o.name}`);
   const at = create.indexOf(group, create.indexOf(t[t.indexOf(group) - 1]) + t[t.indexOf(group) - 1].length);
-  const body = splitTop(group.slice(1, -1)).map((part) => {
-    const name = tokens(part)[0] ?? '';
-    const c = !START.has(name.toUpperCase()) && name.toUpperCase() !== 'FOREIGN' && changed.find((x) => x.name.toLowerCase() === unquote(name));
-    return c ? `${/^\s*/.exec(part)![0]}${rewriteColumn(part, c)}` : part;
-  }).join(',');
+  const body = edit(splitTop(group.slice(1, -1))).join(',');
   const tmp = quote(`${o.name}__moonage_new`);
   const cols = copy.map(quote).join(', ');
+  const check = quote('__moonage_fk_check');
   return [
     `CREATE TABLE ${tmp} (${body})${create.slice(at + group.length)};`,
     `INSERT INTO ${tmp} (${cols}) SELECT ${cols} FROM ${quote(o.name)};`,
@@ -219,8 +225,55 @@ export function sqliteRebuild(o: DbObject, bundle: string, copy: string[], chang
     'PRAGMA legacy_alter_table = ON;',
     `ALTER TABLE ${tmp} RENAME TO ${quote(o.name)};`,
     'PRAGMA legacy_alter_table = OFF;',
-    ...extras.map((x) => `${x};`),
+    ...extras.filter(keepExtra).map((x) => `${x};`),
+    // FK baru: baris yatim menggagalkan transaksi (PRAGMA foreign_key_check sendiri tidak melempar error)
+    ...(fkCheck ? [`CREATE TEMP TABLE ${check} (n INTEGER CONSTRAINT foreign_key_check_failed CHECK (n = 0));`,
+      `INSERT INTO ${check} SELECT COUNT(*) FROM pragma_foreign_key_check(${litLite(o.name)});`, `DROP TABLE ${check};`] : []),
   ].join('\n');
+}
+
+/** nama + kolom klausa tabel UNIQUE (...) / FOREIGN KEY (...) REFERENCES t (...); undefined = bukan klausa key */
+function keyClause(part: string): { kind: TableKey['kind']; cols: string[]; table?: string; refCols?: string[] } | undefined {
+  const t = tokens(part);
+  let i = t[0]?.toUpperCase() === 'CONSTRAINT' ? 2 : 0;
+  const names = (g?: string) => (g?.startsWith('(') ? splitTop(g.slice(1, -1)).map((x) => unquote(tokens(x)[0] ?? '')) : []);
+  if (t[i]?.toUpperCase() === 'UNIQUE') return { kind: 'unique', cols: names(t[i + 1]) };
+  if (t[i]?.toUpperCase() !== 'FOREIGN' || t[i + 1]?.toUpperCase() !== 'KEY') return undefined;
+  i += 2;
+  const cols = names(t[i]);
+  if (t[i + 1]?.toUpperCase() !== 'REFERENCES') return undefined;
+  return { kind: 'fk', cols, table: unquote(t[i + 2] ?? ''), refCols: names(t[i + 3]) };
+}
+
+const indexName = (sql: string) => {
+  const m = /^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?("(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|[^\s(]+)/i.exec(sql);
+  return m ? unquote(m[1]) : '';
+};
+
+/**
+ * perubahan key SQLite lewat rebuild: klausa UNIQUE / FOREIGN KEY tingkat tabel yang di-drop dibuang dari CREATE asli
+ * (CHECK / COLLATE / generated / opsi tabel tetap), key baru ditambah sebagai CONSTRAINT; unique index di-drop dari extras.
+ * Key yang tidak ditemukan di definisi = error (fail closed).
+ */
+export function sqliteKeyRebuild(o: DbObject, bundle: string, copy: string[], drop: TableKey[], add: TableKey[]): string {
+  const low = (xs: string[]) => xs.map((x) => x.toLowerCase()).join(',');
+  const gone = new Set(drop.filter((k) => k.index).map((k) => k.name!.toLowerCase()));
+  const { extras } = JSON.parse(bundle) as { extras: string[] };
+  for (const name of gone) if (!extras.some((x) => indexName(x) === name)) throw new Error(`Index ${name} not found; change it manually`);
+  return rebuildWith(o, bundle, copy, (parts) => {
+    const left = [...parts];
+    for (const k of drop.filter((x) => !x.index)) {
+      const i = left.findIndex((p) => {
+        const c = keyClause(p);
+        return c?.kind === k.kind && low(c.cols) === low(k.cols)
+          && (k.kind === 'unique' || (c.table === k.ref!.table.toLowerCase() && low(c.refCols!) === low(k.ref!.columns.filter(Boolean))));
+      });
+      if (i < 0) throw new Error(`${k.name}: not found as a table constraint in the definition of ${o.name}; change it manually`);
+      left.splice(i, 1);
+    }
+    return [...left, ...add.map((k) => ` CONSTRAINT ${quote(k.name!)} ${k.kind === 'unique' ? 'UNIQUE' : 'FOREIGN KEY'} (${k.cols.map(quote).join(', ')})`
+      + (k.ref ? ` REFERENCES ${quote(k.ref.table)} (${k.ref.columns.map(quote).join(', ')})${fkActs(k.ref)}` : ''))];
+  }, (x) => !gone.has(indexName(x)), add.some((k) => k.kind === 'fk'));
 }
 
 const litLite = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -278,6 +331,18 @@ ORDER BY p.cid;`,
     ];
     return [`CREATE TABLE ${quote(o.name)} (`, lines.map((l) => `  ${l}`).join(',\n'), ');'].join('\n');
   },
+  // shortcut: nama constraint SQLite tidak tersedia lewat PRAGMA (tampil sqlite_autoindex_* / fk_<id>); parse CREATE bila nama asli dibutuhkan
+  keys: (o) => `SELECT il.name AS key_name, 'unique' AS kind, CASE il.origin WHEN 'c' THEN 1 ELSE 0 END AS is_index,
+  CASE WHEN il.partial = 1 OR EXISTS (SELECT 1 FROM pragma_index_xinfo(il.name) z WHERE z.key = 1 AND z.cid = -2) THEN 1 ELSE 0 END AS read_only,
+  ii.name AS col_name, ii.seqno + 1 AS ord, NULL AS ref_schema, NULL AS ref_table, NULL AS ref_column, NULL AS on_delete, NULL AS on_update
+FROM pragma_index_list(${litLite(o.name)}) il JOIN pragma_index_info(il.name) ii
+WHERE il."unique" = 1 AND il.origin IN ('u', 'c') AND (SELECT COUNT(*) FROM pragma_index_info(il.name)) > 1
+UNION ALL
+SELECT 'fk_' || f.id, 'fk', 0, 0, f."from", f.seq + 1, 'main', f."table", f."to", f.on_delete, f.on_update
+FROM pragma_foreign_key_list(${litLite(o.name)}) f
+WHERE (SELECT COUNT(*) FROM pragma_foreign_key_list(${litLite(o.name)}) g WHERE g.id = f.id) > 1
+ORDER BY kind DESC, key_name, ord;`,
+  keyRebuild: (o, original, drop, add) => sqliteKeyRebuild(o, original[0]?.keep ?? '{}', original.filter((c) => !c.generated).map((c) => c.name), drop, add),
   rebuild: (o, original: ColumnRow[], changed) => sqliteRebuild(o, original[0]?.keep ?? '{}', original.filter((c) => !c.generated).map((c) => c.name), changed),
   wrap: (sql) => `BEGIN;\n${sql}\nCOMMIT;`,
 };
