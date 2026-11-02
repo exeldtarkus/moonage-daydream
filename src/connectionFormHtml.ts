@@ -459,7 +459,7 @@ export function formHtml(cspSource: string, old?: ConnectionInfo, groups: string
   const cards = [...document.querySelectorAll('.db')];
   const visible = () => cards.filter((c) => !c.hidden);
   const filter = () => {
-    const words = $('dbq').value.toLowerCase().split(/\s+/).filter(Boolean);
+    const words = $('dbq').value.toLowerCase().split(/\\s+/).filter(Boolean);
     cards.forEach((c) => (c.hidden = !words.every((w) => c.dataset.search.includes(w))));
     const v = visible();
     cards.forEach((c) => c.classList.toggle('first', !!words.length && c === v[0]));

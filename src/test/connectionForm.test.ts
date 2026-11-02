@@ -124,3 +124,8 @@ test('Consul connection: card in the picker, token / datacenter fields, connecti
   assert.deepEqual([c.type, c.host, c.port, c.user, c.database, c.instance, c.ssl], ['consul', '192.0.2.10', 8500, '', 'dc1', undefined, true], 'datacenter in database, no user / instance');
   assert.equal(validate({ ...ok, type: 'consul', port: '8500', user: '' }, { get: () => undefined }), undefined, 'no user needed');
 });
+
+test('form: database search splits words on whitespace, not on the letter s', () => {
+  const html = formHtml('x');
+  assert.match(html, /split\(\/\\s\+\/\)/);
+});
