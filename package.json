@@ -566,11 +566,6 @@
           "group": "inline"
         },
         {
-          "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?(\\.cols)?$/",
-          "group": "1_query"
-        },
-        {
           "command": "moonageDaydream.runProcedure",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^(procedure|function)\\.def(\\.ms)?$/",
           "group": "inline"

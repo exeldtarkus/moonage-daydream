@@ -280,8 +280,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.selectTop', async (n?: Node) => {
       if (n?.kind !== 'obj') return;
-      const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: drivers[n.c.type].selectTop(n.db, n.obj, 100) });
-      await conns.bind(doc.uri.toString(), { conn: n.c.name, db: n.db });
+      // klik berulang pada tabel yang sama memakai kembali tab yang masih terbuka (tidak menumpuk dokumen / query)
+      const key = `${n.c.name}\u0000${n.db}\u0000${n.obj.schema}.${n.obj.name}`;
+      let doc = selectTopDocs.get(key);
+      if (!doc || doc.isClosed) {
+        doc = await vscode.workspace.openTextDocument({ language: 'sql', content: drivers[n.c.type].selectTop(n.db, n.obj, 100) });
+        selectTopDocs.set(key, doc);
+        await conns.bind(doc.uri.toString(), { conn: n.c.name, db: n.db });
+      }
       await vscode.window.showTextDocument(doc);
       await runQuery();
     }),
@@ -990,6 +996,9 @@ async function newSqliteDatabase(conn: ConnectionInfo) {
     vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
   }
 }
+
+/** dokumen Select Top 100 per tabel (klik kiri di Explorer) */
+const selectTopDocs = new Map<string, vscode.TextDocument>();
 
 /** form Add Data per tabel (dibuka lagi = tab yang sama di-reveal) */
 const addDataPanels = new Map<string, vscode.WebviewPanel>();

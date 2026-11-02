@@ -107,8 +107,10 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         // procedure / function: anaknya parameter (bila driver mendukung), trigger: tanpa anak; `.def` = Show Definition / Edit di menu
         const routine = n.objKind === 'procedure' || n.objKind === 'function';
         const open = n.objKind === 'trigger' || (routine && !d.parameters) ? vscode.TreeItemCollapsibleState.None : C;
+        // klik kiri tabel / view = Select Top 100 (panah ▸ hanya membuka / menutup node)
+        const click = n.objKind === 'table' || n.objKind === 'view' ? { command: 'moonageDaydream.selectTop', title: 'Select Top 100', arguments: [n] } : undefined;
         return Object.assign(new vscode.TreeItem(n.obj.schema ? `${n.obj.schema}.${n.obj.name}` : n.obj.name, open),
-          { iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: objContext(n.objKind, { def: !!d.definition, ms: isMs(n.c), cols: !!d.columnDdl }) }); // .ms: Script as, .cols: kolom
+          { command: click, iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: objContext(n.objKind, { def: !!d.definition, ms: isMs(n.c), cols: !!d.columnDdl }) }); // .ms: Script as, .cols: kolom
       }
       case 'col':
         return Object.assign(new vscode.TreeItem(n.label), { description: n.description, iconPath: new vscode.ThemeIcon('symbol-field') });
