@@ -2,7 +2,7 @@ import { Client, Pool, types } from 'pg';
 import type { ClientConfig, PoolClient, QueryArrayResult } from 'pg';
 import type { ColumnDdl, ConnectionInfo, ListKind, NewDatabase, ProcParam, TypeSpec } from './db';
 import { connectMs, fkActs, typedOptions } from './db';
-import { maskSql } from './sqlContext';
+import { maskSql, splitStatements } from './sqlContext';
 import { driverLog } from './log';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
@@ -53,8 +53,15 @@ export function toRaw(res: QueryArrayResult | QueryArrayResult[]): Raw {
   return raw;
 }
 
+/** satu SELECT / WITH / VALUES / TABLE (tanpa ; penutup) yang bisa dibuka sebagai cursor; undefined = bukan */
+export function cursorQuery(sql: string): string | undefined {
+  const stmts = splitStatements(sql, 'postgres');
+  if (stmts.length !== 1 || !/^\s*(select|with|values|table)\b/i.test(maskSql(stmts[0]))) return undefined;
+  return stmts[0].replace(/;\s*$/, '');
+}
+
 function link(c: PoolClient | Client, cancel: (pid: number) => Promise<unknown>, done: () => Promise<void>): Link {
-  return {
+  const l: Link = {
     async exec(sql, signal) {
       signal?.throwIfAborted();
       let cancelFailed: unknown;
@@ -75,6 +82,40 @@ function link(c: PoolClient | Client, cancel: (pid: number) => Promise<unknown>,
         signal?.removeEventListener('abort', onAbort);
       }
     },
+    // export: server-side cursor, 1000 baris per FETCH di transaksi sendiri; selama transaksi manual user terbuka: jalur exec
+    async stream(sql, signal, sink) {
+      const query = cursorQuery(sql);
+      if (!query || (c as unknown as { getTransactionStatus(): string | null }).getTransactionStatus() !== 'I') return undefined;
+      await l.exec('BEGIN');
+      try {
+        try {
+          await l.exec(`DECLARE moonage_export NO SCROLL CURSOR FOR ${query}`, signal);
+        } catch (e) {
+          // mis. WITH ... INSERT tidak bisa jadi cursor: jalur exec biasa
+          driverLog.error(`postgres stream declare - EXCEPTION CAUGHT (falling back) | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
+          await l.exec('ROLLBACK');
+          return undefined;
+        }
+        let n = 0;
+        for (let first = true; ; first = false) {
+          const set = (await l.exec('FETCH 1000 FROM moonage_export', signal)).sets[0];
+          if (first) await sink.columns(set?.columns ?? []);
+          for (const row of set?.rows ?? []) {
+            signal?.throwIfAborted();
+            await sink.row(row);
+            n++;
+          }
+          if ((set?.rows.length ?? 0) < 1000) break;
+        }
+        await l.exec('CLOSE moonage_export');
+        await l.exec('COMMIT');
+        return n;
+      } catch (e) {
+        // gagal di tengah: transaksi sendiri dibatalkan (cursor ikut tertutup)
+        await l.exec('ROLLBACK').catch((r: unknown) => driverLog.error(`postgres stream rollback - EXCEPTION CAUGHT | ${r instanceof Error ? r.message : r} - stack-trace: ${r instanceof Error ? r.stack : r}`));
+        throw e;
+      }
+    },
     release: done,
     // ReadyForQuery: I = idle, T = dalam transaksi, E = transaksi aborted karena error.
     // Query yang error ditolak saat ErrorResponse, ReadyForQuery (status baru) datang sesudahnya: tunggu dulu (maks ~1 detik)
@@ -84,6 +125,7 @@ function link(c: PoolClient | Client, cancel: (pid: number) => Promise<unknown>,
       return ({ T: 'open', E: 'failed' } as const)[cl.getTransactionStatus() ?? ''] ?? 'idle';
     },
   };
+  return l;
 }
 
 /** function / procedure bernama ini (overload urut oid): jenis + argumen pg_get_function_arguments */

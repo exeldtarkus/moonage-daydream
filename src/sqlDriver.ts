@@ -12,6 +12,8 @@ export interface Raw {
 export interface Link {
   exec(sql: string, signal?: AbortSignal): Promise<Raw>;
   release(): Promise<void>;
+  /** export: result set pertama baris per baris ke sink tanpa memuat semua baris; undefined = SQL ini tidak bisa di-stream (pakai exec) */
+  stream?(sql: string, signal: AbortSignal | undefined, sink: Sink): Promise<number | undefined>;
   /** status transaksi dari server (protokol); tidak ada = dilacak client (SQLite) */
   txState?(): Promise<'idle' | 'open' | 'failed'>;
 }
@@ -39,8 +41,11 @@ export function toResult(raw: Raw, start: number, limit?: number, skip = 0, serv
   };
 }
 
-// shortcut: semua baris result set pertama dimuat ke memori dulu lalu diteruskan ke sink; ganti ke cursor / stream driver bila export jutaan baris
 async function streamOn(link: Link, sql: string, signal: AbortSignal | undefined, sink: Sink): Promise<number> {
+  signal?.throwIfAborted();
+  const n = await link.stream?.(sql, signal, sink);
+  if (n !== undefined) return n;
+  // driver / SQL tanpa stream: semua baris result set pertama dimuat dulu lalu diteruskan ke sink
   const set = (await link.exec(sql, signal)).sets[0];
   if (!set) return 0;
   await sink.columns(set.columns);

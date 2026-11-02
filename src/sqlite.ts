@@ -89,6 +89,28 @@ function link(conn: ConnectionInfo, db: Database, session: boolean): Link {
         if (session ? /^\s*commit\b/i.test(sql) : changes) save(conn, db);
       }
     },
+    async stream(sql, signal, sink) {
+      // perubahan harus disimpan ke file: lewat exec
+      if (writes(sql)) return undefined;
+      let n: number | undefined;
+      for (const st of db.iterateStatements(sql)) {
+        try {
+          const cols = st.getColumnNames();
+          if (n === undefined && cols.length) {
+            await sink.columns(cols);
+            n = 0;
+            while (st.step()) {
+              signal?.throwIfAborted();
+              await sink.row(st.get());
+              n++;
+            }
+          } else while (st.step()) { /* statement lain tetap dijalankan, hasilnya tidak diexport */ }
+        } finally {
+          st.free();
+        }
+      }
+      return n ?? 0;
+    },
     async release() {
       db.close();
     },
