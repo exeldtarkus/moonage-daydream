@@ -361,6 +361,7 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
     columnDdl: myColumnDdl,
     newDatabase: myNewDatabase,
     dropDatabase: { script: (db) => `DROP DATABASE ${quoteMy(db)};`, system: ['mysql', 'information_schema', 'performance_schema', 'sys'] },
+    tableRef: myTbl,
     dropTable: (o) => `DROP TABLE ${myTbl(o)};`,
 
     async link(conn, password, db) {
@@ -378,10 +379,13 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
     },
     objects: (conn, password, db, kind) => select(conn, password, KIND[kind], [db]),
     async columns(conn, password, db, obj) {
-      const rows = await select<{ name: string; type: string; nullable: string }>(conn, password,
-        'SELECT column_name AS name, column_type AS type, is_nullable AS nullable FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position',
+      const rows = await select<{ name: string; type: string; nullable: string; dflt: string | null; extra: string }>(conn, password,
+        'SELECT column_name AS name, column_type AS type, is_nullable AS nullable, column_default AS dflt, extra AS extra FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position',
         [db, obj.name]);
-      return rows.map((r) => ({ name: r.name, type: r.type, nullable: r.nullable === 'YES' }));
+      // default / generated dipakai Add Data: AUTO_INCREMENT dianggap punya default, kolom GENERATED dilewati
+      return rows.map((r) => ({ name: r.name, type: r.type, nullable: r.nullable === 'YES',
+        ...(r.dflt !== null || /auto_increment/i.test(r.extra) ? { default: r.dflt ?? 'auto_increment' } : {}),
+        ...(/generated/i.test(r.extra) && !/default_generated/i.test(r.extra) ? { generated: true } : {}) }));
     },
     async primaryKey(conn, password, db, obj) {
       const rows = await select<{ name: string }>(conn, password,

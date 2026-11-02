@@ -712,6 +712,8 @@ export interface Driver {
   dropDatabase?: { script(db: string): string; inside?: boolean; system?: string[] };
   /** Drop Table (klik kanan tabel, konfirmasi modal): script, dijalankan di database tabel */
   dropTable?(obj: DbObject): string;
+  /** nama tabel lengkap + quote untuk script INSERT (Add Data); tidak ada = Add Data tidak tersedia */
+  tableRef?(obj: DbObject): string;
   createTableScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<string>;
   /** Run: script EXEC / CALL / SELECT dengan argumen; params = jumlah argumen (0 = langsung dijalankan) */
   runScript?(conn: ConnectionInfo, password: string, db: string, obj: DbObject): Promise<{ sql: string; params: number }>;

@@ -354,6 +354,7 @@ export const postgresDriver = sqlDriver({
   newDatabase: pgNewDatabase,
   // WITH (FORCE) = PostgreSQL 13+, memutus sesi lain ke database itu; satu statement (DROP DATABASE tidak boleh di dalam transaksi)
   dropDatabase: { script: (db) => `DROP DATABASE ${quotePg(db)} WITH (FORCE);`, system: ['template0', 'template1'] },
+  tableRef: (o) => full(o.schema, o.name),
   dropTable: (o) => `DROP TABLE ${full(o.schema, o.name)};`,
 
   async link(conn, password, db) {
@@ -371,9 +372,12 @@ export const postgresDriver = sqlDriver({
   },
   objects: (conn, password, db, kind) => select(conn, password, db, KIND[kind]),
   schemas: async (conn, password, db) => (await select<{ name: string }>(conn, password, db, PG_SCHEMAS_SQL)).map((r) => r.name),
-  columns: (conn, password, db, obj) => select(conn, password, db,
-    `SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, NOT a.attnotnull AS nullable FROM pg_attribute a
-      WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum`, [full(obj.schema, obj.name)]),
+  columns: (conn, password, db, obj) => select<{ name: string; type: string; nullable: boolean; default: string | null; generated: boolean }>(conn, password, db,
+    `SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, NOT a.attnotnull AS nullable,
+        CASE WHEN a.atthasdef OR a.attidentity <> '' THEN '(default)' END AS "default", a.attidentity = 'a' AS generated FROM pg_attribute a
+      WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum`, [full(obj.schema, obj.name)]).then((rows) =>
+    // default / generated dipakai Add Data; kolom tanpa keduanya tidak membawa properti itu
+    rows.map(({ default: d, generated: g, ...c }) => ({ ...c, ...(d ? { default: d } : {}), ...(g ? { generated: true } : {}) }))),
   async primaryKey(conn, password, db, obj) {
     const rows = await select<{ name: string }>(conn, password, db,
       `SELECT a.attname AS name FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)

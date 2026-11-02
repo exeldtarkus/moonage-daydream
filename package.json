@@ -199,6 +199,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "moonageDaydream.addData",
+        "title": "Add Data…",
+        "category": "Moonage Daydream",
+        "icon": "$(add)"
+      },
+      {
         "command": "moonageDaydream.dropDatabase",
         "title": "Drop Database…",
         "category": "Moonage Daydream",
@@ -744,6 +750,11 @@
           "group": "2_script@2"
         },
         {
+          "command": "moonageDaydream.addData",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^table(\\.[a-z.]+)?$/",
+          "group": "2_script@3"
+        },
+        {
           "command": "moonageDaydream.scriptAs",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view|procedure|function|trigger)\\.def\\.ms(\\.cols)?$/",
           "group": "2_script@3"
@@ -904,6 +915,10 @@
         },
         {
           "command": "moonageDaydream.newTable",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.addData",
           "when": "false"
         },
         {

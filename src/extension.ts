@@ -28,6 +28,8 @@ import { consulDashboardHtml } from './consulDashHtml';
 import { monitorHtml } from './monitorHtml';
 import { permissionHint } from './mssqlTree';
 import { importDbcode } from './connString';
+import { addDataHtml } from './addDataHtml';
+import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 
 let log: vscode.LogOutputChannel;
@@ -290,6 +292,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.killSession', killCommand),
     vscode.commands.registerCommand('moonageDaydream.newDatabase', newDatabase),
     vscode.commands.registerCommand('moonageDaydream.newTable', newTable),
+    vscode.commands.registerCommand('moonageDaydream.addData', addData),
     vscode.commands.registerCommand('moonageDaydream.dropDatabase', dropDatabase),
     vscode.commands.registerCommand('moonageDaydream.dropTable', dropTable),
     vscode.commands.registerCommand('moonageDaydream.liveMonitor', liveMonitor),
@@ -982,6 +985,54 @@ async function newSqliteDatabase(conn: ConnectionInfo) {
     log.error(`newSqliteDatabase - EXCEPTION CAUGHT | ${file}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showErrorMessage(`New Database failed: ${errMsg(e)}`);
   }
+}
+
+/** form Add Data per tabel (dibuka lagi = tab yang sama di-reveal) */
+const addDataPanels = new Map<string, vscode.WebviewPanel>();
+
+/** klik kanan tabel -> Add Data…: isian per kolom, script INSERT live, Insert (konfirmasi) atau Open in SQL Editor */
+async function addData(n?: Node) {
+  if (n?.kind !== 'obj' || n.objKind !== 'table') return;
+  const conn = n.c;
+  const d = drivers[conn.type];
+  if (!d.tableRef && d.dialect !== 'mongodb') return void vscode.window.showInformationMessage(`Add Data is not available for ${d.label} yet.`);
+  const label = n.obj.schema && conn.type !== 'sqlite' && d.dialect !== 'mongodb' ? `${n.obj.schema}.${n.obj.name}` : n.obj.name;
+  const key = `${conn.name}\u0000${n.db}\u0000${label}`;
+  const open = addDataPanels.get(key);
+  if (open) return open.reveal();
+  let cols;
+  try {
+    cols = await d.columns(conn, await conns.password(conn.name), n.db, n.obj);
+  } catch (e) {
+    log.error(`addData columns - EXCEPTION CAUGHT | ${conn.name} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    return void vscode.window.showErrorMessage(`Add Data failed: ${errMsg(e)}`);
+  }
+  if (!cols.length) return void vscode.window.showInformationMessage(`${label} has no columns to fill${d.dialect === 'mongodb' ? ' (empty collection: no sample document)' : ''}.`);
+  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.addData', `Add Data: ${n.obj.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
+  addDataPanels.set(key, panel);
+  panel.onDidDispose(() => addDataPanels.delete(key));
+  panel.webview.html = addDataHtml(panel.webview.cspSource, { conn: conn.name, table: `${n.db} / ${label}`, type: d.label }, !!conn.readOnly);
+  const post = (m: unknown) => void panel.webview.postMessage(m);
+  panel.webview.onDidReceiveMessage(async (m: { type: string; entries?: Record<string, DataEntry> }) => {
+    if (m.type === 'ready') return post({ type: 'init', columns: cols });
+    const r = insertScript(d, n.obj, cols, m.entries ?? {});
+    if (m.type === 'change') return post({ type: 'script', ...r });
+    if (!r.sql) return;
+    if (m.type === 'open') return openScript(conn, n.db, r.sql);
+    if (m.type !== 'insert' || conn.readOnly) return;
+    const ok = await vscode.window.showWarningMessage(`Insert a row into ${label} on ${conn.name}?`, { modal: true, detail: r.sql }, 'Insert');
+    if (!ok) return;
+    try {
+      post({ type: 'status', text: 'Inserting…' });
+      const res = await d.run({ ...conn, database: n.db }, await conns.password(conn.name), r.sql);
+      log.info(`addData: ${conn.name} / ${n.db} / ${label}`);
+      post({ type: 'status', text: res.resultSets.length || res.messages?.length ? `Inserted. ${(res.messages ?? []).join(' ')}`.trim() : 'Inserted.' });
+    } catch (e) {
+      log.error(`addData insert - EXCEPTION CAUGHT | ${conn.name} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      post({ type: 'status', text: `Insert failed: ${errMsg(e)}`, error: true });
+      vscode.window.showErrorMessage(`Add Data failed: ${errMsg(e)}`);
+    }
+  });
 }
 
 /** klik kanan database -> Drop Database…: konfirmasi modal; SQLite = hapus file (koneksi boleh ikut dihapus) */

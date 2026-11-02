@@ -300,14 +300,18 @@ export const sqliteDriver = sqlDriver({
   databases: async () => ['main'],
   objects: async (conn, _pw, _db, kind) => (KIND[kind] ? select(conn, KIND[kind]) : []),
   async columns(conn, _pw, _db, obj) {
-    const rows = await select<{ name: string; type: string; notnull: number }>(conn, `PRAGMA table_info(${quote(obj.name)})`);
-    return rows.map((r) => ({ name: r.name, type: r.type.toLowerCase(), nullable: !r.notnull }));
+    const rows = await select<{ name: string; type: string; notnull: number; dflt_value: string | null; pk: number }>(conn, `PRAGMA table_info(${quote(obj.name)})`);
+    const single = rows.filter((r) => r.pk > 0).length === 1;
+    // default dipakai Add Data: PK integer tunggal = alias rowid (nilai dibuat SQLite bila kosong)
+    return rows.map((r) => ({ name: r.name, type: r.type.toLowerCase(), nullable: !r.notnull,
+      ...(r.dflt_value !== null ? { default: r.dflt_value } : single && r.pk > 0 && /^integer$/i.test(r.type) ? { default: 'rowid' } : {}) }));
   },
   async primaryKey(conn, _pw, _db, obj) {
     const rows = await select<{ name: string; pk: number }>(conn, `PRAGMA table_info(${quote(obj.name)})`);
     return rows.filter((r) => r.pk > 0).sort((a, b) => a.pk - b.pk).map((r) => r.name);
   },
   selectTop: (_db, obj, n) => `SELECT * FROM ${quote(obj.name)} LIMIT ${n};`,
+  tableRef: (o) => quote(o.name),
   dropTable: (o) => `DROP TABLE ${quote(o.name)};`, // index & trigger tabel ikut terhapus
   close: async () => undefined, // tidak ada koneksi yang di-cache
 });

@@ -747,6 +747,7 @@ export const mssqlDriver: Driver = {
   newDatabase: msNewDatabase,
   // SINGLE_USER memutus koneksi lain ke database itu supaya DROP tidak ditolak
   dropDatabase: { script: (db) => `ALTER DATABASE ${q(db)} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;\nDROP DATABASE ${q(db)};`, system: ['master', 'model', 'msdb', 'tempdb'] },
+  tableRef: (o) => `${q(o.schema)}.${q(o.name)}`,
   dropTable: (o) => `DROP TABLE ${q(o.schema)}.${q(o.name)};`,
 
   selectTop(db, obj, n) {
