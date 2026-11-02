@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { checkRows, columnChanges, columnsConfirm, drivers, execScript, moveSteps, showColumns, type ColumnDdl, type ColumnDef,
   type ColumnRow, type DbObject, type NewColumn, type QueryResult, type Session } from '../db';
+import { splitBatches } from '../mssql';
 
 const COLS = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'ai', 'primary_key', 'pk_name', 'uq_name', 'uq_index',
   'fk_name', 'fk_schema', 'fk_table', 'fk_column', 'fk_delete', 'fk_update', 'gen', 'keys'];
@@ -237,7 +238,7 @@ test('columnsConfirm: lists drops, shrinking composite keys, rebuild notes, and 
 });
 
 test('columnsConfirm: MySQL warns that a composite foreign key blocks dropping a column', () => {
-  const ddl = Object.assign(attrDdl(), { dropKeepsKeys: true });
+  const ddl = Object.assign(attrDdl(), { dropKeepsKeys: true, rebuildKeys: false });
   const text = columnsConfirm(ddl, [], [col('tenant_id', { orig: 'tenant_id', deleted: true })],
     { tenant_id: 'FK (tenant_id, org_id) → tenant(id, org_id)' });
   assert.match(text, /FK \(tenant_id, org_id\) → tenant\(id, org_id\) blocks the column drop; MySQL refuses it\./);
@@ -292,4 +293,72 @@ test('execScript: close failure is logged and surfaced when there is no earlier 
   } finally {
     driverLog.error = oldLog;
   }
+});
+
+test('SQL Server key DDL: exact SQL and odd-name quoting', () => {
+  const ms = drivers.mssql.columnDdl!;
+  const table = { schema: 'dbo', name: 'or]ders' };
+  const target = '[dbo].[or]]ders]';
+  assert.equal(ms.addPk!(table, ['a', 'b']), `ALTER TABLE ${target} ADD CONSTRAINT [PK_or]]ders] PRIMARY KEY ([a], [b]);`);
+  assert.equal(ms.addPk!(table, ['id'], 'PK__x'), `ALTER TABLE ${target} ADD CONSTRAINT [PK__x] PRIMARY KEY ([id]);`);
+  assert.equal(ms.dropPk!(table, 'PK__x'), `ALTER TABLE ${target} DROP CONSTRAINT [PK__x];`);
+  assert.equal(ms.addUnique!(table, 'c'), `ALTER TABLE ${target} ADD CONSTRAINT [UQ_or]]ders_c] UNIQUE ([c]);`);
+  assert.equal(ms.addUnique!(table, 'c', 'ix', true), `CREATE UNIQUE INDEX [ix] ON ${target} ([c]);`);
+  assert.equal(ms.dropUnique!(table, 'UQ_x', false), `ALTER TABLE ${target} DROP CONSTRAINT [UQ_x];`);
+  assert.equal(ms.dropUnique!(table, 'ix', true), `DROP INDEX [ix] ON ${target};`);
+  assert.equal(ms.addFk!(table, 'order_id', { schema: 'sales', table: 'orders', column: 'id', onDelete: 'CASCADE', onUpdate: 'NO ACTION' }),
+    `ALTER TABLE ${target} ADD CONSTRAINT [FK_or]]ders_order_id] FOREIGN KEY ([order_id]) REFERENCES [sales].[orders] ([id]) ON DELETE CASCADE;`);
+  assert.equal(ms.dropFk!(table, 'FK_x'), `ALTER TABLE ${target} DROP CONSTRAINT [FK_x];`);
+  assert.equal(ms.add(table, { name: 'seq', type: 'int', nullable: false, ai: true }),
+    `ALTER TABLE ${target} ADD [seq] int IDENTITY(1, 1) NOT NULL;`);
+});
+
+test('SQL Server show: key names, single-column keys, and composite key badges', () => {
+  const ms = drivers.mssql.columnDdl!;
+  const sql = ms.show(ot);
+  for (const fragment of ['AS pk_name', 'AS uq_name', 'is_unique_constraint', 'AS fk_name', 'delete_referential_action_desc', 'AS keys', 'has_filter = 0']) {
+    assert.ok(sql.includes(fragment), `Missing ${fragment} in ${sql}`);
+  }
+  assert.equal(ms.setAi, undefined);
+  assert.equal(ms.move, undefined);
+});
+
+test('SQL Server script runs in one transaction with a NOEXEC guard per batch', () => {
+  const ms = drivers.mssql.columnDdl!;
+  const table = { schema: 'dbo', name: 'or]ders' };
+  const original = [col('qty'), col('price')];
+  const rows = [col('quantity', { orig: 'qty', type: 'bigint' }), col('price', { orig: 'price', deleted: true }), col('note', { type: 'int' })];
+  const result = columnChanges(ms, table, original, rows);
+  assert.ok(result.sql.startsWith('SET XACT_ABORT ON;\nBEGIN TRANSACTION;\nGO\n'));
+  assert.ok(result.sql.endsWith('COMMIT TRANSACTION;\nGO\nSET NOEXEC OFF;'));
+  const guard = 'IF @@ERROR <> 0 OR @@TRANCOUNT = 0 SET NOEXEC ON;';
+  assert.equal(result.sql.split(guard).length - 1, splitBatches(result.steps.map((step) => step.sql).join('\nGO\n')).length);
+  assert.ok(!result.steps[0].sql.includes('XACT_ABORT'));
+  assert.match(ms.note ?? '', /one transaction/);
+});
+
+test('SQL Server rejects identity changes on existing columns', () => {
+  const ms = drivers.mssql.columnDdl!;
+  const old = [col('qty', { ai: true })];
+  const result = columnChanges(ms, ot, old, [col('qty', { orig: 'qty' })]);
+  assert.deepEqual(result.errors, ['qty: identity can only be set on a new column']);
+});
+
+test('SQL Server drops keys before a key column and re-adds the remaining primary key', () => {
+  const ms = drivers.mssql.columnDdl!;
+  const original = [
+    col('id', { pk: true, pkName: 'PK_or]ders' }),
+    col('price', { pk: true, pkName: 'PK_or]ders', unique: true, uqName: 'UQ_or]ders_price',
+      fk: { name: 'FK_or]ders_price', schema: 'dbo', table: 'orders', column: 'id' } }),
+  ];
+  const rows = [col('id', { orig: 'id', pk: true, pkName: 'PK_or]ders' }), col('price', { orig: 'price', deleted: true })];
+  const result = columnChanges(ms, { schema: 'dbo', name: 'or]ders' }, original, rows);
+  assert.deepEqual(result.steps.map((step) => step.title), [
+    'Drop foreign key FK_or]ders_price',
+    'Drop unique UQ_or]ders_price',
+    'Drop primary key PK_or]ders',
+    'Drop price',
+    'Add primary key PK_or]ders (id)',
+  ]);
+  for (const step of result.steps) assert.doesNotMatch(step.sql, /DROP[^;]*CASCADE/);
 });

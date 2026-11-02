@@ -121,7 +121,7 @@ test('columns editor: steps for the Pending changes list (kind, column, sql)', (
   const o = [{ name: 'qty', type: 'int', nullable: true }, { name: 'price', type: 'int', nullable: true }];
   const r = columnChanges(ms, t, o, [{ ...o[0], orig: 'qty', name: 'quantity' }, { ...o[1], orig: 'price', deleted: true }, { name: 'note', type: 'int', nullable: true }]);
   assert.deepEqual(r.steps.map((s) => [s.kind, s.column, s.to]), [['drop', 'price', undefined], ['edit', 'qty', 'quantity'], ['add', 'note', undefined]]);
-  assert.equal(r.sql, r.steps.map((s) => s.sql).join('\nGO\n'));
+  assert.equal(r.sql, ms.wrap!(r.steps.map((s) => s.sql).join('\nGO\n')));
   // langkah Change menyebut apa yang berubah (nama ada di judul)
   const o2 = [{ name: 'qty', type: 'int', nullable: true, default: '((0))' }];
   const d = (next: Partial<ColumnRow>) => columnChanges(ms, t, o2, [{ ...o2[0], orig: 'qty', ...next }]).steps[0].detail;
@@ -176,7 +176,7 @@ test('columns editor: drops, then edits, then adds, one GO batch each (SQL Serve
   const r = columnChanges(ms, t, orig, rows);
   assert.deepEqual(r.errors, []);
   assert.equal(r.count, 3);
-  assert.equal(r.sql, [ms.drop(t, 'price'), ms.edit(t, orig[1], { ...orig[1], name: 'quantity' }), ms.add(t, { name: 'note', type: 'nvarchar(100)', nullable: true })].join('\nGO\n'));
+  assert.equal(r.sql, ms.wrap!([ms.drop(t, 'price'), ms.edit(t, orig[1], { ...orig[1], name: 'quantity' }), ms.add(t, { name: 'note', type: 'nvarchar(100)', nullable: true })].join('\nGO\n')));
   // baris baru yang dihapus lagi / kosong tidak ikut
   const r2 = columnChanges(ms, t, orig, [...same(), { name: 'x', type: 'int', nullable: true, deleted: true }, { name: ' ', type: '', nullable: true }]);
   assert.equal(r2.count, 0);

@@ -228,6 +228,7 @@ export const msColumnDdl: ColumnDdl = {
   separator: '\nGO\n',
   newType: 'nvarchar(100)',
   types: MS_TYPES,
+  note: 'All changes run in one transaction; execution stops on the first error.',
   show: (o) => `SELECT c.column_id AS ordinal, c.name AS column_name,
   t.name + CASE WHEN t.name IN ('varchar', 'char', 'varbinary', 'binary') THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length AS varchar(10))) + ')'
     WHEN t.name IN ('nvarchar', 'nchar') THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length / 2 AS varchar(10))) + ')'
@@ -235,21 +236,87 @@ export const msColumnDdl: ColumnDdl = {
     WHEN t.name IN ('datetime2', 'time', 'datetimeoffset') THEN '(' + CAST(c.scale AS varchar(10)) + ')' ELSE '' END AS data_type,
   IIF(c.is_nullable = 1, 'YES', 'NO') AS nullable, d.definition AS default_value,
   IIF(c.is_identity = 1, CONCAT(CAST(ic.seed_value AS varchar(40)), ', ', CAST(ic.increment_value AS varchar(40))), NULL) AS [identity],
-  cc.definition AS computed, IIF(pk.column_id IS NULL, '', 'PK') AS primary_key, c.collation_name AS collation
+  cc.definition AS computed, IIF(pk.column_id IS NULL, '', 'PK') AS primary_key, pk.name AS pk_name,
+  uq.name AS uq_name, uq.is_index AS uq_index,
+  fk.name AS fk_name, fk.schema_name AS fk_schema, fk.table_name AS fk_table, fk.column_name AS fk_column,
+  fk.delete_action AS fk_delete, fk.update_action AS fk_update, keyinfo.[keys] AS keys, c.collation_name AS collation
 FROM sys.columns c
 JOIN sys.types t ON t.user_type_id = c.user_type_id
 LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id
 LEFT JOIN sys.identity_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
 LEFT JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
-OUTER APPLY (SELECT TOP 1 x.column_id FROM sys.indexes i JOIN sys.index_columns x ON x.object_id = i.object_id AND x.index_id = i.index_id
+OUTER APPLY (SELECT TOP (1) x.column_id, i.name FROM sys.indexes i JOIN sys.index_columns x ON x.object_id = i.object_id AND x.index_id = i.index_id
   WHERE i.object_id = c.object_id AND i.is_primary_key = 1 AND x.column_id = c.column_id) pk
+OUTER APPLY (
+  SELECT TOP (1) i.name, CONVERT(int, CASE WHEN i.is_unique_constraint = 1 THEN 0 ELSE 1 END) AS is_index
+  FROM sys.indexes i JOIN sys.index_columns x ON x.object_id = i.object_id AND x.index_id = i.index_id
+  WHERE i.object_id = c.object_id AND i.is_unique = 1 AND i.is_primary_key = 0 AND i.has_filter = 0
+    AND x.column_id = c.column_id AND x.is_included_column = 0
+    AND (SELECT COUNT(*) FROM sys.index_columns k WHERE k.object_id = i.object_id AND k.index_id = i.index_id AND k.is_included_column = 0) = 1
+  ORDER BY i.name
+) uq
+OUTER APPLY (
+  SELECT TOP (1) f.name, SCHEMA_NAME(rt.schema_id) AS schema_name, rt.name AS table_name, rc.name AS column_name,
+    REPLACE(f.delete_referential_action_desc, '_', ' ') AS delete_action,
+    REPLACE(f.update_referential_action_desc, '_', ' ') AS update_action
+  FROM sys.foreign_keys f
+  JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = f.object_id
+  JOIN sys.tables rt ON rt.object_id = f.referenced_object_id
+  JOIN sys.columns rc ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+  WHERE f.parent_object_id = c.object_id AND fc.parent_column_id = c.column_id
+    AND (SELECT COUNT(*) FROM sys.foreign_key_columns k WHERE k.constraint_object_id = f.object_id) = 1
+  ORDER BY f.name
+) fk
+OUTER APPLY (
+  SELECT STRING_AGG(k.label, N'; ') WITHIN GROUP (ORDER BY k.label) AS [keys]
+  FROM (
+    SELECT CONCAT(N'UQ (', STRING_AGG(uc.name, N', ') WITHIN GROUP (ORDER BY ux.key_ordinal), N')') AS label
+    FROM sys.indexes ui
+    JOIN sys.index_columns ux ON ux.object_id = ui.object_id AND ux.index_id = ui.index_id AND ux.is_included_column = 0
+    JOIN sys.columns uc ON uc.object_id = ux.object_id AND uc.column_id = ux.column_id
+    WHERE ui.object_id = c.object_id AND ui.is_unique = 1 AND ui.is_primary_key = 0 AND ui.has_filter = 0
+      AND EXISTS (SELECT 1 FROM sys.index_columns member WHERE member.object_id = ui.object_id AND member.index_id = ui.index_id
+        AND member.column_id = c.column_id AND member.is_included_column = 0)
+    GROUP BY ui.index_id
+    HAVING COUNT(*) > 1
+    UNION ALL
+    SELECT CONCAT(N'FK (', STRING_AGG(pc.name, N', ') WITHIN GROUP (ORDER BY fc.constraint_column_id), N') → ',
+      SCHEMA_NAME(rt2.schema_id), N'.', rt2.name, N'(', STRING_AGG(rc2.name, N', ') WITHIN GROUP (ORDER BY fc.constraint_column_id), N')') AS label
+    FROM sys.foreign_keys f2
+    JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = f2.object_id
+    JOIN sys.columns pc ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+    JOIN sys.columns rc2 ON rc2.object_id = fc.referenced_object_id AND rc2.column_id = fc.referenced_column_id
+    JOIN sys.tables rt2 ON rt2.object_id = f2.referenced_object_id
+    WHERE f2.parent_object_id = c.object_id
+      AND EXISTS (SELECT 1 FROM sys.foreign_key_columns member WHERE member.constraint_object_id = f2.object_id AND member.parent_column_id = c.column_id)
+    GROUP BY f2.object_id, rt2.schema_id, rt2.name
+    HAVING COUNT(*) > 1
+  ) k
+) keyinfo
 WHERE c.object_id = OBJECT_ID(${lit(tbl(o))})
 ORDER BY c.column_id;`,
-  add: (o, c) => `ALTER TABLE ${tbl(o)} ADD ${colDef(c)}${dflt(c.default) ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(dflt(c.default)!)}` : ''};`,
+  add: (o, c) => `ALTER TABLE ${tbl(o)} ADD ${q(c.name)} ${c.type.trim()}${c.ai ? ' IDENTITY(1, 1)' : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}${dflt(c.default) ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(dflt(c.default)!)}` : ''};`,
   drop: (o, name) => `${dropDefault(o, name)}\nALTER TABLE ${tbl(o)} DROP COLUMN ${q(name)};`,
   aiTypes: ['bigint', 'int', 'smallint', 'tinyint'],
   nameMax: 128,
   fkActions: ['NO ACTION', 'CASCADE', 'SET NULL', 'SET DEFAULT'],
+  rebuildKeys: true,
+  wrap(sql) {
+    const batches = splitBatches(sql);
+    if (!batches.length) return sql;
+    const guard = 'IF @@ERROR <> 0 OR @@TRANCOUNT = 0 SET NOEXEC ON;';
+    const body = batches.map((batch) => `${batch}\nGO\n${guard}\nGO`).join('\n');
+    return `SET XACT_ABORT ON;\nBEGIN TRANSACTION;\nGO\n${body}\nCOMMIT TRANSACTION;\nGO\nSET NOEXEC OFF;`;
+  },
+  dropPk: (o, name) => `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name ?? `PK_${o.name}`)};`,
+  addPk: (o, cols, name) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `PK_${o.name}`)} PRIMARY KEY (${cols.map(q).join(', ')});`,
+  dropUnique: (o, name, index) => index ? `DROP INDEX ${q(name)} ON ${tbl(o)};` : `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name)};`,
+  addUnique: (o, col, name, index) => index
+    ? `CREATE UNIQUE INDEX ${q(name ?? `UQ_${o.name}_${col}`)} ON ${tbl(o)} (${q(col)});`
+    : `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `UQ_${o.name}_${col}`)} UNIQUE (${q(col)});`,
+  dropFk: (o, name) => `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name)};`,
+  addFk: (o, col, fk) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${q(col)}) REFERENCES ${q(fk.schema)}.${q(fk.table)} (${q(fk.column)})`
+    + `${fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''};`,
   create(o, cols) {
     const pk = cols.filter((c) => c.pk);
     const lines = [
