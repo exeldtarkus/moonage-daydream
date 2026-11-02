@@ -93,6 +93,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     // npm run test:real membuka URI ini: test real di jendela dev (profil user, koneksi tersimpan); extensionTestsPath tidak bisa saat VS Code lain terbuka
     ctx.subscriptions.push(vscode.window.registerUriHandler({
       handleUri: (u) => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- dimuat lazy, tidak ikut bundle
         if (u.path === '/real-test') return require('./test/real').run(u.query || undefined);
         // npm run dev: jendela dev yang sudah terbuka hanya di-reload VS Code (workspace lama tetap), pindahkan ke folder yang diminta
         const folder = u.path === '/open-folder' && new URLSearchParams(u.query).get('folder');
@@ -108,6 +109,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       try {
         const only = fs.readFileSync(trigger, 'utf8').trim();
         fs.rmSync(trigger, { force: true });
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- dimuat lazy, tidak ikut bundle
         void require('./test/real').run(only || undefined);
       } catch (e) {
         log.error(`real-test trigger - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
@@ -1419,7 +1421,10 @@ async function autoCommitConfirmCommand(n?: Node) {
     { label: 'Off', description: 'run them without asking', value: false },
     ...(n.kind === 'conn' ? [{ label: 'Same as group', description: n.c.group ? `group "${n.c.group}": ${confirmAutoCommit({ ...n.c, confirmAutoCommit: undefined }, groups) ? 'On' : 'Off'}` : 'no group: On', value: undefined }] : []),
   ];
-  for (const i of items) if (i.value === current || (n.kind === 'group' && current === undefined && i.value === true)) i.picked = true, i.label = `$(check) ${i.label}`;
+  for (const i of items) if (i.value === current || (n.kind === 'group' && current === undefined && i.value === true)) {
+    i.picked = true;
+    i.label = `$(check) ${i.label}`;
+  }
   const pick = await vscode.window.showQuickPick(items, { title: `Auto-commit confirmation for ${n.kind === 'group' ? `group "${n.group}"` : `connection "${n.c.name}"`}` });
   if (!pick) return;
   if (n.kind === 'group') await conns.setGroupConfirm(n.group, pick.value === true ? undefined : pick.value);
@@ -1542,7 +1547,10 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
       let n = 0;
       try {
         if (m.scope === 'sel') {
-          for (const i of m.rows ?? []) if (rs.rows[i]) n++, await sink.row(pick(rs.rows[i]));
+          for (const i of m.rows ?? []) if (rs.rows[i]) {
+            n++;
+            await sink.row(pick(rs.rows[i]));
+          }
         } else if (fromServer) {
           const c = fileConn(base!);
           if (!c) throw new Error('Connection for this result no longer exists');
@@ -1560,7 +1568,10 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
           const tx = openTx(src!.uri, c);
           n = await (tx ? tx.stream(sql, ac.signal, rows) : drivers[c.type].stream(c, await conns.password(c.name), sql, ac.signal, rows));
         } else {
-          for (const row of rs.rows) n++, await sink.row(pick(row));
+          for (const row of rs.rows) {
+            n++;
+            await sink.row(pick(row));
+          }
         }
         await sink.end();
       } catch (e) {

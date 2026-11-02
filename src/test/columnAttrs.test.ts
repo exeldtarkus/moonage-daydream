@@ -393,7 +393,7 @@ test('MySQL setAi and move preserve the full column definition', () => {
     `ALTER TABLE ${MT} MODIFY COLUMN \`qty\` int unsigned NOT NULL DEFAULT 0 COMMENT 'x' AFTER \`title\`;`);
   assert.equal(myd.move!(mo, { name: 'id', type: 'int', nullable: false, ai: true }, 'note'),
     `ALTER TABLE ${MT} MODIFY COLUMN \`id\` int NOT NULL AUTO_INCREMENT AFTER \`note\`;`);
-  assert.equal(myd.move!(mo, { name: 'total', type: 'decimal(12,2)', nullable: true, gen: 'AS (\`qty\` * \`price\`) VIRTUAL' }, null),
+  assert.equal(myd.move!(mo, { name: 'total', type: 'decimal(12,2)', nullable: true, gen: 'AS (`qty` * `price`) VIRTUAL' }, null),
     `ALTER TABLE ${MT} MODIFY COLUMN \`total\` decimal(12,2) AS (\`qty\` * \`price\`) VIRTUAL FIRST;`);
   assert.equal(myd.move!(mo, { name: 'created', type: 'timestamp', nullable: false, default: 'CURRENT_TIMESTAMP',
     keep: "on update current_timestamp() INVISIBLE COMMENT 'c'" }, null),

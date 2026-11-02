@@ -17,3 +17,8 @@ images/screenshots/**
 deployment/**
 logs/**
 .github/**
+eslint.config.mjs
+.claude/**
+graphify-out/**
+.superpowers/**
+CLAUDE.md

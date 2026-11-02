@@ -1,14 +1,14 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { stat, unlink } from 'fs/promises';
 import type { Database, SqlJsStatic } from 'sql.js';
-import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, NewColumn, ObjectKind, TypeSpec } from './db';
+import type { ColumnDdl, ColumnDef, ColumnRow, ConnectionInfo, DbObject, ListKind, NewColumn, TypeSpec } from './db';
 import { maskSql, splitStatements } from './sqlContext';
 import { driverLog } from './log';
 import { sqlDriver } from './sqlDriver';
 import type { Link } from './sqlDriver';
 
 // wasm ter-embed di file JS: tidak ada file .wasm yang perlu dicari saat runtime / ikut di VSIX
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const initSqlJs = require('sql.js/dist/sql-wasm-inline.js') as () => Promise<SqlJsStatic>;
 let engine: Promise<SqlJsStatic> | undefined;
 

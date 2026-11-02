@@ -94,6 +94,7 @@ let activeTx: FakeTransaction | undefined;
 class FakeTransaction extends EventEmitter {
   async begin() {
     exec('BEGIN TRAN');
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- fake menyimpan transaksi aktif untuk test
     activeTx = this;
   }
   async commit() {

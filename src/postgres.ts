@@ -1,6 +1,6 @@
 import { Client, Pool, types } from 'pg';
 import type { ClientConfig, PoolClient, QueryArrayResult } from 'pg';
-import type { ColumnDdl, ConnectionInfo, ListKind, NewDatabase, ObjectKind, ProcParam, TypeSpec } from './db';
+import type { ColumnDdl, ConnectionInfo, ListKind, NewDatabase, ProcParam, TypeSpec } from './db';
 import { connectMs, typedOptions } from './db';
 import { maskSql } from './sqlContext';
 import { driverLog } from './log';

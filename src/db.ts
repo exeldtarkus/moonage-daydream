@@ -593,6 +593,7 @@ export async function execScript(d: Pick<Driver, 'run' | 'session'>, c: Connecti
       await session.close();
     } catch (e) {
       driverLog.error(`execScript close - EXCEPTION CAUGHT | ${errText(e)}`);
+      // eslint-disable-next-line no-unsafe-finally -- error close hanya dilempar bila script sendiri sukses
       if (!failed) throw e;
     }
   }

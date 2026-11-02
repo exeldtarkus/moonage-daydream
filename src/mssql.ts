@@ -695,6 +695,7 @@ export const mssqlDriver: Driver = {
       try {
         await tx.rollback();
       } catch (re) {
+        // eslint-disable-next-line no-unsafe-finally -- error rollback hanya dilempar bila query sendiri sukses
         if (!failure) throw re;
         // query sudah gagal / dibatalkan: error asli yang dilaporkan (dan di-log pemanggil), error rollback ditempelkan
         if (failure instanceof Error) failure.message += ` (rollback: ${re instanceof Error ? re.message : re})`;

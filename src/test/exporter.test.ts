@@ -37,7 +37,7 @@ test('export formats', async () => {
     assert.deepEqual(JSON.parse(pretty), json);
     assert.ok(pretty.startsWith('[\n  {\n    "id": 1,'), 'pretty indented');
     const csv = readFileSync(await write('csv'), 'utf8');
-    assert.equal(csv, '﻿id,name,name,when,ok,bin\r\n1,"a|b, ""c""\nd",,2025-01-02T00:00:00.000Z,true,0x01FF\r\n2.5,<x>&,y,,false,\r\n');
+    assert.equal(csv, '\uFEFFid,name,name,when,ok,bin\r\n1,"a|b, ""c""\nd",,2025-01-02T00:00:00.000Z,true,0x01FF\r\n2.5,<x>&,y,,false,\r\n');
     const md = readFileSync(await write('markdown'), 'utf8');
     assert.equal(md.split('\n')[2], '| 1 | a\\|b, "c"<br>d | NULL | 2025-01-02T00:00:00.000Z | true | 0x01FF |');
     const html = readFileSync(await write('html'), 'utf8');

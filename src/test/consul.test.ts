@@ -55,7 +55,8 @@ test('consul client: token header, get value with ModifyIndex, put with CAS, del
   assert.equal(await c.delete('app/', true), true);
   assert.match(calls[2].url, /\/v1\/kv\/app\/\?dc=dc1&recurse$/);
   assert.equal(await c.leader(), '10.0.0.1:8300');
-  assert.equal(new ConsulClient(conn, '', f) && (await new ConsulClient(conn, '', f).leader(), calls.at(-1)!.headers['X-Consul-Token']), undefined, 'no token header without a token');
+  await new ConsulClient(conn, '', f).leader();
+  assert.equal(calls.at(-1)!.headers['X-Consul-Token'], undefined, 'no token header without a token');
 });
 
 test('consul client: missing key, CAS conflict, ACL denied, server error', async () => {
@@ -202,7 +203,7 @@ test('consul dashboard panel: KV sections, split layout, editor, save, delete, n
 test('consul dashboard panel: filter is cleared when moving to another folder, kept on refresh', async () => {
   const { consulDashboardHtml } = await import('../consulDashHtml');
   const js = consulDashboardHtml('csp', 't').split(/<script nonce="[^"]*">/)[1].split('</script>')[0];
-  const fn = /function kvBrowse\(prefix\) \{[\s\S]*?\n  \}\n/.exec(js)?.[0];
+  const fn = /function kvBrowse\(prefix\) \{[\s\S]*?\n {2}\}\n/.exec(js)?.[0];
   assert.ok(fn, 'kvBrowse found');
   const els: Record<string, { value: string; className: string; textContent: string; innerHTML: string }> = {};
   const $ = (id: string) => (els[id] ??= { value: '', className: '', textContent: '', innerHTML: '' });

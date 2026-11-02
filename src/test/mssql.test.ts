@@ -441,7 +441,7 @@ test('scriptAs: INSERT / UPDATE skip identity, computed and rowversion columns (
     'INSERT INTO [dbo].[orders] (\n    [code]\n  , [total]\n)\nVALUES (\n    NULL -- code varchar(10)\n  , NULL -- total decimal(12,2)\n);');
   assert.equal(scriptAs('update', t, 'table', cols, ['id']),
     'UPDATE [dbo].[orders]\nSET\n    [code] = NULL -- varchar(10)\n  , [total] = NULL -- decimal(12,2)\nWHERE\n    [id] = NULL -- int\n;');
-  assert.match(scriptAs('select', t, 'table', cols, ['id']), /\[total_tax\]\n  , \[ver\]\nFROM/);
+  assert.match(scriptAs('select', t, 'table', cols, ['id']), /\[total_tax\]\n {2}, \[ver\]\nFROM/);
 });
 
 test('createTableScript: identity, computed, default, collation, PK / unique / check, then foreign keys and indexes', () => {

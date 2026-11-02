@@ -1,6 +1,6 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
-import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, NewColumn, NewDatabase, ObjectKind, ProcParam, TypeSpec } from './db';
+import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, NewDatabase, ProcParam, TypeSpec } from './db';
 import { connectMs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
