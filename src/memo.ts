@@ -1,0 +1,16 @@
+/** cache promise per key dengan umur (ms); fresh = selalu muat ulang lalu simpan; promise gagal tidak disimpan */
+export function ttlCache(ms: number, now: () => number = Date.now) {
+  const map = new Map<string, { at: number; value: Promise<unknown> }>();
+  return {
+    get<T>(key: string, load: () => Promise<T>, fresh = false): Promise<T> {
+      const hit = map.get(key);
+      if (!fresh && hit && now() - hit.at <= ms) return hit.value as Promise<T>;
+      const value = load();
+      map.set(key, { at: now(), value });
+      // gagal: dibuang supaya percobaan berikutnya memuat ulang (error tetap sampai ke pemanggil)
+      value.catch(() => { if (map.get(key)?.value === value) map.delete(key); });
+      return value;
+    },
+    clear: () => map.clear(),
+  };
+}

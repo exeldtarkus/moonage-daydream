@@ -35,6 +35,7 @@ import { permissionHint } from './mssqlTree';
 import { importDbcode } from './connString';
 import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
+import { ttlCache } from './memo';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 
 let log: vscode.LogOutputChannel;
@@ -277,6 +278,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.renameGroup', (n?: Node, name?: string) => renameGroup(n, name)),
     vscode.commands.registerCommand('moonageDaydream.refreshExplorer', (n?: Node) => {
       completion.clear(); // tabel baru juga muncul di autocomplete
+      gridMeta.clear();
       explorer.refresh(n);
     }),
     vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
@@ -812,6 +814,7 @@ function columnsEditor(n?: Node) {
       post({ type: 'status', text: 'Executing…' });
       await execScript(d, c, await conns.password(conn.name), r.sql, conn.type === 'mssql');
       log.info(`columnsEditor execute: ${conn.name} / ${db} / ${table}: ${r.count} change(s)`);
+      gridMeta.clear(); // PK / kolom generated bisa berubah
       await load();
       post({ type: 'status', text: `Saved ${r.count} change(s)` });
       explorer.refresh();
@@ -1981,9 +1984,11 @@ export async function explainQuery(mode: 'estimated' | 'actual', uriArg?: vscode
 
 /** alasan result set tidak bisa diedit (bukan error sistem): tombol edit dinonaktifkan dengan pesan ini */
 class NotEditable extends Error {}
+// metadata tabel untuk penanda edit grid (PK, schema, kolom generated): dipakai ulang 60 detik setelah SELECT; Save / script selalu baca ulang
+const gridMeta = ttlCache(60_000);
 
 /** tabel / koleksi asal result set yang diedit: SELECT satu tabel + primary key, atau find() satu koleksi MongoDB (_id) */
-async function gridTarget(m: ResultMessage, o = results.current?.outcome) {
+async function gridTarget(m: ResultMessage, o = results.current?.outcome, cached = false) {
   if (!o) throw new NotEditable('No result to edit');
   const part = 'parts' in o && m.part !== undefined ? o.parts[m.part] : undefined;
   const single = part ? part.o : o;
@@ -2008,16 +2013,18 @@ async function gridTarget(m: ResultMessage, o = results.current?.outcome) {
   // MySQL: `db.tabel` (schema = database); lainnya `db.schema.tabel` / `schema.tabel`
   const db = parts.length === 3 || (d.dialect === 'mysql' && parts.length === 2) ? parts[0] : c.database || d.defaultDb;
   const pw = await conns.password(c.name);
+  const key = `${c.name}\u0000${db}\u0000`;
   const schema = d.dialect === 'mysql' ? db : (parts.length >= 2 && parts[parts.length - 2])
-    || (await d.objects(c, pw, db, 'table')).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
-  const pk = await d.primaryKey(c, pw, db, { schema, name });
+    || (await gridMeta.get(`${key}tables`, () => d.objects(c, pw, db, 'table'), !cached)).find((x) => x.name.toLowerCase() === name.toLowerCase())?.schema || schemaOf(c, db);
+  const tkey = `${key}${schema}\u0000${name}\u0000`;
+  const pk = await gridMeta.get(`${tkey}pk`, () => d.primaryKey(c, pw, db, { schema, name }), !cached);
   if (!pk.length) throw new NotEditable(`${schema}.${name} has no primary key, so rows cannot be identified safely`);
   const q = d.quote;
   const table = d.dialect === 'mssql' ? `${q(db)}.${q(schema)}.${q(name)}` : d.dialect === 'mysql' ? `${q(db)}.${q(name)}`
     : d.dialect === 'postgres' ? `${q(schema)}.${q(name)}` : q(name);
   if (!pk.every((k) => rs.columns.some((x) => k.toLowerCase() === x.toLowerCase()))) throw new NotEditable(`The primary key (${pk.join(', ')}) must be part of the SELECT to edit rows`);
   // kolom generated / computed / identity: tidak boleh diisi di baris baru / diedit
-  const generated = (await d.columns(c, pw, db, { schema, name })).filter((x) => x.generated).map((x) => x.name);
+  const generated = (await gridMeta.get(`${tkey}cols`, () => d.columns(c, pw, db, { schema, name }), !cached)).filter((x) => x.generated).map((x) => x.name);
   return { c, d, pw, rs, src, pk, table, label: `${db}.${schema}.${name}`, mongo: false, generated };
 }
 
@@ -2025,14 +2032,13 @@ async function gridTarget(m: ResultMessage, o = results.current?.outcome) {
  * setelah hasil tampil: result set yang tidak bisa diedit (atau koneksi read-only) diberi alasan -> tombol edit nonaktif + tooltip.
  * Error lain (mis. gagal membaca primary key) dicatat dan tombol tetap aktif: Save akan melaporkannya.
  */
-// shortcut: tiap SELECT memicu baca primary key (+ daftar tabel bila schema tidak ditulis) setelah hasil tampil; cache per tabel bila terasa lambat di database besar
 async function markEditable(o: Outcome) {
   const singles = 'parts' in o ? o.parts.map((p, part) => ({ s: p.o, part })) : [{ s: o, part: undefined }];
   let changed = false;
   for (const { s, part } of singles) {
     if (!('result' in s) || !s.result.resultSets.length) continue;
     try {
-      const t = await gridTarget({ type: 'saveGrid', set: 0, part } as ResultMessage, o);
+      const t = await gridTarget({ type: 'saveGrid', set: 0, part } as ResultMessage, o, true);
       if (t.c.readOnly) throw new NotEditable(`${t.c.name} is a read-only connection`);
       if (t.generated.length) {
         s.genCols = t.generated;
