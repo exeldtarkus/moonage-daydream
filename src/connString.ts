@@ -36,12 +36,14 @@ export function parseConnectionString(text: string): ParsedConnection {
   throw new Error(UNSUPPORTED);
 }
 
-// shortcut: satu host saja; mongodb://h1,h2/ (replica set beberapa host) belum didukung URL parser, pakai mongodb+srv atau satu host
 function fromUrl(s: string, scheme: string): ParsedConnection {
   const type = URL_TYPES[scheme];
+  // mongodb://h1:p1,h2:p2/ (replica set): URL tidak bisa membaca banyak host, jadi host diganti satu nama dulu lalu daftar host disimpan utuh di field host
+  const hosts = scheme === 'mongodb' ? /^mongodb:\/\/(?:[^@/?#]*@)?([^/?#]*)/i.exec(s)?.[1] ?? '' : '';
+  const many = hosts.includes(',');
   let u: URL;
   try {
-    u = new URL(s);
+    u = new URL(many ? s.replace(hosts, 'replica-set') : s);
   } catch (e) {
     // input user yang salah: pesan singkat ke form, detail tetap di log
     driverLog.error(`parseConnectionString - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
@@ -49,8 +51,8 @@ function fromUrl(s: string, scheme: string): ParsedConnection {
   }
   const out: ParsedConnection = {
     type,
-    host: scheme === 'mongodb+srv' ? `mongodb+srv://${u.hostname}` : u.hostname,
-    port: u.port || String(drivers[type].defaultPort),
+    host: scheme === 'mongodb+srv' ? `mongodb+srv://${u.hostname}` : many ? `mongodb://${hosts}` : u.hostname,
+    port: (!many && u.port) || String(drivers[type].defaultPort),
   };
   if (u.username) out.user = decodeURIComponent(u.username);
   if (u.password) out.password = decodeURIComponent(u.password);
