@@ -107,3 +107,12 @@ test('grid edit: rows marked for deletion are red, also while selected', () => {
   assert.match(rule, /color: var\(--vscode-errorForeground[^;]*!important/);
   assert.match(rule, /text-decoration: line-through/);
 });
+
+test('grid edit: Discard / Generate script work when rows were only marked for deletion (no cell edits yet)', () => {
+  const result = { resultSets: [{ columns: ['a'], types: ['int'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 };
+  const html = render('csp', 't', { result, source: { uri: 'u', sql: 'select a from t' } });
+  // s.edits baru dibuat saat sel pertama diedit: akses tanpa ?. / ?? membuat Discard berhenti dengan TypeError
+  assert.doesNotMatch(html, /\[\.\.\.s\.edits\]/);
+  assert.doesNotMatch(html, /s\.edits\.clear\(\)/);
+  assert.match(html, /s\.edits\?\.clear\(\)/);
+});

@@ -522,12 +522,12 @@ const GRID_SCRIPT = `(() => {
     if (b.classList.contains('genupd') || b.classList.contains('discard')) {
       const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
       if (b.classList.contains('genupd')) {
-        const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
+        const edits = [...(s.edits ?? [])].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
         const part = t.closest('section')?.dataset.part;
         vscode.postMessage({ type: 'edits', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits });
       } else {
         st(t).rows.flatMap((r) => [...r.querySelectorAll('td.edited')]).forEach((td) => { showCell(td, JSON.parse(td.dataset.orig)); td.classList.remove('edited'); });
-        s.edits.clear();
+        s.edits?.clear(); // belum ada edit sel (hanya Delete rows / Add row): map belum dibuat
         s.deletes?.clear();
         st(t).rows.forEach((r) => r.classList.remove('todelete'));
         t.tBodies[1]?.remove();
