@@ -173,10 +173,10 @@ export type NewColumn = ColumnDef & {
   fk?: ColumnFk;
 };
 
-/** New Table: validasi lalu script CREATE TABLE (kosong bila ada error); kolom PK dipaksa NOT NULL */
+/** New Table: validasi lalu script CREATE TABLE (kosong bila ada error); kolom PK / AI dipaksa NOT NULL */
 export function createTable(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[]): { sql: string; errors: string[] } {
   const cols = rows.filter((r) => r.name.trim() || r.type.trim()).map((r): NewColumn => ({ ...r, name: r.name.trim(), type: r.type.trim(),
-    nullable: r.nullable && !r.pk, default: r.ai ? undefined : r.default?.trim() || undefined }));
+    nullable: r.nullable && !r.pk && !r.ai, default: r.ai ? undefined : r.default?.trim() || undefined }));
   const errors: string[] = [];
   if (!obj.name.trim()) errors.push('Table name is required');
   if (!cols.length) errors.push('Add at least one column');
