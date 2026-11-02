@@ -195,25 +195,25 @@ export const myColumnDdl: ColumnDdl = {
     ORDER BY s.index_name LIMIT 1) AS \`uq_name\`,
   (SELECT k.constraint_name FROM information_schema.key_column_usage k
     WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
-      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL
       AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
         AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
     ORDER BY k.constraint_name LIMIT 1) AS \`fk_name\`,
   (SELECT k.referenced_table_schema FROM information_schema.key_column_usage k
     WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
-      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL
       AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
         AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
     ORDER BY k.constraint_name LIMIT 1) AS \`fk_schema\`,
   (SELECT k.referenced_table_name FROM information_schema.key_column_usage k
     WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
-      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL
       AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
         AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
     ORDER BY k.constraint_name LIMIT 1) AS \`fk_table\`,
   (SELECT k.referenced_column_name FROM information_schema.key_column_usage k
     WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
-      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+      AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL
       AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
         AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
     ORDER BY k.constraint_name LIMIT 1) AS \`fk_column\`,
@@ -221,7 +221,7 @@ export const myColumnDdl: ColumnDdl = {
     WHERE r.constraint_schema = c.table_schema AND r.table_name = c.table_name
       AND r.constraint_name = (SELECT k.constraint_name FROM information_schema.key_column_usage k
         WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
-          AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+          AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL
           AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
             AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
         ORDER BY k.constraint_name LIMIT 1)
@@ -230,7 +230,7 @@ export const myColumnDdl: ColumnDdl = {
     WHERE r.constraint_schema = c.table_schema AND r.table_name = c.table_name
       AND r.constraint_name = (SELECT k.constraint_name FROM information_schema.key_column_usage k
         WHERE k.constraint_schema = c.table_schema AND k.table_schema = c.table_schema AND k.table_name = c.table_name
-          AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL AND k.referenced_table_schema = c.table_schema
+          AND k.column_name = c.column_name AND k.referenced_table_name IS NOT NULL
           AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = k.constraint_schema
             AND part.table_name = k.table_name AND part.constraint_name = k.constraint_name) = 1
         ORDER BY k.constraint_name LIMIT 1)
@@ -251,7 +251,7 @@ export const myColumnDdl: ColumnDdl = {
             AND k.constraint_name = f.constraint_name), ')') SEPARATOR '; ')
       FROM information_schema.key_column_usage f
       WHERE f.constraint_schema = c.table_schema AND f.table_schema = c.table_schema AND f.table_name = c.table_name
-        AND f.column_name = c.column_name AND f.referenced_table_name IS NOT NULL AND f.referenced_table_schema = c.table_schema
+        AND f.column_name = c.column_name AND f.referenced_table_name IS NOT NULL
         AND (SELECT COUNT(*) FROM information_schema.key_column_usage part WHERE part.constraint_schema = f.constraint_schema
           AND part.table_name = f.table_name AND part.constraint_name = f.constraint_name) > 1)) AS \`keys\`,
   c.collation_name AS \`collation\`,
@@ -381,7 +381,7 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
     async columns(conn, password, db, obj) {
       const rows = await select<{ name: string; type: string; nullable: string; dflt: string | null; extra: string }>(conn, password,
         'SELECT column_name AS name, column_type AS type, is_nullable AS nullable, column_default AS dflt, extra AS extra FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position',
-        [db, obj.name]);
+        [obj.schema || db, obj.name]);
       // default / generated dipakai Add Data: AUTO_INCREMENT dianggap punya default, kolom GENERATED dilewati
       return rows.map((r) => ({ name: r.name, type: r.type, nullable: r.nullable === 'YES',
         ...(r.dflt !== null || /auto_increment/i.test(r.extra) ? { default: r.dflt ?? 'auto_increment' } : {}),
@@ -390,7 +390,7 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
     async primaryKey(conn, password, db, obj) {
       const rows = await select<{ name: string }>(conn, password,
         `SELECT column_name AS name FROM information_schema.key_column_usage WHERE table_schema = ? AND table_name = ? AND constraint_name = 'PRIMARY' ORDER BY ordinal_position`,
-        [db, obj.name]);
+        [obj.schema || db, obj.name]);
       return rows.map((r) => r.name);
     },
     selectTop: (db, obj, n) => `SELECT * FROM ${quoteMy(db)}.${quoteMy(obj.name)} LIMIT ${n};`,

@@ -242,9 +242,11 @@ function fkRow(r, i) {
   const fk = r.fk || {};
   const opt = (v, label, sel) => '<option value="' + h(v) + '"' + (sel ? ' selected' : '') + '>' + h(label) + '</option>';
   const cols = fkCols[fkKey(fk)] || [];
+  // tabel tujuan di schema lain tidak ada di daftar tabel: tetap ditampilkan supaya pilihan tidak hilang
+  const list = fk.table && !tables.some((x) => x.name === fk.table && x.schema === fk.schema) ? [{ schema: fk.schema, name: fk.table }, ...tables] : tables;
   const act = (k) => '<select data-fk="' + k + '" aria-label="' + (k === 'onDelete' ? 'On delete' : 'On update') + '">' + fkActions.map((a) => opt(a, a, (fk[k] || fkActions[0]) === a)).join('') + '</select>';
   return '<tr role="group" aria-label="Foreign key for ' + h(r.name || '') + '" class="fkrow" data-fkrow="' + i + '"><td colspan="' + (reorder ? 9 : 8) + '"><div class="fkedit"><b>Foreign key ' + h(r.name || '') + '</b>'
-    + '<label>references <select data-fk="table" aria-label="Referenced table">' + opt('', 'choose a table…', !fk.table) + tables.map((x) => opt(x.schema + '\u0000' + x.name, (x.schema ? x.schema + '.' : '') + x.name, fk.table === x.name && fk.schema === x.schema)).join('') + '</select></label>'
+    + '<label>references <select data-fk="table" aria-label="Referenced table">' + opt('', 'choose a table…', !fk.table) + list.map((x) => opt(x.schema + '\u0000' + x.name, (x.schema ? x.schema + '.' : '') + x.name, fk.table === x.name && fk.schema === x.schema)).join('') + '</select></label>'
     + '<label>column <select data-fk="column" aria-label="Referenced column">' + opt('', fk.table && !cols.length ? 'loading…' : 'choose a column…', !fk.column) + cols.map((c) => opt(c, c, fk.column === c)).join('') + '</select></label>'
     + '<label>on delete ' + act('onDelete') + '</label><label>on update ' + act('onUpdate') + '</label>'
     + '<button data-fkact="remove" data-i="' + i + '">Remove FK</button><button data-fkact="done" data-i="' + i + '">Done</button></div></td></tr>';

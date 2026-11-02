@@ -416,6 +416,17 @@ test('MySQL show: AI, generated expression, INVISIBLE and key metadata aliases',
   assert.match(sql, /generation_expression <> ''/);
 });
 
+test('MySQL show: foreign keys to a table in another schema are read too', () => {
+  const sql = myd.show(mo);
+  assert.doesNotMatch(sql, /referenced_table_schema = c\.table_schema/);
+  assert.match(sql, /referenced_table_schema FROM information_schema\.key_column_usage/);
+});
+
+test('columns page: FK row keeps a referenced table that is not in the table list (other schema)', () => {
+  const h = columnsHtml('csp', { conn: 'l', db: 'shop', table: 'order_item' }, false);
+  assert.ok(h.includes('!tables.some((x) => x.name === fk.table && x.schema === fk.schema)'));
+});
+
 test('MySQL Columns editor replaces the primary key and removes AI before key replacement', () => {
   const original = [col('id', { ai: true, pk: true }), col('line_no')];
   const kept = columnChanges(myd, mo, original, [
