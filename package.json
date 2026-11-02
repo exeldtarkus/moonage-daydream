@@ -211,6 +211,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "moonageDaydream.newObject",
+        "title": "New…",
+        "category": "Moonage Daydream",
+        "icon": "$(add)"
+      },
+      {
         "command": "moonageDaydream.addData",
         "title": "Add Data…",
         "category": "Moonage Daydream",
@@ -807,6 +813,16 @@
           "group": "1_db@1"
         },
         {
+          "command": "moonageDaydream.newLinkedServer",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^ms\\.linkedServers$/",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.newObject",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^ms\\.(serverTriggers|procedures|functions|scalarFunctions|tvf|dbTriggers|types|sequences|views|tTriggers)$/",
+          "group": "inline"
+        },
+        {
           "command": "moonageDaydream.activityMonitor",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
           "group": "3_server@1"
@@ -937,6 +953,10 @@
         },
         {
           "command": "moonageDaydream.newLinkedServer",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.newObject",
           "when": "false"
         },
         {

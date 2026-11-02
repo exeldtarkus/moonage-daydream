@@ -13,7 +13,7 @@ export type Node =
   | { kind: 'folder'; c: ConnectionInfo; db: string; objKind: ListKind }
   | { kind: 'obj'; c: ConnectionInfo; db: string; objKind: ObjectKind; obj: DbObject }
   // SQL Server Object Explorer (mssqlTree): folder dan item non-objek (login, endpoint, key, index ...)
-  | { kind: 'mfolder'; c: ConnectionInfo; folder: string; db?: string; obj?: DbObject; full?: string }
+  | { kind: 'mfolder'; c: ConnectionInfo; folder: string; db?: string; obj?: DbObject; full?: string; objKind?: 'table' | 'view' }
   | { kind: 'item'; c: ConnectionInfo; folder: string; db?: string; label: string; description?: string; full: string }
   // Consul: key / folder KV (folder diakhiri /, '' = akar) dan Dashboard
   | { kind: 'kv'; c: ConnectionInfo; key: string }
@@ -158,7 +158,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           break;
         case 'obj':
           if (isMs(n.c) && (n.objKind === 'table' || n.objKind === 'view')) {
-            out = (n.objKind === 'table' ? MS_TABLE : MS_VIEW).map((folder) => ({ kind: 'mfolder', c: n.c, folder, db: n.db, obj: n.obj }));
+            out = (n.objKind === 'table' ? MS_TABLE : MS_VIEW).map((folder) => ({ kind: 'mfolder', c: n.c, folder, db: n.db, obj: n.obj, objKind: n.objKind === 'table' ? 'table' : 'view' }));
             break;
           }
           if (n.objKind === 'procedure' || n.objKind === 'function') {
