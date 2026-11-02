@@ -15,6 +15,7 @@ export const RELEASES: Release[] = [
       { kind: 'new', title: 'Click a table to see its data', detail: 'Left-click a table, view or collection in the Explorer to run Select Top 100.' },
       { kind: 'new', title: 'Database Info dashboard (SQL Server)', detail: 'State, recovery model, collation, object counts, file sizes with usage bars and the last backup, each with its query.' },
       { kind: 'new', title: 'New Linked Server (SQL Server)', detail: 'Create a linked server from a form; the remote password never appears in the script and the connection is tested right after.' },
+      { kind: 'new', title: 'New object templates', detail: '(+) on Explorer folders opens a ready-to-edit script for views, procedures, functions, triggers, types and sequences (right-click a table → New Trigger… on MySQL / MariaDB, PostgreSQL and SQLite).' },
       { kind: 'new', title: "What's New", detail: 'This page: it opens once after an update with new features.' },
       { kind: 'fixed', title: 'Connection form search', detail: 'Searching database types splits on spaces again instead of the letter "s".' },
       { kind: 'fixed', title: 'Foreign keys to another schema', detail: 'The MySQL / MariaDB Columns editor now shows foreign keys that point to a table in another database.' },
