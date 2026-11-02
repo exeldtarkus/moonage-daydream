@@ -959,8 +959,9 @@ async function addData(n?: Node) {
       post({ type: 'status', text: 'Inserting…' });
       const res = await d.run({ ...conn, database: n.db }, await conns.password(conn.name), r.sql);
       log.info(`addData: ${conn.name} / ${n.db} / ${label}`);
-      post({ type: 'status', text: res.resultSets.length || res.messages?.length ? `Inserted. ${(res.messages ?? []).join(' ')}`.trim() : 'Inserted.' });
-      void vscode.window.showInformationMessage(`Row inserted into ${label}.`);
+      post({ type: 'inserted', text: '1 row inserted.' });
+      await results.show(`${conn.name} / ${n.db}`, { result: { ...res, messages: [...res.messages, '1 row inserted.'] } });
+      void vscode.window.showInformationMessage(`1 row inserted into ${label}.`);
     } catch (e) {
       log.error(`addData insert - EXCEPTION CAUGHT | ${conn.name} / ${label}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Insert failed: ${errMsg(e)}`, error: true });
@@ -1102,6 +1103,7 @@ let whatsNewPanel: vscode.WebviewPanel | undefined;
 
 /** halaman What's New; sekali dibuka (otomatis / command) tidak muncul otomatis lagi sampai ada catatan rilis baru */
 function openWhatsNew(ctx: vscode.ExtensionContext) {
+  void vscode.commands.executeCommand('workbench.action.closePanel');
   if (whatsNewPanel) return whatsNewPanel.reveal();
   whatsNewPanel = vscode.window.createWebviewPanel('moonageDaydream.whatsNew', "What's New: Moonage Daydream", vscode.ViewColumn.Active, {});
   whatsNewPanel.webview.html = whatsNewHtml(whatsNewPanel.webview.cspSource, ctx.extension.packageJSON.version);
@@ -1310,6 +1312,7 @@ let consulFs: ConsulFs;
 /** panel Live Monitor / Dashboard per koneksi (Disconnect menutupnya; koneksi dianggap connected selama ada) */
 const connPanels = new Map<string, Set<vscode.WebviewPanel>>();
 export function trackPanel(conn: string, p: vscode.WebviewPanel): vscode.WebviewPanel {
+  void vscode.commands.executeCommand('workbench.action.closePanel');
   const set = connPanels.get(conn) ?? new Set();
   connPanels.set(conn, set.add(p));
   p.onDidDispose(() => {

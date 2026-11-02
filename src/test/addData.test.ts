@@ -4,6 +4,7 @@ import { drivers, type Column, type DbObject } from '../db';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { insertScript } from '../addData';
+import { addDataHtml } from '../addDataHtml';
 
 const cols: Column[] = [
   { name: 'id', type: 'int', nullable: false, generated: true },
@@ -77,7 +78,22 @@ test('data changes show a success notification after an insert or grid save', ()
   const source = (file: string) => readFileSync(join(__dirname, '..', '..', 'src', file), 'utf8');
   const addData = source('extension.ts');
   const gridEdit = source('gridEdit.ts');
-  assert.match(addData, /post\(\{ type: 'status', text: .*Inserted\.[\s\S]*showInformationMessage\(`Row inserted into \$\{label\}\.`\)/);
+  assert.match(addData, /post\(\{ type: 'inserted', text: '1 row inserted\.' \}\)[\s\S]*showInformationMessage\(`1 row inserted into \$\{label\}\.`\)/);
   assert.match(gridEdit, /if \(t\.mongo\) \{[\s\S]*await applyWhere\('', m\.part\);\s+void vscode\.window\.showInformationMessage\(`Changes saved to \$\{t\.label\}\.`\)/);
   assert.match(gridEdit, /await applyWhere\(t\.src\.where \?\? '', m\.part\);\s+void vscode\.window\.showInformationMessage\(`Changes saved to \$\{t\.label\}\.`\)/);
+});
+
+test('add data: a successful insert resets the form and reports one inserted row in Results', () => {
+  const html = addDataHtml('vscode-webview://test', { conn: 'local', table: 'dbo.item', type: 'SQL Server' }, false);
+  assert.match(html, /else if \(m\.type === 'inserted'\) \{[\s\S]*\$\('cols'\)\.innerHTML = cols\.map\(row\)\.join\(''\);[\s\S]*send\('change'\);/);
+  assert.match(readFileSync(join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8'),
+    /await results\.show\([^,]+, \{ result: \{ \.\.\.res, messages: \[\.\.\.res\.messages, '1 row inserted\.'\] \} \}\);/);
+});
+
+test('opening a project UI closes the Results panel', () => {
+  const source = (file: string) => readFileSync(join(__dirname, '..', '..', 'src', file), 'utf8');
+  const extension = source('extension.ts');
+  assert.match(extension, /export function trackPanel[\s\S]*executeCommand\('workbench\.action\.closePanel'\)/);
+  assert.match(extension, /function openWhatsNew[\s\S]*executeCommand\('workbench\.action\.closePanel'\)/);
+  assert.match(source('connectionForm.ts'), /export function openConnectionForm[\s\S]*executeCommand\('workbench\.action\.closePanel'\)/);
 });

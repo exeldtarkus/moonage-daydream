@@ -46,6 +46,7 @@ export function openConnectionForm(
   group?: string,
 ): vscode.WebviewPanel {
   const key = old?.name ?? '';
+  void vscode.commands.executeCommand('workbench.action.closePanel');
   const existing = panels.get(key);
   if (existing) {
     existing.reveal();
