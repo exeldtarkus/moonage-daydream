@@ -136,3 +136,13 @@ test('grid edit: generated columns are marked in the header, new-row inputs disa
   assert.ok(html.includes('placeholder="generated" disabled'));
   assert.ok(html.includes("t.tHead.rows[0].cells[td.cellIndex]?.dataset.gen"));
 });
+
+test('grid: the clicked cell is the active cell and is blue, also on selected / deleted rows', () => {
+  const result = { resultSets: [{ columns: ['a'], types: ['int'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 };
+  const html = render('csp', 't', { result });
+  const rule = /tbody td\.cur, tbody tr\.sel td\.cur, tbody tr\.todelete td\.cur \{([^}]*)\}/.exec(html)?.[1] ?? '';
+  assert.match(rule, /outline: 2px solid var\(--vscode-focusBorder/);
+  assert.match(rule, /background: [^;]*--vscode-focusBorder[^;]*!important/);
+  assert.ok(html.includes("s.cur?.classList.remove('cur')"));
+  assert.ok(html.includes("td.classList.add('cur')"));
+});

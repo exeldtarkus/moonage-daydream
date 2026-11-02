@@ -241,6 +241,8 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .foot .xbtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
   .foot .xbtn svg { width: 12px; height: 12px; }
   tbody tr.sel td { background: var(--vscode-list-activeSelectionBackground, #094771) !important; color: var(--vscode-list-activeSelectionForeground, inherit); }
+  /* sel aktif (terakhir diklik): biru, di atas warna baris terpilih / Delete rows */
+  tbody td.cur, tbody tr.sel td.cur, tbody tr.todelete td.cur { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: -2px; background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 30%, transparent) !important; }
   tbody td { cursor: default; }
   tbody tr.vpad td { padding: 0; height: auto; border: 0; background: none !important; pointer-events: none; }
   .menu.export { padding: 10px 12px; min-width: 230px; }
@@ -480,6 +482,7 @@ const GRID_SCRIPT = `(() => {
     if (td && td.closest('table.rs')) {
       // pilih baris: klik = satu baris, Ctrl/Cmd+klik = tambah / kurangi, Shift+klik = rentang dari baris terakhir
       const t = td.closest('table'), s = st(t), tr = td.parentElement, i = s.rows.indexOf(tr);
+      if (!td.classList.contains('n')) { s.cur?.classList.remove('cur'); td.classList.add('cur'); s.cur = td; }
       const visible = s.rows.filter((r) => !r.hidden);
       if (e.shiftKey && s.anchor !== null) {
         const a = visible.indexOf(s.rows[s.anchor]), z = visible.indexOf(tr);
