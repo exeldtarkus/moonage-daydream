@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnDef, ColumnRow, ConnectionInfo, NewColumn, createTable, PAGE_ROWS, columnChanges, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnRow, ConnectionInfo, Driver, NewColumn, createTable, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -705,6 +705,16 @@ async function scriptAsCommand(n?: Node) {
 /** editor Columns per tabel (satu tab per koneksi / database / tabel) */
 const columnPanels = new Map<string, vscode.WebviewPanel>();
 
+async function fkColumnList(d: Driver, c: ConnectionInfo, pw: string, db: string, schema: string, name: string): Promise<string[]> {
+  const obj = { schema, name };
+  const [cols, pk] = await Promise.all([d.columns(c, pw, db, obj), d.primaryKey(c, pw, db, obj)]);
+  const pkSet = new Set(pk);
+  return [
+    ...pk.filter((column) => cols.some((c) => c.name === column)),
+    ...cols.map((c) => c.name).filter((name) => !pkSet.has(name)),
+  ];
+}
+
 /**
  * klik kanan tabel -> Columns: grid kolom bisa diedit, script ALTER tampil di SQL preview (seperti DBeaver);
  * Execute menjalankan script setelah konfirmasi, Open in SQL Editor = tab SQL tanpa dijalankan.
@@ -723,34 +733,62 @@ function columnsEditor(n?: Node) {
   panel.onDidDispose(() => columnPanels.delete(key));
   panel.webview.html = columnsHtml(panel.webview.cspSource, { conn: conn.name, db, table }, !!conn.readOnly);
   const c = { ...conn, database: db }; // script memakai nama dua bagian: dijalankan di database tabel
-  let original: ColumnDef[] = [];
+  let original: ColumnRow[] = [];
+  let info: ReturnType<typeof showColumns>['info'] = { columns: [], rows: [] };
   const post = (m: unknown) => void panel.webview.postMessage(m);
   async function load() {
     try {
       post({ type: 'status', text: 'Loading…' });
       const rs = (await d.run(c, await conns.password(conn.name), ddl.show(obj))).resultSets[0];
-      const { cols, info } = showColumns(rs ?? { columns: [], rows: [] });
+      const shown = showColumns(rs ?? { columns: [], rows: [] });
+      const { cols } = shown;
       original = cols;
-      post({ type: 'load', cols, info, types: ddl.types, newType: ddl.newType });
+      info = shown.info;
+      post({ type: 'load', cols, info, types: ddl.types, newType: ddl.newType, keys: !!ddl.addPk, reorder: !!ddl.move,
+        aiExisting: !!ddl.setAi, aiTypes: ddl.aiTypes ?? [], fkActions: ddl.fkActions ?? [], schema: obj.schema,
+        orderNote: ddl.addPk && !ddl.move ? `Column order cannot be changed on ${d.label} (needs a table rebuild)` : '' });
     } catch (e) {
       log.error(`columnsEditor load - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${table}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
       post({ type: 'status', text: `Load failed: ${errMsg(e)}`, error: true });
     }
   }
-  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[] }) => {
+  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[]; schema?: string; name?: string }) => {
     if (m.type === 'ready' || m.type === 'refresh') return load();
+    if (m.type === 'fkTables') {
+      try {
+        const tables = await d.objects(c, await conns.password(conn.name), db, 'table');
+        return post({ type: 'fkTables', tables });
+      } catch (e) {
+        log.error(`columnsEditor fkTables - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        return post({ type: 'status', text: `Could not list tables for foreign keys: ${errMsg(e)}`, error: true });
+      }
+    }
+    if (m.type === 'fkColumns') {
+      try {
+        const columns = await fkColumnList(d, c, await conns.password(conn.name), db, m.schema ?? '', m.name ?? '');
+        return post({ type: 'fkColumns', key: `${m.schema ?? ''}.${m.name ?? ''}`, columns });
+      } catch (e) {
+        log.error(`columnsEditor fkColumns - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${m.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        return post({ type: 'status', text: `Could not read columns of ${m.name}: ${errMsg(e)}`, error: true });
+      }
+    }
     const r = columnChanges(ddl, obj, original, m.rows ?? []);
     if (m.type === 'change') return post({ type: 'script', ...r });
     if (!r.sql) return;
     if (m.type === 'open') return openScript(conn, db, r.sql);
     if (m.type !== 'execute' || conn.readOnly) return;
-    const drops = (m.rows ?? []).filter((x) => x.deleted && x.orig).map((x) => x.orig);
+    const keysIndex = info.columns.indexOf('keys');
+    const keysByColumn: Record<string, string | undefined> = {};
+    if (keysIndex >= 0) original.forEach((column, i) => {
+      const value = info.rows[i]?.[keysIndex];
+      if (value !== null && value !== undefined && value !== '') keysByColumn[column.name] = String(value);
+    });
     const ok = await vscode.window.showWarningMessage(`Apply ${r.count} column change(s) to ${table} on ${conn.name} / ${db}?`,
-      { modal: true, detail: `${drops.length ? `Deleted columns lose their data: ${drops.join(', ')}.\n` : ''}The script in SQL preview is executed and committed.${ddl.note ? `\n${ddl.note}` : ''}` }, 'Execute');
+      { modal: true, detail: columnsConfirm(ddl, r.steps, m.rows ?? [], keysByColumn) }, 'Execute');
     if (!ok) return;
     try {
       post({ type: 'status', text: 'Executing…' });
-      await d.run(c, await conns.password(conn.name), r.sql);
+      await execScript(d, c, await conns.password(conn.name), r.sql, conn.type === 'mssql');
       log.info(`columnsEditor execute: ${conn.name} / ${db} / ${table}: ${r.count} change(s)`);
       await load();
       post({ type: 'status', text: `Saved ${r.count} change(s)` });
@@ -828,8 +866,8 @@ function newTable(n?: Node) {
     }
     if (m.type === 'fkColumns') {
       try {
-        const cols = await d.columns(c, await conns.password(conn.name), db, { schema: m.schema ?? '', name: m.name ?? '' });
-        return post({ type: 'fkColumns', key: `${m.schema ?? ''}.${m.name}`, columns: cols.map((x) => x.name) });
+        const columns = await fkColumnList(d, c, await conns.password(conn.name), db, m.schema ?? '', m.name ?? '');
+        return post({ type: 'fkColumns', key: `${m.schema ?? ''}.${m.name}`, columns });
       } catch (e) {
         log.error(`newTable fkColumns - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${m.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
         return post({ type: 'status', text: `Could not read columns of ${m.name}: ${errMsg(e)}`, error: true });
