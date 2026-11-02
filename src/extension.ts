@@ -771,7 +771,7 @@ function columnsEditor(n?: Node) {
       info = shown.info;
       // key lebih dari satu kolom untuk tabel Keys (driver tanpa query keys: kosong)
       originalKeys = ddl.keys ? readKeys((await d.run(c, await conns.password(conn.name), ddl.keys(obj))).resultSets[0] ?? { columns: [], rows: [] }) : [];
-      post({ type: 'load', cols, info, tableKeys: originalKeys, types: ddl.types, newType: ddl.newType, keys: !!ddl.addPk, reorder: !!ddl.move,
+      post({ type: 'load', cols, info, tableKeys: originalKeys, keysTable: !!ddl.keys, types: ddl.types, newType: ddl.newType, keys: !!ddl.addPk, reorder: !!ddl.move,
         aiExisting: !!ddl.setAi, aiTypes: ddl.aiTypes ?? [], fkActions: ddl.fkActions ?? [], schema: obj.schema,
         orderNote: ddl.addPk && !ddl.move ? `Column order cannot be changed on ${d.label} (needs a table rebuild)` : '' });
     } catch (e) {
@@ -884,7 +884,7 @@ function newTable(n?: Node) {
       // tanpa auto increment (MongoDB): baris awal _id objectId
       const first = !ddl.aiTypes && ddl.types.some((x) => x.name === 'objectId') ? { name: '_id', type: 'objectId' } : { name: 'id', type: intType };
       return post({ type: 'load', cols: [], info: { columns: [], rows: [] }, types: ddl.types, newType: ddl.newType, tables, schemas, defaultSchema: d.defaultSchema,
-        fkActions: ddl.fkActions ?? [], ai: !!ddl.aiTypes, fk: !!ddl.fkActions, rows: [{ ...first, nullable: false, default: '', pk: true, ai: !!ddl.aiTypes }] });
+        fkActions: ddl.fkActions ?? [], ai: !!ddl.aiTypes, fk: !!ddl.fkActions, keysTable: !!ddl.fkActions, rows: [{ ...first, nullable: false, default: '', pk: true, ai: !!ddl.aiTypes }] });
     }
     if (m.type === 'fkColumns') {
       try {

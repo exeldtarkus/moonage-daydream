@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { columnsHtml } from '../columnsHtml';
 import { checkKeys, columnChanges, createTable, drivers, execScript, keyName, readKeys, showColumns, type ColumnRow, type NewColumn, type TableKey } from '../db';
 
 const t = { schema: 'dbo', name: 'item' };
@@ -206,4 +207,16 @@ test('SQLite keys end to end on a real file: read, add / drop by rebuild, CHECK 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('columnsHtml: Keys section in New Table and Columns editor, keys sent with rows, read-only hides the add buttons', () => {
+  for (const mode of ['edit', 'create'] as const) {
+    const html = columnsHtml('csp', { conn: 'l', db: 'shop', table: 'item' }, false, mode);
+    assert.match(html, /Add unique key/, mode);
+    assert.match(html, /Add foreign key/, mode);
+    assert.match(html, /tableKeys: tkeys/, mode);
+    assert.match(html, /m\.tableKeys/, mode);
+    assert.match(html, /read-only/, mode);
+  }
+  assert.match(columnsHtml('csp', { conn: 'l', db: 'shop', table: 'item' }, true), /const readOnly = true/);
 });
