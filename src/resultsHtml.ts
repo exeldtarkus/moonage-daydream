@@ -225,7 +225,8 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
   .editbar .pend { display: inline-flex; align-items: center; gap: 6px; }
   .editbar.off { color: var(--vscode-descriptionForeground); cursor: help; }
   .editbar button:disabled { opacity: .5; cursor: help; }
-  tr.todelete td { text-decoration: line-through; opacity: .55; }
+  /* baris yang akan dihapus saat Save: merah, menang atas warna seleksi */
+  tbody tr.todelete td, tbody tr.todelete.sel td { text-decoration: line-through; background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 22%, transparent) !important; color: var(--vscode-errorForeground, #f48771) !important; }
   tbody.newrows td { background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, #81b88b) 12%, transparent); }
   tbody.newrows input.cell { width: 100%; min-width: 60px; }
   .editbar button { padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;

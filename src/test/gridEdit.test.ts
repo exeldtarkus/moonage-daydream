@@ -98,3 +98,12 @@ test('grid edit MongoDB: result has no SQL WHERE toolbar but keeps the edit bar'
   assert.match(html, /data-edit="1"/);
   assert.match(render('csp', 't', { result, source: { uri: 'u', sql: 'select 1 from t' } }), /<form class="where"/);
 });
+
+test('grid edit: rows marked for deletion are red, also while selected', () => {
+  const result = { resultSets: [{ columns: ['a'], types: ['int'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 };
+  const html = render('csp', 't', { result, source: { uri: 'u', sql: 'select a from t' } });
+  const rule = /tbody tr\.todelete td, tbody tr\.todelete\.sel td \{([^}]*)\}/.exec(html)?.[1] ?? '';
+  assert.match(rule, /background: [^;]*--vscode-errorForeground[^;]*!important/);
+  assert.match(rule, /color: var\(--vscode-errorForeground[^;]*!important/);
+  assert.match(rule, /text-decoration: line-through/);
+});
