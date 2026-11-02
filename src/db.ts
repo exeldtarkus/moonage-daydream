@@ -4,6 +4,9 @@ import { mongoDriver } from './mongo';
 import { consulDriver } from './consul';
 import { postgresDriver } from './postgres';
 import { sqliteDriver } from './sqlite';
+import { driverLog } from './log';
+
+const errText = (e: unknown) => (e instanceof Error ? `${e.message} - stack-trace: ${e.stack ?? e.message}` : `${String(e)} - stack-trace: ${String(e)}`);
 
 export type DbType = 'mssql' | 'mysql' | 'mariadb' | 'postgres' | 'sqlite' | 'mongodb' | 'consul';
 /** dialek untuk literal / script UPDATE */
@@ -442,6 +445,28 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
       : undefined;
     return { kind: 'add', column: clean(r).name, sql: ddl.add(obj, { ...clean(r), pk: r.pk, unique: r.unique, fk: r.fk }, pos), title: `Add ${clean(r).name}` };
   }));
+  if (ddl.move) {
+    const deleted = new Set(rows.filter((r) => r.deleted && r.orig).map((r) => r.orig!));
+    const simulated = original.filter((r) => !deleted.has(r.name)).map((r) => {
+      const current = liveOf(r);
+      return current ? nameOf(current) : r.name;
+    });
+    for (const r of live.filter((x) => !x.orig)) {
+      const index = rows.indexOf(r);
+      const previous = rows.slice(0, index).reverse().find((candidate) => !candidate.deleted && (candidate.orig || candidate.name.trim() || candidate.type.trim()));
+      const after = previous ? nameOf(previous) : null;
+      const at = after ? simulated.indexOf(after) + 1 : 0;
+      simulated.splice(at < 0 ? simulated.length : at, 0, nameOf(r));
+    }
+    for (const move of moveSteps(simulated, live.map(nameOf))) {
+      const current = live.find((r) => nameOf(r) === move.col)!;
+      const before = current.orig ? old(current) : undefined;
+      const final = { ...clean(current), ai: before ? !!before.ai && !!current.ai : current.ai,
+        keep: before?.keep ?? current.keep, gen: before?.gen ?? current.gen };
+      steps.push({ kind: 'move', column: move.col, sql: ddl.move(obj, final, move.after),
+        title: move.after ? `Move ${move.col} after ${move.after}` : `Move ${move.col} to first` });
+    }
+  }
   if (editableKeys) {
     if (replacePk) {
       const names = newPk.map(nameOf);
@@ -494,6 +519,83 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
   }
   const sql = steps.map((x) => x.sql).join(ddl.separator);
   return { sql: sql && ddl.wrap ? ddl.wrap(sql) : sql, errors: [], count: steps.length, steps };
+}
+
+/** minimal moves needed to make the server's column order match the grid */
+export function moveSteps(server: string[], grid: string[]): { col: string; after: string | null }[] {
+  const simulated = [...server];
+  const moves: { col: string; after: string | null }[] = [];
+  for (let i = 0; i < grid.length; i++) {
+    const col = grid[i];
+    const index = simulated.indexOf(col);
+    if (index < 0) continue;
+    const after = grid[i - 1] ?? null;
+    const actualAfter = simulated[index - 1] ?? null;
+    if (actualAfter === after) continue;
+    moves.push({ col, after });
+    simulated.splice(index, 1);
+    const previous = after === null ? -1 : simulated.indexOf(after);
+    simulated.splice(previous < 0 ? 0 : previous + 1, 0, col);
+  }
+  return moves;
+}
+
+/** detail teks konfirmasi Execute untuk data dan constraints yang terdampak */
+export function columnsConfirm(ddl: ColumnDdl, steps: ColumnStep[], rows: ColumnRow[], keys: Record<string, string | undefined>): string {
+  const lines: string[] = [];
+  const deleted = rows.filter((r) => r.deleted && r.orig);
+  if (deleted.length) lines.push(`Deleted columns lose their data: ${deleted.map((r) => r.orig).join(', ')}.`);
+  const dropped = steps.filter((s) => s.kind === 'dropKey').map((s) => {
+    if (s.title === 'Drop primary key') return 'primary key';
+    return s.title?.replace(/^Drop (?:foreign key|unique|primary key)\s*/, '') || s.column;
+  });
+  if (dropped.length) lines.push(`Constraints dropped: ${dropped.join(', ')}.`);
+  for (const column of deleted) {
+    for (const key of (keys[column.orig!] ?? '').split(';').map((x) => x.trim()).filter(Boolean)) {
+      const match = /^(UQ|FK)\s*\(([^)]*)\)(.*)$/.exec(key);
+      if (ddl.dropKeepsKeys && match?.[1] === 'UQ') {
+        const remaining = match[2].split(',').map((x) => x.trim()).filter((name) => name !== column.orig);
+        lines.push(remaining.length ? `${match[1]} (${match[2]}) becomes ${match[1]} (${remaining.join(', ')}).` : `${key} is removed with the column.`);
+      } else if (ddl.rebuildKeys) {
+        lines.push(`${key} uses a dropped column: the server refuses the drop and nothing is applied.`);
+      } else if (ddl.dropKeepsKeys && match?.[1] === 'FK') {
+        lines.push(`${key} blocks the column drop; MySQL refuses it.`);
+      } else {
+        lines.push(`${key} is dropped with the column.`);
+      }
+    }
+  }
+  if (steps.some((s) => s.kind === 'move')) lines.push('Moving columns rebuilds the table; on a big table this takes time and locks writes.');
+  if (steps.some((s) => s.title?.startsWith('Drop primary key') || s.title?.startsWith('Add primary key') || s.title?.startsWith('Replace primary key'))) {
+    lines.push('Changing the primary key rebuilds its index.');
+  }
+  lines.push('The script in SQL preview is executed and committed.');
+  if (ddl.note) lines.push(ddl.note);
+  return lines.join('\n');
+}
+
+/** jalankan script Columns; SQL Server memakai sesi agar semua batch berada pada satu koneksi */
+export async function execScript(d: Pick<Driver, 'run' | 'session'>, c: ConnectionInfo, password: string, sql: string, oneConnection: boolean): Promise<void> {
+  if (!oneConnection) {
+    await d.run(c, password, sql);
+    return;
+  }
+  const session = await d.session(c, password);
+  let failed = false;
+  try {
+    await session.run(sql);
+    await session.commit();
+  } catch (e) {
+    failed = true;
+    throw e;
+  } finally {
+    try {
+      await session.close();
+    } catch (e) {
+      driverLog.error(`execScript close - EXCEPTION CAUGHT | ${errText(e)}`);
+      if (!failed) throw e;
+    }
+  }
 }
 
 /** isian form New Database; choice = daftar yang bisa dicari (value '' = default server), group = bagian yang bisa dilipat */

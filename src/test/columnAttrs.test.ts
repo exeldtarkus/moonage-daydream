@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { checkRows, columnChanges, drivers, showColumns, type ColumnDdl, type ColumnDef, type ColumnRow, type DbObject, type NewColumn } from '../db';
+import { checkRows, columnChanges, columnsConfirm, drivers, execScript, moveSteps, showColumns, type ColumnDdl, type ColumnDef,
+  type ColumnRow, type DbObject, type NewColumn, type QueryResult, type Session } from '../db';
 
 const COLS = ['ordinal', 'column_name', 'data_type', 'nullable', 'default_value', 'ai', 'primary_key', 'pk_name', 'uq_name', 'uq_index',
   'fk_name', 'fk_schema', 'fk_table', 'fk_column', 'fk_delete', 'fk_update', 'gen', 'keys'];
@@ -194,4 +195,101 @@ test('columnChanges: rebuildKeys recreates the primary key around an ALTER COLUM
     'Add primary key PK__orders__3213 (id)',
   ]);
   assert.deepEqual(result.steps[2].detail, ['re-created because the column type changes; fails if other tables reference this key or an index uses this column']);
+});
+
+test('moveSteps: single move, move to first, and unchanged order', () => {
+  assert.deepEqual(moveSteps(['id', 'order_id', 'line_no', 'sku', 'qty'], ['id', 'order_id', 'line_no', 'qty', 'sku']),
+    [{ col: 'qty', after: 'line_no' }]);
+  assert.deepEqual(moveSteps(['a', 'b', 'c'], ['c', 'a', 'b']), [{ col: 'c', after: null }]);
+  assert.deepEqual(moveSteps(['a', 'b'], ['a', 'b']), []);
+});
+
+test('columnChanges: MySQL-like add goes after its grid predecessor, then moves after adds', () => {
+  const original = [col('id'), col('sku'), col('qty')];
+  const rows = [col('id', { orig: 'id' }), col('sku', { orig: 'sku' }), col('note2'), col('qty', { orig: 'qty' })];
+  const ddl = Object.assign(attrDdl(), { move: (_obj: DbObject, c: ColumnDef, after: string | null) => `move ${c.name} after=${after ?? 'FIRST'}` });
+  const result = columnChanges(ddl, ot, original, rows);
+  assert.equal(result.steps[0].sql, 'add note2 after=sku');
+  assert.equal(result.steps.some((step) => step.kind === 'move'), false);
+});
+
+test('columnChanges: reordering is ignored without ddl.move', () => {
+  const original = [col('id'), col('sku'), col('qty')];
+  const rows = [col('qty', { orig: 'qty' }), col('id', { orig: 'id' }), col('sku', { orig: 'sku' })];
+  assert.equal(columnChanges(attrDdl(), ot, original, rows).count, 0);
+});
+
+test('columnsConfirm: lists drops, shrinking composite keys, rebuild notes, and database note', () => {
+  const ddl = Object.assign(attrDdl(), { dropKeepsKeys: true, note: 'N' });
+  const steps = [
+    { kind: 'dropKey' as const, column: 'order_id', sql: 'dropFk FK_order_item_order_id', title: 'Drop foreign key FK_order_item_order_id' },
+    { kind: 'dropKey' as const, column: 'id', sql: 'dropPk', title: 'Drop primary key' },
+    { kind: 'move' as const, column: 'qty', sql: 'move qty', title: 'Move qty after sku' },
+    { kind: 'addKey' as const, column: 'id, line_no', sql: 'replace PK', title: 'Replace primary key (id, line_no)' },
+  ];
+  const text = columnsConfirm(ddl, steps, [col('order_id', { orig: 'order_id', deleted: true })], { order_id: 'UQ (order_id, sku)' });
+  assert.match(text, /Deleted columns lose their data: order_id\./);
+  assert.match(text, /Constraints dropped: FK_order_item_order_id, primary key\./);
+  assert.match(text, /UQ \(order_id, sku\) becomes UQ \(sku\)\./);
+  assert.match(text, /Moving columns rebuilds the table; on a big table this takes time and locks writes\./);
+  assert.match(text, /Changing the primary key rebuilds its index\./);
+  assert.ok(text.endsWith('The script in SQL preview is executed and committed.\nN'));
+});
+
+test('columnsConfirm: MySQL warns that a composite foreign key blocks dropping a column', () => {
+  const ddl = Object.assign(attrDdl(), { dropKeepsKeys: true });
+  const text = columnsConfirm(ddl, [], [col('tenant_id', { orig: 'tenant_id', deleted: true })],
+    { tenant_id: 'FK (tenant_id, org_id) → tenant(id, org_id)' });
+  assert.match(text, /FK \(tenant_id, org_id\) → tenant\(id, org_id\) blocks the column drop; MySQL refuses it\./);
+});
+
+test('execScript: one connection runs, commits, and closes; run failure is preserved', async () => {
+  const calls: string[] = [];
+  const result: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
+  const session = (run: Session['run'] = async () => result, close: Session['close'] = async () => {}) => ({
+    run: async (sql: string) => { calls.push('run'); return run(sql); },
+    stream: async () => 0,
+    open: false,
+    commit: async () => { calls.push('commit'); },
+    rollback: async () => {},
+    close: async () => { calls.push('close'); await close(); },
+  } satisfies Session);
+  const d = {
+    run: async () => { calls.push('pool run'); return result; },
+    session: async () => { calls.push('session'); return session(); },
+  };
+  const conn = { name: 'local', type: 'mssql' as const, host: 'localhost', port: 1433, user: 'user', database: 'db', trustServerCertificate: false };
+  await execScript(d, conn, 'pw', 'ALTER TABLE t ADD c int', true);
+  assert.deepEqual(calls, ['session', 'run', 'commit', 'close']);
+
+  calls.length = 0;
+  const runError = new Error('run failed');
+  const failing = { ...d, session: async () => { calls.push('session'); return session(async () => { throw runError; }); } };
+  await assert.rejects(execScript(failing, conn, 'pw', 'bad SQL', true), (error) => error === runError);
+  assert.deepEqual(calls, ['session', 'run', 'close']);
+
+  calls.length = 0;
+  await execScript(d, conn, 'pw', 'SELECT 1', false);
+  assert.deepEqual(calls, ['pool run']);
+});
+
+test('execScript: close failure is logged and surfaced when there is no earlier error', async () => {
+  const { driverLog } = await import('../log');
+  const oldLog = driverLog.error;
+  const logged: string[] = [];
+  driverLog.error = (message) => logged.push(message);
+  const result: QueryResult = { resultSets: [], rowsAffected: [], messages: [], durationMs: 0 };
+  const closeError = new Error('close failed');
+  const session: Session = {
+    run: async () => result, stream: async () => 0, open: false, commit: async () => {}, rollback: async () => {},
+    close: async () => { throw closeError; },
+  };
+  const d = { run: async () => result, session: async () => session };
+  const conn = { name: 'local', type: 'mssql' as const, host: 'localhost', port: 1433, user: 'user', database: 'db', trustServerCertificate: false };
+  try {
+    await assert.rejects(execScript(d, conn, 'pw', 'ALTER TABLE t ADD c int', true), (error) => error === closeError);
+    assert.match(logged[0], /execScript close - EXCEPTION CAUGHT.*close failed.*stack-trace/);
+  } finally {
+    driverLog.error = oldLog;
+  }
 });
