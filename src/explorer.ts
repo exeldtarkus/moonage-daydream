@@ -3,6 +3,7 @@ import type { Connections } from './connections';
 import { ConnectionInfo, DbObject, ListKind, ObjectKind, address, confirmAutoCommit, drivers, objContext } from './db';
 import { CONN_COLORS } from './connColor';
 import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './mssqlTree';
+import { folderContext, objectTemplates } from './objTemplates';
 import { monitorKit } from './monitorKits';
 import { ConsulClient, consulTarget, kvChildren } from './consul';
 
@@ -78,7 +79,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         return Object.assign(new vscode.TreeItem(n.db, C), { iconPath: new vscode.ThemeIcon('database'), contextValue: isMs(n.c) ? 'db.mssql' : monitorKit(n.c.type) ? 'db.live' : 'db' });
       case 'folder': {
         const f = FOLDERS.find((x) => x.objKind === n.objKind)!;
-        return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder'), contextValue: `folder.${n.objKind}` });
+        return Object.assign(new vscode.TreeItem(f.label, C), { iconPath: new vscode.ThemeIcon('folder'), contextValue: folderContext(n.c.type, n.objKind) });
       }
       case 'kv': {
         const folder = n.key.endsWith('/');
@@ -110,7 +111,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         // klik kiri tabel / view = Select Top 100 (panah ▸ hanya membuka / menutup node)
         const click = n.objKind === 'table' || n.objKind === 'view' ? { command: 'moonageDaydream.selectTop', title: 'Select Top 100', arguments: [n] } : undefined;
         return Object.assign(new vscode.TreeItem(n.obj.schema ? `${n.obj.schema}.${n.obj.name}` : n.obj.name, open),
-          { command: click, iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: objContext(n.objKind, { def: !!d.definition, ms: isMs(n.c), cols: !!d.columnDdl }) }); // .ms: Script as, .cols: kolom
+          { command: click, iconPath: new vscode.ThemeIcon(icon(n.objKind)), contextValue: objContext(n.objKind, { def: !!d.definition, ms: isMs(n.c), cols: !!d.columnDdl, trg: objectTemplates(n.c.type, 'trigger', { db: n.db }).length > 0 }) }); // .ms: Script as, .cols: kolom
       }
       case 'col':
         return Object.assign(new vscode.TreeItem(n.label), { description: n.description, iconPath: new vscode.ThemeIcon('symbol-field') });

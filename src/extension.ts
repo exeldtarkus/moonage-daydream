@@ -21,6 +21,7 @@ import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
 import { DB_INFO_PARTS, dbInfoHtml, type PartResult } from './dbInfo';
 import { newObjectTemplates } from './msTemplates';
+import { objectTemplates } from './objTemplates';
 import { mongoChanges, mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, changeStatements, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
@@ -187,6 +188,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.whatsNew', () => openWhatsNew(ctx)),
     vscode.commands.registerCommand('moonageDaydream.newLinkedServer', newLinkedServer),
     vscode.commands.registerCommand('moonageDaydream.newObject', newObject),
+    vscode.commands.registerCommand('moonageDaydream.newTrigger', newTrigger),
     vscode.commands.registerCommand('moonageDaydream.connect', (n?: Node) => n?.kind === 'conn' && connectCommand(n.c)),
     vscode.commands.registerCommand('moonageDaydream.disconnect', (n?: Node) => n?.kind === 'conn' && disconnect(n.c)),
     // Consul: value KV sebagai file moonage-consul:// (Ctrl+S = simpan), New / Delete Key, Dashboard
@@ -921,12 +923,19 @@ function newTable(n?: Node) {
 
 /** tombol (+) folder SQL Server (procedure, function, trigger, type, sequence, view): template di tab baru, tidak dijalankan */
 async function newObject(n?: Node) {
-  if (n?.kind !== 'mfolder') return;
-  const list = newObjectTemplates(n.folder, { obj: n.obj, view: n.objKind === 'view' });
+  if (n?.kind !== 'mfolder' && n?.kind !== 'folder') return;
+  const list = n.kind === 'mfolder' ? newObjectTemplates(n.folder, { obj: n.obj, view: n.objKind === 'view' }) : objectTemplates(n.c.type, n.objKind, { db: n.db });
   if (!list.length) return;
   const pick = list.length === 1 ? list[0]
     : (await vscode.window.showQuickPick(list.map((t) => ({ label: t.label, t })), { title: 'New object from template' }))?.t;
   if (pick) await openScript(n.c, n.db ?? 'master', pick.sql);
+}
+
+/** klik kanan tabel (MySQL / MariaDB, PostgreSQL, SQLite) -> New Trigger…: template trigger tabel itu di tab baru */
+async function newTrigger(n?: Node) {
+  if (n?.kind !== 'obj') return;
+  const [t] = objectTemplates(n.c.type, 'trigger', { db: n.db, obj: n.obj });
+  if (t) await openScript(n.c, n.db, t.sql);
 }
 
 /** dashboard Database Info per koneksi + database (dibuka lagi = tab yang sama di-reveal) */

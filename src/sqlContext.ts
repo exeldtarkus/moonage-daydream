@@ -43,10 +43,11 @@ export function maskSql(sql: string, keepQuoted = false): string {
 /**
  * CREATE PROCEDURE / FUNCTION / TRIGGER / VIEW / EVENT yang mulai di `from`: akhir statement-nya, undefined = bukan routine / dialek
  * tanpa aturan khusus. SQL Server: sampai baris GO / akhir teks (satu objek per batch). MySQL / MariaDB: `;` sesudah END terluar
- * (BEGIN / CASE ... END; END IF / LOOP / WHILE / REPEAT tidak dihitung). PostgreSQL tidak perlu: body $$ ... $$ sudah di-mask.
+ * (BEGIN / CASE ... END; END IF / LOOP / WHILE / REPEAT tidak dihitung); SQLite sama untuk CREATE TRIGGER ... BEGIN ... END;.
+ * PostgreSQL tidak perlu: body $$ ... $$ sudah di-mask.
  */
 function routineEnd(masked: string, from: number, dialect?: Dialect): number | undefined {
-  if (dialect !== 'mssql' && dialect !== 'mysql') return undefined;
+  if (dialect !== 'mssql' && dialect !== 'mysql' && dialect !== 'sqlite') return undefined;
   const head = /^\s*create\s+(?:or\s+(?:alter|replace)\s+)?(?:definer\s*=\s*\S+\s+)?(?:procedure|proc|function|trigger|view|event)\b/i.exec(masked.slice(from));
   if (!head) return undefined;
   if (dialect === 'mssql') {

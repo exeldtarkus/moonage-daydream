@@ -280,8 +280,9 @@ export function checkColumn(c: ColumnDef): string | undefined {
 }
 
 /** contextValue objek di explorer: .def = Show / Edit, .ms = SQL Server (Script as), .cols = editor Columns */
-export function objContext(kind: ObjectKind, f: { def: boolean; ms: boolean; cols: boolean }): string {
-  return `${kind}${f.def ? '.def' : ''}${f.ms ? '.ms' : ''}${f.cols && kind === 'table' ? '.cols' : ''}`;
+export function objContext(kind: ObjectKind, f: { def: boolean; ms: boolean; cols: boolean; trg?: boolean }): string {
+  // .trg: tabel bisa diberi trigger dari template (klik kanan -> New Trigger…), selalu sebelum .cols
+  return `${kind}${f.def ? '.def' : ''}${f.ms ? '.ms' : ''}${f.trg && kind === 'table' ? '.trg' : ''}${f.cols && kind === 'table' ? '.cols' : ''}`;
 }
 
 /** baris editor Columns: orig = nama kolom asal (kosong = kolom baru), deleted = ditandai hapus; pkName / uqName = nama constraint yang ada */

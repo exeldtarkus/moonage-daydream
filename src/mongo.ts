@@ -16,7 +16,7 @@ export interface Op {
 
 const COLL_METHODS = new Set(['find', 'findOne', 'aggregate', 'countDocuments', 'estimatedDocumentCount', 'distinct', 'insertOne', 'insertMany',
   'updateOne', 'updateMany', 'replaceOne', 'deleteOne', 'deleteMany', 'createIndex', 'dropIndex', 'indexes', 'drop']);
-const DB_METHODS = new Set(['runCommand', 'adminCommand', 'getCollectionNames', 'getName', 'version', 'getMongo', 'stats', 'createCollection', 'dropDatabase']);
+const DB_METHODS = new Set(['runCommand', 'adminCommand', 'getCollectionNames', 'getName', 'version', 'getMongo', 'stats', 'createCollection', 'createView', 'dropDatabase']);
 const CURSOR_METHODS = new Set(['sort', 'limit', 'skip', 'project', 'projection', 'hint', 'batchSize', 'explain', 'toArray', 'pretty']);
 
 /** objek / array / regex dari context vm -> objek realm extension (prototype normal untuk serializer BSON); tipe BSON dibiarkan */
@@ -195,6 +195,8 @@ async function execOp(db: Db, op: Op, comment: string, onCursor: (c: AbstractCur
     case 'version': return toSet([{ version: (await db.admin().command({ buildInfo: 1 })).version }]);
     case 'stats': return toSet([await db.stats()]);
     case 'createCollection': return toSet([{ created: (await db.createCollection(String(a), b)).collectionName }]);
+    // db.createView(nama, koleksiSumber, pipeline): view = koleksi dengan viewOn + pipeline
+    case 'createView': return toSet([{ created: (await db.createCollection(String(a), { viewOn: String(b), pipeline: (c ?? []) as unknown as Document[] })).collectionName }]);
     case 'dropDatabase': return toSet([{ dropped: db.databaseName, ok: await db.dropDatabase() }]);
     case 'getMongo': {
       const hello = await db.admin().command({ hello: 1 });

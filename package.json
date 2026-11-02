@@ -217,6 +217,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "moonageDaydream.newTrigger",
+        "title": "New Trigger…",
+        "category": "Moonage Daydream"
+      },
+      {
         "command": "moonageDaydream.addData",
         "title": "Add Data…",
         "category": "Moonage Daydream",
@@ -574,7 +579,7 @@
       "view/item/context": [
         {
           "command": "moonageDaydream.selectTop",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?(\\.cols)?$/",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?(\\.trg)?(\\.cols)?$/",
           "group": "inline"
         },
         {
@@ -823,6 +828,16 @@
           "group": "inline"
         },
         {
+          "command": "moonageDaydream.newObject",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^folder\\.(view|procedure)\\.new$/",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.newTrigger",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^table(\\.\\w+)*\\.trg(\\.cols)?$/",
+          "group": "2_script@4"
+        },
+        {
           "command": "moonageDaydream.activityMonitor",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.mssql\\.(on|off)$/",
           "group": "3_server@1"
@@ -957,6 +972,10 @@
         },
         {
           "command": "moonageDaydream.newObject",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.newTrigger",
           "when": "false"
         },
         {
