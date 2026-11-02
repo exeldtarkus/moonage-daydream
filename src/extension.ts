@@ -19,8 +19,9 @@ import type { Outcome, Source } from './resultsHtml';
 import { columnsHtml } from './columnsHtml';
 import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
+import { DB_INFO_PARTS, dbInfoHtml, type PartResult } from './dbInfo';
 import { mongoChanges, mongoFindCollection } from './mongo';
-import { ACTIVITY_SQL, DB_INFO_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
+import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, updateScript, changeStatements, tableRefs, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 import { monitorKit } from './monitorKits';
@@ -311,7 +312,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.dropTable', dropTable),
     vscode.commands.registerCommand('moonageDaydream.liveMonitor', liveMonitor),
     vscode.commands.registerCommand('moonageDaydream.serverInfo', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', SERVER_INFO_SQL, true)),
-    vscode.commands.registerCommand('moonageDaydream.databaseInfo', (n?: Node) => n?.kind === 'db' && openScript(n.c, n.db, DB_INFO_SQL, true)),
+    vscode.commands.registerCommand('moonageDaydream.databaseInfo', databaseInfo),
     vscode.commands.registerCommand('moonageDaydream.backupDatabase', (n?: Node) => backupCommand(n, 'backup')),
     vscode.commands.registerCommand('moonageDaydream.restoreDatabase', (n?: Node) => backupCommand(n, 'restore')),
     vscode.commands.registerCommand('moonageDaydream.moveResults', async () => {
@@ -914,6 +915,51 @@ function newTable(n?: Node) {
       vscode.window.showErrorMessage(`New Table failed: ${errMsg(e)}`);
     }
   });
+}
+
+/** dashboard Database Info per koneksi + database (dibuka lagi = tab yang sama di-reveal) */
+const dbInfoPanels = new Map<string, vscode.WebviewPanel>();
+
+/** klik kanan database SQL Server -> Database Info: dashboard; tiap bagian query sendiri, gagal (mis. izin msdb) hanya bagian itu */
+function databaseInfo(n?: Node) {
+  if (n?.kind !== 'db') return;
+  const conn = n.c;
+  const db = n.db;
+  const key = `${conn.name}\u0000${db}`;
+  const open = dbInfoPanels.get(key);
+  if (open) return open.reveal();
+  const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.databaseInfo', `Database Info: ${db}`, vscode.ViewColumn.Active, { enableScripts: true }));
+  dbInfoPanels.set(key, panel);
+  panel.onDidDispose(() => dbInfoPanels.delete(key));
+  const paint = (r: Record<string, PartResult>, updated?: string) => (panel.webview.html = dbInfoHtml(panel.webview.cspSource, { conn: conn.name, db }, r, updated));
+  const load = async () => {
+    paint({});
+    let pw = '';
+    try {
+      pw = await conns.password(conn.name);
+    } catch (e) {
+      log.error(`databaseInfo password - EXCEPTION CAUGHT | ${conn.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      return paint(Object.fromEntries(DB_INFO_PARTS.map((p) => [p.key, { error: errMsg(e) }])));
+    }
+    const target = { ...conn, database: db };
+    const entries = await Promise.all(DB_INFO_PARTS.map(async (p): Promise<[string, PartResult]> => {
+      try {
+        const rs = (await drivers[conn.type].run(target, pw, p.sql)).resultSets[0];
+        return [p.key, { columns: rs?.columns ?? [], rows: rs?.rows ?? [] }];
+      } catch (e) {
+        log.error(`databaseInfo ${p.key} - EXCEPTION CAUGHT | ${conn.name} / ${db}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        return [p.key, { error: errMsg(e) }];
+      }
+    }));
+    if (dbInfoPanels.get(key) === panel) paint(Object.fromEntries(entries), new Date().toLocaleTimeString());
+  };
+  panel.webview.onDidReceiveMessage((m: { type: string; key?: string }) => {
+    if (m.type === 'refresh') return void load();
+    if (m.type !== 'open') return;
+    const sql = m.key === 'all' ? DB_INFO_PARTS.map((p) => `-- ${p.title}\n${p.sql}`).join('\n\n') : DB_INFO_PARTS.find((p) => p.key === m.key)?.sql;
+    if (sql) void openScript(conn, db, sql);
+  });
+  void load();
 }
 
 /** form tab per koneksi + jenis (dibuka lagi = tab yang sama di-reveal) */

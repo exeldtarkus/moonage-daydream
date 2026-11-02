@@ -480,14 +480,6 @@ export const SERVER_INFO_SQL = `SELECT @@SERVERNAME AS server, SERVERPROPERTY('P
   (SELECT sqlserver_start_time FROM sys.dm_os_sys_info) AS started_at, (SELECT cpu_count FROM sys.dm_os_sys_info) AS cpus;`;
 
 /** SQL Server: info database + file data / log (database file ini) */
-export const DB_INFO_SQL = `SELECT name, state_desc AS state, recovery_model_desc AS recovery_model, collation_name AS collation, compatibility_level,
-  create_date, is_read_only, user_access_desc AS user_access FROM sys.databases WHERE database_id = DB_ID();
-SELECT name, type_desc AS type, physical_name, CAST(CAST(size AS BIGINT) * 8 / 1024.0 AS DECIMAL(12, 1)) AS size_mb,
-  CAST(FILEPROPERTY(name, 'SpaceUsed') * 8 / 1024.0 AS DECIMAL(12, 1)) AS used_mb,
-  CASE WHEN max_size = -1 THEN 'unlimited' ELSE CAST(CAST(max_size AS BIGINT) * 8 / 1024 AS VARCHAR(20)) + ' MB' END AS max_size,
-  CASE WHEN is_percent_growth = 1 THEN CAST(growth AS VARCHAR(10)) + ' %' ELSE CAST(CAST(growth AS BIGINT) * 8 / 1024 AS VARCHAR(20)) + ' MB' END AS growth
-FROM sys.database_files;`;
-
 /** script EXEC procedure dengan semua parameter: NULL / DEFAULT sebagai nilai awal, OUTPUT di-DECLARE lalu di-SELECT */
 export function execScript(db: string, obj: { schema: string; name: string }, params: ProcParam[]): string {
   const target = `${q(db)}.${q(obj.schema)}.${q(obj.name)}`;
