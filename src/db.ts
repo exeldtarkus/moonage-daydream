@@ -125,7 +125,7 @@ export interface ColumnDdl {
   /** catatan tambahan di konfirmasi Execute (mis. DDL implicit commit) */
   note?: string;
   show(obj: DbObject): string;
-  add(obj: DbObject, col: ColumnDef): string;
+  add(obj: DbObject, col: NewColumn, pos?: { after?: string | null; pkCols?: string[] }): string;
   edit(obj: DbObject, old: ColumnDef, next: ColumnDef): string;
   drop(obj: DbObject, name: string): string;
   /** validasi tambahan per database (old kosong = kolom baru; cols = semua kolom New Table, ada = mode New Table); undefined = valid */
@@ -148,6 +148,19 @@ export interface ColumnDdl {
   setAi?(obj: DbObject, col: ColumnDef, on: boolean): string;
   /** MySQL: DROP PRIMARY KEY + ADD PRIMARY KEY (...) dalam satu statement */
   replacePk?(obj: DbObject, cols: string[]): string;
+  dropPk?(obj: DbObject, name?: string): string;
+  addPk?(obj: DbObject, cols: string[], name?: string): string;
+  dropUnique?(obj: DbObject, name: string, index: boolean): string;
+  addUnique?(obj: DbObject, col: string, name?: string, index?: boolean): string;
+  dropFk?(obj: DbObject, name: string): string;
+  addFk?(obj: DbObject, col: string, fk: ColumnFk): string;
+  move?(obj: DbObject, col: ColumnDef, after: string | null): string;
+  /** SQL Server: lepas dan pasang lagi key saat tipe atau nullability kolom berubah */
+  rebuildKeys?: boolean;
+  /** MySQL: DROP COLUMN mengubah PK/UQ dengan sendirinya */
+  dropKeepsKeys?: boolean;
+  /** label atribut AI di judul langkah */
+  aiLabel?: string;
 }
 
 /** kolom New Table: atribut PK / AI (auto increment / identity) / UQ / FK satu kolom */
@@ -307,7 +320,14 @@ const sameCol = (a: ColumnDef, b: ColumnDef) => a.name === b.name && a.type.trim
 
 /** editor Columns -> script (hapus, ubah, tambah; satu langkah per batch); errors = input tidak valid, script kosong */
 /** satu langkah di daftar Pending changes */
-export interface ColumnStep { kind: 'rebuild' | 'drop' | 'edit' | 'add'; column: string; to?: string; sql: string; detail?: string[] }
+export interface ColumnStep {
+  kind: 'rebuild' | 'drop' | 'edit' | 'add' | 'move' | 'dropKey' | 'addKey' | 'ai';
+  column: string;
+  to?: string;
+  sql: string;
+  detail?: string[];
+  title?: string;
+}
 
 /** perubahan kolom selain nama, untuk dibaca user: tipe, NULL, default */
 function diffColumn(a: ColumnDef, b: ColumnDef): string[] {
@@ -322,7 +342,12 @@ function diffColumn(a: ColumnDef, b: ColumnDef): string[] {
 
 export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow[], rows: ColumnRow[]): { sql: string; errors: string[]; count: number; steps: ColumnStep[] } {
   const live = rows.filter((r) => !r.deleted && (r.orig || r.name.trim() || r.type.trim()));
-  const clean = (r: ColumnRow): ColumnDef => ({ name: r.name.trim(), type: r.type.trim(), nullable: r.nullable, ...(r.default?.trim() ? { default: r.default.trim() } : {}) });
+  const editableKeys = !!ddl.addPk;
+  const clean = (r: ColumnRow): ColumnDef => ({
+    name: r.name.trim(), type: r.type.trim(), nullable: r.nullable && (!editableKeys || (!r.pk && !r.ai)),
+    ...((!editableKeys || !r.ai) && r.default?.trim() ? { default: r.default.trim() } : {}),
+    ...(r.keep ? { keep: r.keep } : {}), ...(r.ai ? { ai: true } : {}), ...(r.gen ? { gen: r.gen } : {}),
+  });
   const old = (r: ColumnRow) => original.find((c) => c.name === r.orig)!;
   const errors = live.flatMap((r) => {
     const e = checkColumn(r) ?? checkType(r.type, ddl.types) ?? ddl.check?.(clean(r), r.orig ? old(r) : undefined);
@@ -334,17 +359,139 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
     if (k && seen.has(k)) errors.push(`Duplicate column name: ${r.name.trim()}`);
     seen.add(k);
   }
+  if (ddl.addPk) errors.push(...checkRows(ddl, obj, live.map((r) => ({ ...r, ...clean(r) })), original));
   if (errors.length) return { sql: '', errors, count: 0, steps: [] };
+  const nameOf = (r: ColumnRow) => clean(r).name;
+  const liveOf = (c: ColumnRow) => live.find((r) => r.orig === c.name);
+  const sameFk = (a?: ColumnFk, b?: ColumnFk) =>
+    a?.schema === b?.schema && a?.table === b?.table && a?.column === b?.column
+    && (a?.onDelete || 'NO ACTION') === (b?.onDelete || 'NO ACTION')
+    && (a?.onUpdate || 'NO ACTION') === (b?.onUpdate || 'NO ACTION');
+  const keyEdit = (r?: ColumnRow) => {
+    if (!ddl.rebuildKeys || !r?.orig) return false;
+    const before = old(r);
+    const after = clean(r);
+    return before.type.trim() !== after.type || before.nullable !== after.nullable;
+  };
+  const keyEditDetail = 're-created because the column type changes; fails if other tables reference this key or an index uses this column';
+  const fkName = (c: ColumnRow) => c.fk?.name ?? `FK_${obj.name}_${c.name}`;
+  const uqName = (c: ColumnRow) => c.uqName ?? `UQ_${obj.name}_${c.name}`;
+  const oldPk = original.filter((c) => c.pk && !(ddl.dropKeepsKeys && rows.some((r) => r.deleted && r.orig === c.name)));
+  const newPk = live.filter((r) => r.pk);
+  const oldPkIds = oldPk.map((c) => c.name);
+  const newPkIds = newPk.map((r) => r.orig ?? `new:${rows.indexOf(r)}`);
+  const pkChanged = oldPkIds.length !== newPkIds.length || oldPkIds.some((id) => !newPkIds.includes(id));
+  const oldPkEdit = original.some((c) => c.pk && keyEdit(liveOf(c)));
+  const pkNeedsStep = editableKeys && (pkChanged || oldPkEdit);
+  const inlinePk = !!ddl.aiNeedsKey && newPk.some((r) => !r.orig && r.ai);
+  const replacePk = !!ddl.replacePk && oldPk.length > 0 && newPk.length > 0 && pkChanged && !inlinePk;
+  const aiLabel = ddl.aiLabel ?? 'auto increment';
+  const steps: ColumnStep[] = [];
+
+  if (editableKeys) {
+    for (const before of original) {
+      if (!before.fk) continue;
+      const current = liveOf(before);
+      if (!current || !current.fk || !sameFk(before.fk, current.fk) || keyEdit(current)) {
+        const detail = keyEdit(current ?? before) ? [keyEditDetail] : undefined;
+        steps.push({ kind: 'dropKey', column: before.name, sql: ddl.dropFk!(obj, fkName(before)), title: `Drop foreign key ${fkName(before)}`, ...(detail ? { detail } : {}) });
+      }
+    }
+    for (const before of original) {
+      if (!before.unique) continue;
+      const current = liveOf(before);
+      if ((!current && !ddl.dropKeepsKeys) || (current && !current.unique) || keyEdit(current ?? before)) {
+        const detail = keyEdit(current ?? before) ? [keyEditDetail] : undefined;
+        steps.push({ kind: 'dropKey', column: before.name, sql: ddl.dropUnique!(obj, uqName(before), !!before.uqIndex),
+          title: `Drop unique ${uqName(before)}`, ...(detail ? { detail } : {}) });
+      }
+    }
+    for (const before of original) {
+      const current = liveOf(before);
+      if (ddl.setAi && before.ai && current && !current.ai) {
+        steps.push({ kind: 'ai', column: before.name, sql: ddl.setAi(obj, clean(before), false), title: `Remove ${aiLabel} from ${before.name}` });
+      }
+    }
+    if (pkNeedsStep && oldPk.length && !replacePk) {
+      const pkName = oldPk.find((c) => c.pkName)?.pkName;
+      const detail = oldPkEdit ? [keyEditDetail] : undefined;
+      steps.push({ kind: 'dropKey', column: oldPk[0].name, sql: ddl.dropPk!(obj, pkName),
+        title: `Drop primary key${pkName ? ` ${pkName}` : ''}`, ...(detail ? { detail } : {}) });
+    }
+  }
+
   // SQLite: perubahan selain nama dikerjakan satu rebuild tabel di awal (nama asal), rename / drop / add sesudahnya
   const rebuilt = ddl.rebuild ? live.filter((r) => r.orig && diffColumn(old(r), clean(r)).length) : [];
-  const steps: ColumnStep[] = [
-    ...(rebuilt.length ? [{ kind: 'rebuild' as const, column: obj.name, sql: ddl.rebuild!(obj, original, rebuilt.map((r) => ({ ...clean(r), name: r.orig! }))),
-      detail: rebuilt.map((r) => `${r.orig}: ${diffColumn(old(r), clean(r)).join(', ')}`) }] : []),
-    ...rows.filter((r) => r.deleted && r.orig).map((r): ColumnStep => ({ kind: 'drop', column: r.orig!, sql: ddl.drop(obj, r.orig!) })),
-    ...live.filter((r) => r.orig && !sameCol(old(r), clean(r))).map((r): ColumnStep => ({ kind: 'edit', column: r.orig!,
-      ...(clean(r).name !== r.orig ? { to: clean(r).name } : {}), sql: ddl.edit(obj, old(r), clean(r)), detail: diffColumn(old(r), clean(r)) })),
-    ...live.filter((r) => !r.orig).map((r): ColumnStep => ({ kind: 'add', column: clean(r).name, sql: ddl.add(obj, clean(r)) })),
-  ];
+  if (rebuilt.length) steps.push({ kind: 'rebuild', column: obj.name, sql: ddl.rebuild!(obj, original, rebuilt.map((r) => ({ ...clean(r), name: r.orig! }))),
+    detail: rebuilt.map((r) => `${r.orig}: ${diffColumn(old(r), clean(r)).join(', ')}`) });
+  steps.push(...rows.filter((r) => r.deleted && r.orig).map((r): ColumnStep => ({
+    kind: 'drop', column: r.orig!, sql: ddl.drop(obj, r.orig!), title: `Drop ${r.orig}`,
+  })));
+  steps.push(...live.filter((r) => r.orig && !sameCol(old(r), clean(r))).map((r): ColumnStep => {
+    const next = { ...clean(r), ai: !!old(r).ai && !!r.ai, gen: old(r).gen, keep: old(r).keep };
+    return { kind: 'edit', column: r.orig!, ...(clean(r).name !== r.orig ? { to: clean(r).name } : {}),
+      sql: ddl.edit(obj, old(r), next), detail: diffColumn(old(r), next),
+      title: r.orig === clean(r).name ? `Change ${r.orig}` : `Change ${r.orig} to ${clean(r).name}` };
+  }));
+  steps.push(...live.filter((r) => !r.orig).map((r): ColumnStep => {
+    const index = rows.indexOf(r);
+    const previous = rows.slice(0, index).reverse().find((candidate) => !candidate.deleted && (candidate.orig || candidate.name.trim() || candidate.type.trim()));
+    const pos = ddl.move || (ddl.aiNeedsKey && r.ai && r.pk)
+      ? { ...(ddl.move ? { after: previous ? nameOf(previous) : null } : {}),
+        ...(ddl.aiNeedsKey && r.ai && r.pk ? { pkCols: newPk.map(nameOf) } : {}) }
+      : undefined;
+    return { kind: 'add', column: clean(r).name, sql: ddl.add(obj, { ...clean(r), pk: r.pk, unique: r.unique, fk: r.fk }, pos), title: `Add ${clean(r).name}` };
+  }));
+  if (editableKeys) {
+    if (replacePk) {
+      const names = newPk.map(nameOf);
+      steps.push({ kind: 'addKey', column: names.join(', '), sql: ddl.replacePk!(obj, names), title: `Replace primary key (${names.join(', ')})` });
+    } else if (pkNeedsStep && newPk.length && !inlinePk) {
+      const names = newPk.map(nameOf);
+      const name = oldPkEdit ? oldPk.find((c) => c.pkName)?.pkName : undefined;
+      const detail = oldPkEdit ? [keyEditDetail] : undefined;
+      steps.push({ kind: 'addKey', column: names.join(', '), sql: ddl.addPk!(obj, names, name),
+        title: `Add primary key${name ? ` ${name}` : ` PK_${obj.name}`} (${names.join(', ')})`, ...(detail ? { detail } : {}) });
+    }
+    for (const r of live) {
+      if (!r.unique || (r.orig && old(r).unique)) {
+        if (!(r.unique && r.orig && keyEdit(r))) continue;
+        const before = old(r);
+        const name = before.uqName;
+        const detail = [keyEditDetail];
+        steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addUnique!(obj, nameOf(r), name, !!before.uqIndex),
+          title: `Add unique ${name ?? `UQ_${obj.name}_${nameOf(r)}`} (${nameOf(r)})`, detail });
+        continue;
+      }
+      if (r.orig && keyEdit(r)) continue;
+      const name = `UQ_${obj.name}_${nameOf(r)}`;
+      steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addUnique!(obj, nameOf(r)),
+        title: `Add unique ${name} (${nameOf(r)})` });
+    }
+    for (const before of original) {
+      const current = liveOf(before);
+      if (ddl.setAi && current && !before.ai && current.ai) {
+        steps.push({ kind: 'ai', column: nameOf(current), sql: ddl.setAi(obj, clean(current), true),
+          title: `Set ${aiLabel} on ${nameOf(current)}` });
+      }
+    }
+    for (const r of live) {
+      if (!r.fk) continue;
+      const before = r.orig ? old(r) : undefined;
+      const needsAdd = !before?.fk || !sameFk(before.fk, r.fk) || keyEdit(r);
+      if (!needsAdd) continue;
+      const name = keyEdit(r) ? before?.fk?.name : undefined;
+      const fk = { ...r.fk, ...(name ? { name } : {}) };
+      const detail = keyEdit(r) ? [keyEditDetail] : undefined;
+      const actions = [
+        ...(fk.onDelete && fk.onDelete !== 'NO ACTION' ? [` ON DELETE ${fk.onDelete}`] : []),
+        ...(fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? [` ON UPDATE ${fk.onUpdate}`] : []),
+      ].join('');
+      const fkTitle = name ?? `FK_${obj.name}_${nameOf(r)}`;
+      steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addFk!(obj, nameOf(r), fk),
+        title: `Add foreign key ${fkTitle} (${nameOf(r)}) → ${fk.table}(${fk.column})${actions}`, ...(detail ? { detail } : {}) });
+    }
+  }
   const sql = steps.map((x) => x.sql).join(ddl.separator);
   return { sql: sql && ddl.wrap ? ddl.wrap(sql) : sql, errors: [], count: steps.length, steps };
 }
