@@ -59,3 +59,11 @@ test('DBCode import: dbcode.connections -> connections without password, existin
   assert.deepEqual(skipped, ['taken (name already used)', 'redis (redis not supported)', '(invalid entry)']);
   assert.ok(conns.every((c) => !('password' in c)), 'passwords are never imported');
 });
+
+test('connection string: MongoDB with several hosts (replica set) keeps all hosts in the host field', () => {
+  assert.deepEqual(parseConnectionString('mongodb://app:p%40ss@h1:27017,h2:27018,h3/shop?replicaSet=rs0&authSource=admin'), {
+    type: 'mongodb', host: 'mongodb://h1:27017,h2:27018,h3', port: '27017', user: 'app', password: 'p@ss', database: 'shop',
+    authSource: 'admin', options: { replicaSet: 'rs0' },
+  });
+  assert.deepEqual(parseConnectionString('mongodb://h1,h2'), { type: 'mongodb', host: 'mongodb://h1,h2', port: '27017' });
+});
