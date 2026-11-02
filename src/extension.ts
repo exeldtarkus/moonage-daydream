@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
+import { ConnectionInfo, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -25,18 +25,16 @@ import { mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
 import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
-import { monitorKit } from './monitorKits';
-import { ConsulFs, backupWriter, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
-import { ConsulClient, consulTarget, dashboardData, deleteKv, detectFormat, kvChildren, saveKv } from './consul';
-import { consulDashboardHtml } from './consulDashHtml';
-import { monitorHtml } from './monitorHtml';
-import { permissionHint } from './mssqlTree';
+import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
+import { ConsulClient, consulTarget } from './consul';
 import { importDbcode } from './connString';
 import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
 import { columnsEditor, newTable } from './tablePanels';
+import { consulDashboard } from './consulDashboard';
+import { liveMonitor } from './monitorPanel';
 // tetap diekspor dari extension: dipakai test real lewat modul extension
 export { editScript, loadMore, saveGrid };
 
@@ -63,7 +61,7 @@ const LINT_SOURCE = 'Moonage';
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : String(e));
 
-let extCtx: vscode.ExtensionContext;
+export let extCtx: vscode.ExtensionContext;
 
 export function activate(ctx: vscode.ExtensionContext) {
   extCtx = ctx;
@@ -1051,229 +1049,7 @@ async function killCommand(n?: Node) {
   }
 }
 
-/** Live Monitor (SQL Server): grafik + tabel dari MONITOR_SQL tiap interval; tidak menumpuk request, berhenti saat tab tersembunyi / ditutup */
-function liveMonitor(n?: Node) {
-  if (n?.kind !== 'conn' && n?.kind !== 'db') return;
-  const node = n;
-  const found = monitorKit(node.c.type);
-  if (!found) return void vscode.window.showInformationMessage(`Live Monitor is not available for ${drivers[node.c.type].label}`);
-  const kit = found; // tetap ter-narrow di dalam fungsi tick
-  // klik kanan database = monitoring database itu saja; koneksi = seluruh server
-  const db = node.kind === 'db' ? node.db : undefined;
-  const parts = kit.parts(db);
-  const title = db ? `${node.c.name} / ${db}` : node.c.name;
-  // SQL Server: DMV dibaca dari master; MySQL / PostgreSQL: database koneksi (statistik server tetap terbaca)
-  const c = node.c.type === 'mssql' ? { ...node.c, database: 'master' } : node.c;
-  const d = drivers[node.c.type];
-  const panel = trackPanel(node.c.name, vscode.window.createWebviewPanel('moonageDaydream.monitor', `Monitor: ${title}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
-  panel.webview.html = monitorHtml(panel.webview.cspSource, title, db !== undefined, kit);
-  let interval = 5000;
-  let paused = false;
-  let disposed = false;
-  let busy = false;
-  let timer: NodeJS.Timeout | undefined;
-  let prev: { res: Record<string, ResultSet[] | Error>; t: number } | undefined;
-  const schedule = () => {
-    if (!disposed && !timer) timer = setTimeout(tick, interval);
-  };
-  async function tick() {
-    timer = undefined;
-    if (disposed) return;
-    if (paused || !panel.visible || busy) return schedule(); // tersembunyi / pause: tidak ada query ke server
-    busy = true;
-    try {
-      const pw = await conns.password(node.c.name);
-      const res: Record<string, ResultSet[] | Error> = {};
-      for (const part of parts) {
-        try {
-          res[part.id] = (await d.run(c, pw, part.sql)).resultSets;
-        } catch (e) {
-          if (!part.optional) throw e;
-          // bagian opsional (performance_schema / pg_stat_statements tidak aktif): pesan di tab-nya, grafik tetap jalan
-          log.error(`liveMonitor ${part.id} - EXCEPTION CAUGHT | ${node.c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-          res[part.id] = e instanceof Error ? e : new Error(String(e));
-        }
-      }
-      const t = Date.now();
-      const s = kit.sample(res, t, prev, db);
-      prev = { res, t };
-      void panel.webview.postMessage({ type: 'sample', ...s });
-    } catch (e) {
-      log.error(`liveMonitor - EXCEPTION CAUGHT | ${node.c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'error', message: (node.c.type === 'mssql' && permissionHint('monitor', e)) || errMsg(e) });
-    } finally {
-      busy = false;
-      schedule();
-    }
-  }
-  const restart = () => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-    void tick();
-  };
-  panel.onDidChangeViewState(() => panel.visible && !paused && restart());
-  panel.onDidDispose(() => {
-    disposed = true;
-    if (timer) clearTimeout(timer);
-  });
-  panel.webview.onDidReceiveMessage(async (m: { type: string; ms?: number; paused?: boolean; id?: string; tab?: string }) => {
-    if (m.type === 'interval' && m.ms) {
-      interval = Math.min(60000, Math.max(1000, m.ms));
-      restart();
-    } else if (m.type === 'pause') {
-      paused = !!m.paused;
-      if (!paused) restart();
-    } else if (m.type === 'open' && m.tab && kit.query(m.tab, db)) {
-      await openScript(node.c, c.database, kit.query(m.tab, db)!, true);
-    } else if (m.type === 'kill' && m.id) {
-      const ok = await vscode.window.showWarningMessage(`Kill session ${m.id} on ${node.c.name}? Its open transaction is rolled back.`, { modal: true }, 'Kill');
-      if (!ok) return;
-      try {
-        await d.run(c, await conns.password(node.c.name), kit.kill(m.id));
-        log.info(`kill session ${m.id} (live monitor): ${node.c.name}`);
-        restart();
-      } catch (e) {
-        log.error(`liveMonitor kill - EXCEPTION CAUGHT | ${node.c.name} / ${m.id}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        showError(`Kill session failed: ${errMsg(e)}`);
-      }
-    }
-  });
-  void tick();
-}
 
-/** Consul Dashboard: ringkasan cluster (saat dibuka / Refresh) + KV (Key & Value): browse folder, view nilai & metadata, edit, save, add, delete */
-function consulDashboard(c: ConnectionInfo) {
-  const panel = trackPanel(c.name, vscode.window.createWebviewPanel('moonageDaydream.consulDashboard', `Consul: ${c.name}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
-  panel.webview.html = consulDashboardHtml(panel.webview.cspSource, c.database ? `${c.name} / ${c.database}` : c.name);
-  let cachedClient: ConsulClient | undefined;
-  const getClient = async () => {
-    if (!cachedClient) cachedClient = new ConsulClient(consulTarget(c), await conns.password(c.name));
-    return cachedClient;
-  };
-
-  async function cluster() {
-    try {
-      void panel.webview.postMessage({ type: 'cluster', data: await dashboardData(await getClient()) });
-    } catch (e) {
-      log.error(`consulDashboard cluster - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'clusterError', message: errMsg(e) });
-    }
-  }
-
-  /** KV browse: list folders + keys satu level di bawah prefix secara instan (1 request) */
-  async function kvBrowse(prefix: string) {
-    try {
-      const client = await getClient();
-      const allKeys = await client.keys(prefix);
-      const { folders, keys: leafKeys } = kvChildren(allKeys, prefix);
-      void panel.webview.postMessage({ type: 'kv', prefix, folders, keys: leafKeys.map((key) => ({ key, value: '' })) });
-    } catch (e) {
-      log.error(`consulDashboard kvBrowse - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'kvError', message: errMsg(e) });
-    }
-  }
-
-  /** KV get value: ambil satu key dengan metadata lengkap saat diklik */
-  async function kvGetValue(key: string) {
-    try {
-      const client = await getClient();
-      const entry = await client.get(key);
-      if (!entry) {
-        void panel.webview.postMessage({ type: 'kvValue', key, error: `Key "${key}" not found` });
-        return;
-      }
-      const format = detectFormat(entry.value);
-      const size = Buffer.byteLength(entry.value, 'utf8');
-      void panel.webview.postMessage({
-        type: 'kvValue', key: entry.key, value: entry.value, flags: entry.flags, modifyIndex: entry.modifyIndex, session: entry.session,
-        format, size: size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`,
-      });
-    } catch (e) {
-      log.error(`consulDashboard kvGetValue - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      void panel.webview.postMessage({ type: 'kvValue', key, error: errMsg(e) });
-    }
-  }
-
-  /** KV save: simpan perubahan / buat key baru dengan validasi format, backup, dan CAS */
-  async function kvSave(key: string, value: string, cas: number, isNew?: boolean) {
-    if (c.readOnly) {
-      void panel.webview.postMessage({ type: 'kvSaveResult', success: false, key, error: `Connection "${c.name}" is read-only` });
-      return;
-    }
-    const ok = await vscode.window.showWarningMessage(`Save "${key}" to Consul?`, {
-      modal: true, detail: `${c.name}${c.database ? ` / ${c.database}` : ''}\n\n${isNew ? 'New key.' : 'The current value is backed up first.'} The change is applied at once (Consul has no transactions).`,
-    }, 'Save');
-    if (ok !== 'Save') {
-      void panel.webview.postMessage({ type: 'kvSaveResult', success: false, key, error: 'Save cancelled' });
-      return;
-    }
-    try {
-      const client = await getClient();
-      const r = await saveKv(client, key, value, cas, backupWriter(extCtx, c.name, key));
-      const updated = await client.get(key);
-      const size = Buffer.byteLength(value, 'utf8');
-      const format = detectFormat(value);
-      void panel.webview.postMessage({
-        type: 'kvSaveResult',
-        success: true,
-        key,
-        modifyIndex: updated?.modifyIndex ?? 0,
-        size: size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`,
-        format,
-        isNew: !!isNew,
-      });
-      explorer.refresh();
-      vscode.window.showInformationMessage(`Saved "${key}" to Consul.${r.backup ? ` Backup: ${r.backup}` : ''}`);
-    } catch (e) {
-      log.error(`consulDashboard kvSave - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      showError(`Save failed: ${errMsg(e)}`);
-      void panel.webview.postMessage({ type: 'kvSaveResult', success: false, key, error: errMsg(e) });
-    }
-  }
-
-  /** KV delete: hapus key setelah konfirmasi dan backup */
-  async function handleKvDelete(key: string) {
-    if (c.readOnly) {
-      vscode.window.showWarningMessage(`The connection "${c.name}" is read-only`);
-      return;
-    }
-    const ok = await vscode.window.showWarningMessage(`Delete key "${key}" from Consul?`, {
-      modal: true, detail: `${c.name}${c.database ? ` / ${c.database}` : ''}\n\nExisting value is backed up first (consul kv export format).`,
-    }, 'Delete');
-    if (ok !== 'Delete') return;
-    try {
-      const client = await getClient();
-      const r = await deleteKv(client, key, backupWriter(extCtx, c.name, key));
-      log.info(`consul dashboard delete ${c.name} / ${key}: backup ${r.backup ?? '-'}`);
-      vscode.window.showInformationMessage(`Deleted "${key}" from Consul.${r.backup ? ` Backup: ${r.backup}` : ''}`);
-      void panel.webview.postMessage({ type: 'kvDeleteResult', success: true, key });
-      explorer.refresh();
-    } catch (e) {
-      log.error(`consulDashboard kvDelete - EXCEPTION CAUGHT | ${c.name} / ${key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      showError(`Delete failed: ${errMsg(e)}`);
-      void panel.webview.postMessage({ type: 'kvDeleteResult', success: false, key, error: errMsg(e) });
-    }
-  }
-
-  panel.webview.onDidReceiveMessage((m: { type: string; prefix?: string; key?: string; value?: string; cas?: number; isNew?: boolean }) => {
-    if (m.type === 'cluster') {
-      void cluster();
-    } else if (m.type === 'kvBrowse') {
-      void kvBrowse(m.prefix ?? '');
-    } else if (m.type === 'kvGetValue' && m.key) {
-      void kvGetValue(m.key);
-    } else if (m.type === 'kvSave' && m.key !== undefined && m.value !== undefined) {
-      void kvSave(m.key, m.value, m.cas ?? 0, m.isNew);
-    } else if (m.type === 'kvDelete' && m.key) {
-      void handleKvDelete(m.key);
-    } else if (m.type === 'kvOpenEditor' && m.key) {
-      void openConsulKey(c, m.key).catch((e: unknown) => {
-        log.error(`consulDashboard kvOpenEditor - EXCEPTION CAUGHT | ${c.name} / ${m.key}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-        showError(`Open key failed: ${errMsg(e)}`);
-      });
-    }
-  });
-}
 
 /** Backup / Restore (SQL Server): script di tab baru ke folder backup default server, dijalankan sendiri */
 async function backupCommand(n: Node | undefined, action: 'backup' | 'restore') {
