@@ -104,7 +104,7 @@ export function whatsNewHtml(cspSource: string, installed: string, releases: Rel
   .release[open] { padding-bottom: 6px; }
   summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 14px; cursor: pointer; list-style: none; }
   summary::-webkit-details-marker { display: none; }
-  summary::before { content: '›'; display: inline-block; width: 10px; color: var(--muted); transition: transform .15s; }
+  summary::before { content: '\\203A'; display: inline-block; width: 10px; color: var(--muted); transition: transform .15s; }
   .release[open] > summary::before { transform: rotate(90deg); }
   summary:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; border-radius: 6px; }
   .ver { font-family: var(--mono); font-size: 15px; font-weight: 600; }
