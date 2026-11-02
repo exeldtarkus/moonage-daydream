@@ -87,13 +87,17 @@ test('add data: a successful insert resets the form and reports one inserted row
   const html = addDataHtml('vscode-webview://test', { conn: 'local', table: 'dbo.item', type: 'SQL Server' }, false);
   assert.match(html, /else if \(m\.type === 'inserted'\) \{[\s\S]*\$\('cols'\)\.innerHTML = cols\.map\(row\)\.join\(''\);[\s\S]*send\('change'\);/);
   assert.match(readFileSync(join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8'),
-    /await results\.show\([^,]+, \{ result: \{ \.\.\.res, messages: \[\.\.\.res\.messages, '1 row inserted\.'\] \} \}\);/);
+    /await results\.show\([^,]+, \{ result: \{ resultSets: \[\], rowsAffected: \[\], messages: \['1 row inserted\.'\], durationMs: res\.durationMs \} \}\);/);
 });
 
 test('opening a project UI closes the Results panel', () => {
   const source = (file: string) => readFileSync(join(__dirname, '..', '..', 'src', file), 'utf8');
   const extension = source('extension.ts');
-  assert.match(extension, /export function trackPanel[\s\S]*executeCommand\('workbench\.action\.closePanel'\)/);
-  assert.match(extension, /function openWhatsNew[\s\S]*executeCommand\('workbench\.action\.closePanel'\)/);
-  assert.match(source('connectionForm.ts'), /export function openConnectionForm[\s\S]*executeCommand\('workbench\.action\.closePanel'\)/);
+  assert.match(source('uiPanels.ts'), /export function closeResultsPanel\(\): void \{[\s\S]*executeCommand\('workbench\.action\.closePanel'\)/);
+  assert.match(extension, /const open = dbInfoPanels\.get\(key\);\s+if \(open\) \{ closeResultsPanel\(\); return open\.reveal\(\); \}/);
+  assert.match(extension, /const open = formPanels\.get\(key\);\s+if \(open\) \{ closeResultsPanel\(\); return open\.reveal\(\); \}/);
+  assert.match(extension, /const open = addDataPanels\.get\(key\);\s+if \(open\) \{ closeResultsPanel\(\); return open\.reveal\(\); \}/);
+  assert.match(extension, /function openWhatsNew[\s\S]*closeResultsPanel\(\)/);
+  assert.match(source('connectionForm.ts'), /export function openConnectionForm[\s\S]*closeResultsPanel\(\)/);
+  assert.match(source('tablePanels.ts'), /if \(open\) \{ closeResultsPanel\(\); return open\.reveal\(\); \}/);
 });

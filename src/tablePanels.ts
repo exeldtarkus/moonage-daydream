@@ -5,6 +5,7 @@ import { ColumnRow, ConnectionInfo, Driver, NewColumn, TableKey, createTable, re
 import { columnsHtml } from './columnsHtml';
 import { gridMeta, showError } from './gridEdit';
 import { conns, explorer, log, openScript, trackPanel } from './extension';
+import { closeResultsPanel } from './uiPanels';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : String(e));
@@ -24,7 +25,7 @@ export function newTable(n?: Node) {
   const ddl = d.columnDdl!;
   const key = `${conn.name}\u0000${db}`;
   const open = newTablePanels.get(key);
-  if (open) return open.reveal();
+  if (open) { closeResultsPanel(); return open.reveal(); }
   const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.newTable', `New Table: ${db}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
   newTablePanels.set(key, panel);
   panel.onDidDispose(() => newTablePanels.delete(key));
@@ -114,7 +115,7 @@ export function columnsEditor(n?: Node) {
   const table = `${obj.schema ? `${obj.schema}.` : ''}${obj.name}`;
   const key = `${conn.name}\u0000${db}\u0000${table}`;
   const open = columnPanels.get(key);
-  if (open) return open.reveal();
+  if (open) { closeResultsPanel(); return open.reveal(); }
   const panel = trackPanel(conn.name, vscode.window.createWebviewPanel('moonageDaydream.columns', `Columns: ${table}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }));
   columnPanels.set(key, panel);
   panel.onDidDispose(() => columnPanels.delete(key));
