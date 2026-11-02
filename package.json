@@ -1164,6 +1164,7 @@
     "test": "npm run compile && node --test out/test/*.test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "prepare": "git config core.hooksPath .githooks || true",
     "package": "vsce package --skip-license",
     "install:local": "node scripts/install-local.js",
     "bundle": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --external:./test/real --format=cjs --platform=node --target=node18 --minify",

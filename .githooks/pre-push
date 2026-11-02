@@ -1,0 +1,3 @@
+#!/bin/sh
+# lint wajib bersih sebelum push (aktif lewat `npm install` -> script prepare -> core.hooksPath)
+npm run lint --silent || { echo "pre-push: npm run lint gagal, push dibatalkan (perbaiki atau npm run lint:fix)" >&2; exit 1; }
