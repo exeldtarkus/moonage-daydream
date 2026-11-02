@@ -115,6 +115,9 @@ export type ColumnDef = Pick<Column, 'name' | 'type' | 'nullable' | 'default'> &
   gen?: string;
 };
 
+/** tujuan foreign key: kolom tujuan berpasangan dengan kolom lokal sesuai urutan */
+export interface KeyRef { schema: string; table: string; columns: string[]; onDelete?: string; onUpdate?: string }
+
 /**
  * UNIQUE / FOREIGN KEY tingkat tabel (satu atau lebih kolom, urutan bermakna); PK tetap di chip kolom.
  * readOnly = index berfilter / ekspresi dari server: ditampilkan saja, tidak pernah di-drop / dibuat ulang.
@@ -124,7 +127,7 @@ export interface TableKey {
   /** nama constraint / index; kosong = nama otomatis (keyName) */
   name?: string;
   cols: string[];
-  ref?: { schema: string; table: string; columns: string[]; onDelete?: string; onUpdate?: string };
+  ref?: KeyRef;
   /** UNIQUE yang berupa unique index, bukan constraint */
   index?: boolean;
   readOnly?: boolean;
@@ -223,9 +226,11 @@ export interface ColumnDdl {
   dropPk?(obj: DbObject, name?: string): string;
   addPk?(obj: DbObject, cols: string[], name?: string): string;
   dropUnique?(obj: DbObject, name: string, index: boolean): string;
-  addUnique?(obj: DbObject, col: string, name?: string, index?: boolean): string;
+  /** default nama: UQ_<tabel>_<kolom...> */
+  addUnique?(obj: DbObject, cols: string[], name?: string, index?: boolean): string;
   dropFk?(obj: DbObject, name: string): string;
-  addFk?(obj: DbObject, col: string, fk: ColumnFk): string;
+  /** default nama: FK_<tabel>_<kolom...> */
+  addFk?(obj: DbObject, cols: string[], ref: KeyRef, name?: string): string;
   move?(obj: DbObject, col: ColumnDef, after: string | null): string;
   /** SQL Server: lepas dan pasang lagi key saat tipe atau nullability kolom berubah */
   rebuildKeys?: boolean;
@@ -425,7 +430,11 @@ function diffColumn(a: ColumnDef, b: ColumnDef): string[] {
   ];
 }
 
-export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow[], rows: ColumnRow[]): { sql: string; errors: string[]; count: number; steps: ColumnStep[] } {
+/**
+ * langkah DDL editor Columns. keys = key tabel final dari UI (nama kolom final), originalKeys = key dari server (nama kolom asal);
+ * key read-only (index berfilter / ekspresi) tidak pernah di-drop / dibuat ulang.
+ */
+export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow[], rows: ColumnRow[], keys: TableKey[] = [], originalKeys: TableKey[] = []): { sql: string; errors: string[]; count: number; steps: ColumnStep[] } {
   const live = rows.filter((r) => !r.deleted && (r.orig || r.name.trim() || r.type.trim()));
   const editableKeys = !!ddl.addPk;
   const clean = (r: ColumnRow): ColumnDef => ({
@@ -445,6 +454,16 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
     seen.add(k);
   }
   if (ddl.addPk) errors.push(...checkRows(ddl, obj, live.map((r) => ({ ...r, ...clean(r) })), original));
+  const editable = keys.filter((k) => !k.readOnly);
+  errors.push(...checkKeys(ddl, obj, live.map((r) => ({ ...r, ...clean(r) })), editable));
+  // kolom anggota key read-only tidak boleh dihapus / diganti nama / diubah tipe atau NULL
+  for (const k of originalKeys.filter((x) => x.readOnly)) {
+    const hit = k.cols.filter((c) => {
+      const r = live.find((x) => x.orig === c);
+      return !r || clean(r).name !== c || r.type.trim() !== original.find((o) => o.name === c)?.type.trim() || clean(r).nullable !== original.find((o) => o.name === c)?.nullable;
+    });
+    if (hit.length) errors.push(`${k.name}: ${hit.join(', ')} used by a read-only key (filtered / expression index); change it manually`);
+  }
   if (errors.length) return { sql: '', errors, count: 0, steps: [] };
   const nameOf = (r: ColumnRow) => clean(r).name;
   const liveOf = (c: ColumnRow) => live.find((r) => r.orig === c.name);
@@ -473,6 +492,28 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
   const aiLabel = ddl.aiLabel ?? 'auto increment';
   const steps: ColumnStep[] = [];
 
+  // diff key tabel: key server yang definisinya sama (setelah rename kolom) dipertahankan, selain itu drop lalu add
+  const finalName = (c: string) => { const r = live.find((x) => x.orig === c); return r ? nameOf(r) : c; };
+  const sameKey = (a: TableKey, b: TableKey) => a.kind === b.kind && !!a.index === !!b.index && a.cols.join('\u0001') === b.cols.join('\u0001')
+    && (a.kind === 'unique' || (a.ref?.schema === b.ref?.schema && a.ref?.table === b.ref?.table && a.ref?.columns.join('\u0001') === b.ref?.columns.join('\u0001')
+      && (a.ref?.onDelete || 'NO ACTION') === (b.ref?.onDelete || 'NO ACTION') && (a.ref?.onUpdate || 'NO ACTION') === (b.ref?.onUpdate || 'NO ACTION')));
+  const kept = new Set<TableKey>();
+  const keyDrops: TableKey[] = [];
+  const keyAdds: { key: TableKey; name: string; detail?: string[] }[] = [];
+  for (const before of originalKeys.filter((k) => !k.readOnly)) {
+    const match = editable.find((k) => !kept.has(k) && (!k.name?.trim() || k.name.trim() === before.name) && sameKey({ ...before, cols: before.cols.map(finalName) }, k));
+    if (!match) { keyDrops.push(before); continue; }
+    kept.add(match);
+    if (before.cols.some((c) => { const r = live.find((x) => x.orig === c); return !!r && keyEdit(r); })) {
+      keyDrops.push(before);
+      keyAdds.push({ key: match, name: before.name!, detail: [keyEditDetail] });
+    }
+  }
+  for (const k of editable) if (!kept.has(k)) keyAdds.push({ key: k, name: k.name?.trim() || keyName(obj, k.kind, k.cols, ddl.nameMax) });
+  if ((keyDrops.length || keyAdds.length) && (!ddl.addUnique || !ddl.dropUnique || (ddl.fkActions && (!ddl.addFk || !ddl.dropFk)))) {
+    return { sql: '', errors: ['Changing table keys is not supported here yet'], count: 0, steps: [] };
+  }
+
   if (editableKeys) {
     for (const before of original) {
       if (!before.fk) continue;
@@ -482,6 +523,9 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
         steps.push({ kind: 'dropKey', column: before.name, sql: ddl.dropFk!(obj, fkName(before)), title: `Drop foreign key ${fkName(before)}`, ...(detail ? { detail } : {}) });
       }
     }
+    for (const k of keyDrops.filter((x) => x.kind === 'fk')) {
+      steps.push({ kind: 'dropKey', column: k.cols.join(', '), sql: ddl.dropFk!(obj, k.name!), title: `Drop foreign key ${k.name}` });
+    }
     for (const before of original) {
       if (!before.unique) continue;
       const current = liveOf(before);
@@ -490,6 +534,9 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
         steps.push({ kind: 'dropKey', column: before.name, sql: ddl.dropUnique!(obj, uqName(before), !!before.uqIndex),
           title: `Drop unique ${uqName(before)}`, ...(detail ? { detail } : {}) });
       }
+    }
+    for (const k of keyDrops.filter((x) => x.kind === 'unique')) {
+      steps.push({ kind: 'dropKey', column: k.cols.join(', '), sql: ddl.dropUnique!(obj, k.name!, !!k.index), title: `Drop unique ${k.name}` });
     }
     for (const before of original) {
       const current = liveOf(before);
@@ -566,14 +613,18 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
         const before = old(r);
         const name = before.uqName;
         const detail = [keyEditDetail];
-        steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addUnique!(obj, nameOf(r), name, !!before.uqIndex),
+        steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addUnique!(obj, [nameOf(r)], name, !!before.uqIndex),
           title: `Add unique ${name ?? `UQ_${obj.name}_${nameOf(r)}`} (${nameOf(r)})`, detail });
         continue;
       }
       if (r.orig && keyEdit(r)) continue;
       const name = `UQ_${obj.name}_${nameOf(r)}`;
-      steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addUnique!(obj, nameOf(r)),
+      steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addUnique!(obj, [nameOf(r)]),
         title: `Add unique ${name} (${nameOf(r)})` });
+    }
+    for (const { key: k, name, detail } of keyAdds.filter((x) => x.key.kind === 'unique')) {
+      steps.push({ kind: 'addKey', column: k.cols.join(', '), sql: ddl.addUnique!(obj, k.cols, name, !!k.index),
+        title: `Add unique ${name} (${k.cols.join(', ')})`, ...(detail ? { detail } : {}) });
     }
     for (const before of original) {
       const current = liveOf(before);
@@ -595,8 +646,12 @@ export function columnChanges(ddl: ColumnDdl, obj: DbObject, original: ColumnRow
         ...(fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? [` ON UPDATE ${fk.onUpdate}`] : []),
       ].join('');
       const fkTitle = name ?? `FK_${obj.name}_${nameOf(r)}`;
-      steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addFk!(obj, nameOf(r), fk),
+      steps.push({ kind: 'addKey', column: nameOf(r), sql: ddl.addFk!(obj, [nameOf(r)], { schema: fk.schema, table: fk.table, columns: [fk.column], onDelete: fk.onDelete, onUpdate: fk.onUpdate }, fk.name),
         title: `Add foreign key ${fkTitle} (${nameOf(r)}) → ${fk.table}(${fk.column})${actions}`, ...(detail ? { detail } : {}) });
+    }
+    for (const { key: k, name, detail } of keyAdds.filter((x) => x.key.kind === 'fk')) {
+      steps.push({ kind: 'addKey', column: k.cols.join(', '), sql: ddl.addFk!(obj, k.cols, k.ref!, name),
+        title: `Add foreign key ${name} (${k.cols.join(', ')}) → ${k.ref!.table}(${k.ref!.columns.join(', ')})${fkActs(k.ref!)}`, ...(detail ? { detail } : {}) });
     }
   }
   const sql = steps.map((x) => x.sql).join(ddl.separator);

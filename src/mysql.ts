@@ -278,10 +278,9 @@ ORDER BY c.ordinal_position;`,
   addPk: (o, cols) => `ALTER TABLE ${myTbl(o)} ADD PRIMARY KEY (${cols.map(quoteMy).join(', ')});`,
   replacePk: (o, cols) => `ALTER TABLE ${myTbl(o)} DROP PRIMARY KEY, ADD PRIMARY KEY (${cols.map(quoteMy).join(', ')});`,
   dropUnique: (o, name) => `ALTER TABLE ${myTbl(o)} DROP INDEX ${quoteMy(name)};`,
-  addUnique: (o, col, name) => `ALTER TABLE ${myTbl(o)} ADD UNIQUE KEY ${quoteMy(name ?? `UQ_${o.name}_${col}`)} (${quoteMy(col)});`,
+  addUnique: (o, cols, name) => `ALTER TABLE ${myTbl(o)} ADD UNIQUE KEY ${quoteMy(name ?? `UQ_${o.name}_${cols.join('_')}`)} (${cols.map(quoteMy).join(', ')});`,
   dropFk: (o, name) => `ALTER TABLE ${myTbl(o)} DROP FOREIGN KEY ${quoteMy(name)};`,
-  addFk: (o, col, fk) => `ALTER TABLE ${myTbl(o)} ADD CONSTRAINT ${quoteMy(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${quoteMy(col)}) REFERENCES ${myTbl({ schema: fk.schema, name: fk.table })} (${quoteMy(fk.column)})`
-    + `${fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''};`,
+  addFk: (o, cols, ref, name) => `ALTER TABLE ${myTbl(o)} ADD CONSTRAINT ${quoteMy(name ?? `FK_${o.name}_${cols.join('_')}`)} FOREIGN KEY (${cols.map(quoteMy).join(', ')}) REFERENCES ${myTbl({ schema: ref.schema, name: ref.table })} (${ref.columns.map(quoteMy).join(', ')})${fkActs(ref)};`,
   setAi: (o, col, on) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql({ ...col, ai: on })};`,
   move: (o, col, after) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql(col)}${after === null ? ' FIRST' : ` AFTER ${quoteMy(after)}`};`,
   create(o, cols, keys) {

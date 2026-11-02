@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { checkKeys, createTable, drivers, keyName, type NewColumn, type TableKey } from '../db';
+import { checkKeys, columnChanges, createTable, drivers, keyName, type ColumnRow, type NewColumn, type TableKey } from '../db';
 
 const t = { schema: 'dbo', name: 'item' };
 const cols: NewColumn[] = [
@@ -51,3 +51,69 @@ test('createTable: key errors block the script', () => {
   assert.equal(r.sql, '');
   assert.match(r.errors[0], /unknown column nope/);
 });
+
+test('key DDL: column lists in all SQL drivers', () => {
+  const ref = { schema: 'dbo', table: 'parent', columns: ['x', 'y'], onDelete: 'CASCADE' };
+  assert.equal(drivers.mssql.columnDdl!.addUnique!(t, ['a', 'b'], 'UQ_ab'), 'ALTER TABLE [dbo].[item] ADD CONSTRAINT [UQ_ab] UNIQUE ([a], [b]);');
+  assert.equal(drivers.mssql.columnDdl!.addFk!(t, ['a', 'b'], ref, 'FK_ab'),
+    'ALTER TABLE [dbo].[item] ADD CONSTRAINT [FK_ab] FOREIGN KEY ([a], [b]) REFERENCES [dbo].[parent] ([x], [y]) ON DELETE CASCADE;');
+  assert.match(drivers.mysql.columnDdl!.addUnique!(t, ['a', 'b'], 'UQ_ab'), /ADD UNIQUE KEY `UQ_ab` \(`a`, `b`\);$/);
+  assert.match(drivers.mysql.columnDdl!.addFk!(t, ['a', 'b'], ref, 'FK_ab'), /FOREIGN KEY \(`a`, `b`\) REFERENCES `dbo`\.`parent` \(`x`, `y`\) ON DELETE CASCADE;$/);
+  assert.match(drivers.postgres.columnDdl!.addUnique!(t, ['a', 'b'], 'UQ_ab'), /ADD CONSTRAINT "UQ_ab" UNIQUE \("a", "b"\);$/);
+  assert.match(drivers.postgres.columnDdl!.addFk!(t, ['a', 'b'], ref, 'FK_ab'), /FOREIGN KEY \("a", "b"\) REFERENCES "dbo"\."parent" \("x", "y"\) ON DELETE CASCADE;$/);
+  // nama default satu kolom tetap sama
+  assert.equal(drivers.mssql.columnDdl!.addUnique!(t, ['a']), 'ALTER TABLE [dbo].[item] ADD CONSTRAINT [UQ_item_a] UNIQUE ([a]);');
+});
+
+const row = (name: string, props: Partial<ColumnRow> = {}): ColumnRow => ({ name, type: 'int', nullable: false, orig: name, ...props });
+const ms = drivers.mssql.columnDdl!;
+const orig = [row('a'), row('b'), row('c', { nullable: true })];
+const oldUq: TableKey = { kind: 'unique', name: 'UQ_old', cols: ['a', 'b'] };
+const oldFk: TableKey = { kind: 'fk', name: 'FK_old', cols: ['a', 'b'], ref: { schema: 'dbo', table: 'parent', columns: ['x', 'y'] } };
+
+test('columnChanges keys: unchanged keys make no steps; rename keeps the key', () => {
+  assert.equal(columnChanges(ms, t, orig.map(stripOrig), orig, [oldUq, oldFk], [oldUq, oldFk]).count, 0);
+  const rows = [row('a', { name: 'a2' }), row('b'), row('c', { nullable: true })];
+  const r = columnChanges(ms, t, orig.map(stripOrig), rows, [{ ...oldUq, cols: ['a2', 'b'] }, { ...oldFk, cols: ['a2', 'b'] }], [oldUq, oldFk]);
+  assert.deepEqual(r.steps.map((s) => s.kind), ['edit']);
+});
+
+test('columnChanges keys: add / drop / change in safe order with names', () => {
+  const nu: TableKey = { kind: 'unique', cols: ['b', 'c'] };
+  const changedFk = { ...oldFk, ref: { ...oldFk.ref!, onDelete: 'CASCADE' } };
+  const r = columnChanges(ms, t, orig.map(stripOrig), orig, [nu, changedFk], [oldUq, oldFk]);
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.steps.map((s) => s.title), [
+    'Drop foreign key FK_old',
+    'Drop unique UQ_old',
+    'Add unique UQ_item_b_c (b, c)',
+    'Add foreign key FK_old (a, b) → parent(x, y) ON DELETE CASCADE',
+  ]);
+  assert.match(r.sql, /ADD CONSTRAINT \[UQ_item_b_c\] UNIQUE \(\[b\], \[c\]\)/);
+});
+
+test('columnChanges keys: type change of a member re-creates the key (SQL Server)', () => {
+  const rows = [row('a', { type: 'bigint' }), row('b'), row('c', { nullable: true })];
+  const r = columnChanges(ms, t, orig.map(stripOrig), rows, [oldUq], [oldUq]);
+  assert.deepEqual(r.steps.map((s) => s.title), ['Drop unique UQ_old', 'Change a', 'Add unique UQ_old (a, b)']);
+});
+
+test('columnChanges keys: deleting a member column or touching a read-only key is blocked', () => {
+  const rows = [row('a', { deleted: true }), row('b'), row('c', { nullable: true })];
+  assert.match(columnChanges(ms, t, orig.map(stripOrig), rows, [oldUq], [oldUq]).errors.join(), /unknown column a/);
+  const ro: TableKey = { kind: 'unique', name: 'IX_filtered', cols: ['a', 'b'], index: true, readOnly: true };
+  const r = columnChanges(ms, t, orig.map(stripOrig), rows, [ro], [ro]);
+  assert.match(r.errors.join(), /IX_filtered.*read-only/);
+  // read-only yang tidak tersentuh: tidak ada langkah
+  assert.equal(columnChanges(ms, t, orig.map(stripOrig), orig, [ro], [ro]).count, 0);
+});
+
+test('columnChanges keys: drivers without key DDL reject key changes', () => {
+  const r = columnChanges(drivers.sqlite.columnDdl!, t, orig.map(stripOrig), orig, [oldUq], []);
+  assert.match(r.errors.join(), /not supported/);
+});
+
+function stripOrig(r: ColumnRow): ColumnRow {
+  const { orig: _orig, ...rest } = r;
+  return rest;
+}

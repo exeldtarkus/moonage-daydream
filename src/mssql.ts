@@ -311,11 +311,11 @@ ORDER BY c.column_id;`,
   dropPk: (o, name) => `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name ?? `PK_${o.name}`)};`,
   addPk: (o, cols, name) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `PK_${o.name}`)} PRIMARY KEY (${cols.map(q).join(', ')});`,
   dropUnique: (o, name, index) => index ? `DROP INDEX ${q(name)} ON ${tbl(o)};` : `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name)};`,
-  addUnique: (o, col, name, index) => index
-    ? `CREATE UNIQUE INDEX ${q(name ?? `UQ_${o.name}_${col}`)} ON ${tbl(o)} (${q(col)});`
-    : `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `UQ_${o.name}_${col}`)} UNIQUE (${q(col)});`,
+  addUnique: (o, cols, name, index) => index
+    ? `CREATE UNIQUE INDEX ${q(name ?? `UQ_${o.name}_${cols.join('_')}`)} ON ${tbl(o)} (${cols.map(q).join(', ')});`
+    : `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `UQ_${o.name}_${cols.join('_')}`)} UNIQUE (${cols.map(q).join(', ')});`,
   dropFk: (o, name) => `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name)};`,
-  addFk: (o, col, fk) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${q(col)}) REFERENCES ${q(fk.schema)}.${q(fk.table)} (${q(fk.column)})${fkActs(fk)};`,
+  addFk: (o, cols, ref, name) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `FK_${o.name}_${cols.join('_')}`)} FOREIGN KEY (${cols.map(q).join(', ')}) REFERENCES ${q(ref.schema)}.${q(ref.table)} (${ref.columns.map(q).join(', ')})${fkActs(ref)};`,
   create(o, cols, keys) {
     const pk = cols.filter((c) => c.pk);
     const lines = [

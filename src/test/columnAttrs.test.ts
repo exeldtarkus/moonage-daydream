@@ -82,8 +82,8 @@ const attrDdl = () => Object.assign({ ...stub }, {
   dropUnique: (_obj: DbObject, name: string) => `dropUnique ${name}`,
   dropPk: (_obj: DbObject, name?: string) => `dropPk ${name ?? ''}`,
   addPk: (_obj: DbObject, cols: string[], name?: string) => `addPk ${name ?? ''} ${cols.join(',')}`,
-  addUnique: (_obj: DbObject, col: string, name?: string) => `addUnique ${name ?? ''} ${col}`,
-  addFk: (_obj: DbObject, col: string, fk: ColumnRow['fk']) => `addFk ${fk?.name ?? ''} ${col}`,
+  addUnique: (_obj: DbObject, cols: string[], name?: string) => `addUnique ${name ?? ''} ${cols.join(',')}`,
+  addFk: (_obj: DbObject, cols: string[], _ref: unknown, name?: string) => `addFk ${name ?? ''} ${cols.join(',')}`,
   setAi: (_obj: DbObject, col: ColumnDef, on: boolean) => `${on ? 'setAi' : 'dropAi'} ${col.name}`,
 });
 const col = (name: string, props: Partial<ColumnRow> = {}): ColumnRow => ({ name, type: 'int', nullable: false, ...props });
@@ -307,11 +307,11 @@ test('SQL Server key DDL: exact SQL and odd-name quoting', () => {
   assert.equal(ms.addPk!(table, ['a', 'b']), `ALTER TABLE ${target} ADD CONSTRAINT [PK_or]]ders] PRIMARY KEY ([a], [b]);`);
   assert.equal(ms.addPk!(table, ['id'], 'PK__x'), `ALTER TABLE ${target} ADD CONSTRAINT [PK__x] PRIMARY KEY ([id]);`);
   assert.equal(ms.dropPk!(table, 'PK__x'), `ALTER TABLE ${target} DROP CONSTRAINT [PK__x];`);
-  assert.equal(ms.addUnique!(table, 'c'), `ALTER TABLE ${target} ADD CONSTRAINT [UQ_or]]ders_c] UNIQUE ([c]);`);
-  assert.equal(ms.addUnique!(table, 'c', 'ix', true), `CREATE UNIQUE INDEX [ix] ON ${target} ([c]);`);
+  assert.equal(ms.addUnique!(table, ['c']), `ALTER TABLE ${target} ADD CONSTRAINT [UQ_or]]ders_c] UNIQUE ([c]);`);
+  assert.equal(ms.addUnique!(table, ['c'], 'ix', true), `CREATE UNIQUE INDEX [ix] ON ${target} ([c]);`);
   assert.equal(ms.dropUnique!(table, 'UQ_x', false), `ALTER TABLE ${target} DROP CONSTRAINT [UQ_x];`);
   assert.equal(ms.dropUnique!(table, 'ix', true), `DROP INDEX [ix] ON ${target};`);
-  assert.equal(ms.addFk!(table, 'order_id', { schema: 'sales', table: 'orders', column: 'id', onDelete: 'CASCADE', onUpdate: 'NO ACTION' }),
+  assert.equal(ms.addFk!(table, ['order_id'], { schema: 'sales', table: 'orders', columns: ['id'], onDelete: 'CASCADE', onUpdate: 'NO ACTION' }),
     `ALTER TABLE ${target} ADD CONSTRAINT [FK_or]]ders_order_id] FOREIGN KEY ([order_id]) REFERENCES [sales].[orders] ([id]) ON DELETE CASCADE;`);
   assert.equal(ms.dropFk!(table, 'FK_x'), `ALTER TABLE ${target} DROP CONSTRAINT [FK_x];`);
   assert.equal(ms.add(table, { name: 'seq', type: 'int', nullable: false, ai: true }),
@@ -372,10 +372,10 @@ test('MySQL key DDL: exact SQL and identifier quoting', () => {
   assert.equal(myd.addPk!(mo, ['a', 'b']), `ALTER TABLE ${MT} ADD PRIMARY KEY (\`a\`, \`b\`);`);
   assert.equal(myd.dropPk!(mo), `ALTER TABLE ${MT} DROP PRIMARY KEY;`);
   assert.equal(myd.replacePk!(mo, ['id', 'line_no']), `ALTER TABLE ${MT} DROP PRIMARY KEY, ADD PRIMARY KEY (\`id\`, \`line_no\`);`);
-  assert.equal(myd.addUnique!(mo, 'sku'), `ALTER TABLE ${MT} ADD UNIQUE KEY \`UQ_order\`\`item_sku\` (\`sku\`);`);
+  assert.equal(myd.addUnique!(mo, ['sku']), `ALTER TABLE ${MT} ADD UNIQUE KEY \`UQ_order\`\`item_sku\` (\`sku\`);`);
   assert.equal(myd.dropUnique!(mo, 'uq_order_item_order_sku', false), `ALTER TABLE ${MT} DROP INDEX \`uq_order_item_order_sku\`;`);
   assert.equal(myd.dropFk!(mo, 'FK_x'), `ALTER TABLE ${MT} DROP FOREIGN KEY \`FK_x\`;`);
-  assert.equal(myd.addFk!(mo, 'order_id', { schema: 'shop', table: 'orders', column: 'id', onDelete: 'CASCADE' }),
+  assert.equal(myd.addFk!(mo, ['order_id'], { schema: 'shop', table: 'orders', columns: ['id'], onDelete: 'CASCADE' }),
     `ALTER TABLE ${MT} ADD CONSTRAINT \`FK_order\`\`item_order_id\` FOREIGN KEY (\`order_id\`) REFERENCES \`shop\`.\`orders\` (\`id\`) ON DELETE CASCADE;`);
 });
 
@@ -466,10 +466,10 @@ const PT = '"public"."or""ders"';
 test('PostgreSQL key DDL: exact SQL and identifier quoting', () => {
   assert.equal(pgd.addPk!(po, ['a', 'b']), `ALTER TABLE ${PT} ADD CONSTRAINT "PK_or""ders" PRIMARY KEY ("a", "b");`);
   assert.equal(pgd.dropPk!(po, 'order_item_pkey'), `ALTER TABLE ${PT} DROP CONSTRAINT "order_item_pkey";`);
-  assert.equal(pgd.addUnique!(po, 'c'), `ALTER TABLE ${PT} ADD CONSTRAINT "UQ_or""ders_c" UNIQUE ("c");`);
+  assert.equal(pgd.addUnique!(po, ['c']), `ALTER TABLE ${PT} ADD CONSTRAINT "UQ_or""ders_c" UNIQUE ("c");`);
   assert.equal(pgd.dropUnique!(po, 'ix', true), 'DROP INDEX "public"."ix";');
   assert.equal(pgd.dropUnique!(po, 'UQ_x', false), `ALTER TABLE ${PT} DROP CONSTRAINT "UQ_x";`);
-  assert.equal(pgd.addFk!(po, 'c', { schema: 'public', table: 'orders', column: 'id', onDelete: 'RESTRICT', onUpdate: 'SET DEFAULT' }),
+  assert.equal(pgd.addFk!(po, ['c'], { schema: 'public', table: 'orders', columns: ['id'], onDelete: 'RESTRICT', onUpdate: 'SET DEFAULT' }),
     `ALTER TABLE ${PT} ADD CONSTRAINT "FK_or""ders_c" FOREIGN KEY ("c") REFERENCES "public"."orders" ("id") ON DELETE RESTRICT ON UPDATE SET DEFAULT;`);
   assert.equal(pgd.dropFk!(po, 'FK_x'), `ALTER TABLE ${PT} DROP CONSTRAINT "FK_x";`);
 });
