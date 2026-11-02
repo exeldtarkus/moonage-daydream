@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { checkKeys, columnChanges, createTable, drivers, keyName, type ColumnRow, type NewColumn, type TableKey } from '../db';
+import { checkKeys, columnChanges, createTable, drivers, keyName, readKeys, type ColumnRow, type NewColumn, type TableKey } from '../db';
 
 const t = { schema: 'dbo', name: 'item' };
 const cols: NewColumn[] = [
@@ -117,3 +117,30 @@ function stripOrig(r: ColumnRow): ColumnRow {
   const { orig: _orig, ...rest } = r;
   return rest;
 }
+
+test('readKeys: groups member rows into ordered keys, read-only and index flags', () => {
+  const columns = ['key_name', 'kind', 'is_index', 'read_only', 'col_name', 'ord', 'ref_schema', 'ref_table', 'ref_column', 'on_delete', 'on_update'];
+  const rows = [
+    ['UQ_ab', 'unique', 0, 0, 'b', 2, null, null, null, null, null],
+    ['UQ_ab', 'unique', 0, 0, 'a', 1, null, null, null, null, null],
+    ['IX_f', 'unique', 1, '1', 'a', 1, null, null, null, null, null],
+    ['IX_f', 'unique', 1, '1', 'c', 2, null, null, null, null, null],
+    ['FK_x', 'fk', 0, 0, 'a', 1, 'dbo', 'parent', 'x', 'NO ACTION', 'CASCADE'],
+    ['FK_x', 'fk', 0, 0, 'b', 2, 'dbo', 'parent', 'y', 'NO ACTION', 'CASCADE'],
+  ];
+  assert.deepEqual(readKeys({ columns, rows }), [
+    { kind: 'unique', name: 'UQ_ab', cols: ['a', 'b'] },
+    { kind: 'unique', name: 'IX_f', cols: ['a', 'c'], index: true, readOnly: true },
+    { kind: 'fk', name: 'FK_x', cols: ['a', 'b'], ref: { schema: 'dbo', table: 'parent', columns: ['x', 'y'], onUpdate: 'CASCADE' } },
+  ]);
+});
+
+test('keys query: SQL drivers read composite keys of the table', () => {
+  for (const [name, table] of [['mssql', "N'[dbo].[item]'"], ['mysql', "'item'"], ['postgres', `'"dbo"."item"'`]] as const) {
+    const sql = drivers[name].columnDdl!.keys!(t);
+    for (const alias of ['key_name', 'kind', 'is_index', 'read_only', 'col_name', 'ord', 'ref_schema', 'ref_table', 'ref_column', 'on_delete', 'on_update']) {
+      assert.match(sql, new RegExp(`\\b${alias}\\b`), `${name} ${alias}`);
+    }
+    assert.ok(sql.includes(table), name);
+  }
+});

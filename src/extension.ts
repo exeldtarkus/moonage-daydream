@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ColumnRow, ConnectionInfo, Driver, NewColumn, createTable, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession, schemaOf } from './db';
+import { ColumnRow, ConnectionInfo, Driver, NewColumn, TableKey, createTable, readKeys, PAGE_ROWS, columnChanges, columnsConfirm, execScript, showColumns, QueryResult, ResultSet, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession, schemaOf } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -758,6 +758,7 @@ function columnsEditor(n?: Node) {
   panel.webview.html = columnsHtml(panel.webview.cspSource, { conn: conn.name, db, table }, !!conn.readOnly);
   const c = { ...conn, database: db }; // script memakai nama dua bagian: dijalankan di database tabel
   let original: ColumnRow[] = [];
+  let originalKeys: TableKey[] = [];
   let info: ReturnType<typeof showColumns>['info'] = { columns: [], rows: [] };
   const post = (m: unknown) => void panel.webview.postMessage(m);
   async function load() {
@@ -768,7 +769,9 @@ function columnsEditor(n?: Node) {
       const { cols } = shown;
       original = cols;
       info = shown.info;
-      post({ type: 'load', cols, info, types: ddl.types, newType: ddl.newType, keys: !!ddl.addPk, reorder: !!ddl.move,
+      // key lebih dari satu kolom untuk tabel Keys (driver tanpa query keys: kosong)
+      originalKeys = ddl.keys ? readKeys((await d.run(c, await conns.password(conn.name), ddl.keys(obj))).resultSets[0] ?? { columns: [], rows: [] }) : [];
+      post({ type: 'load', cols, info, tableKeys: originalKeys, types: ddl.types, newType: ddl.newType, keys: !!ddl.addPk, reorder: !!ddl.move,
         aiExisting: !!ddl.setAi, aiTypes: ddl.aiTypes ?? [], fkActions: ddl.fkActions ?? [], schema: obj.schema,
         orderNote: ddl.addPk && !ddl.move ? `Column order cannot be changed on ${d.label} (needs a table rebuild)` : '' });
     } catch (e) {
@@ -776,7 +779,7 @@ function columnsEditor(n?: Node) {
       post({ type: 'status', text: `Load failed: ${errMsg(e)}`, error: true });
     }
   }
-  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[]; schema?: string; name?: string }) => {
+  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[]; tableKeys?: TableKey[]; schema?: string; name?: string }) => {
     if (m.type === 'ready' || m.type === 'refresh') return load();
     if (m.type === 'fkTables') {
       try {
@@ -796,19 +799,14 @@ function columnsEditor(n?: Node) {
         return post({ type: 'status', text: `Could not read columns of ${m.name}: ${errMsg(e)}`, error: true });
       }
     }
-    const r = columnChanges(ddl, obj, original, m.rows ?? []);
+    // pesan tanpa tableKeys (UI lama) = key tidak berubah
+    const r = columnChanges(ddl, obj, original, m.rows ?? [], m.tableKeys ?? originalKeys, originalKeys);
     if (m.type === 'change') return post({ type: 'script', ...r });
     if (!r.sql) return;
     if (m.type === 'open') return openScript(conn, db, r.sql);
     if (m.type !== 'execute' || conn.readOnly) return;
-    const keysIndex = info.columns.indexOf('keys');
-    const keysByColumn: Record<string, string | undefined> = {};
-    if (keysIndex >= 0) original.forEach((column, i) => {
-      const value = info.rows[i]?.[keysIndex];
-      if (value !== null && value !== undefined && value !== '') keysByColumn[column.name] = String(value);
-    });
     const ok = await vscode.window.showWarningMessage(`Apply ${r.count} column change(s) to ${table} on ${conn.name} / ${db}?`,
-      { modal: true, detail: columnsConfirm(ddl, r.steps, m.rows ?? [], keysByColumn) }, 'Execute');
+      { modal: true, detail: columnsConfirm(ddl, r.steps, m.rows ?? [], originalKeys) }, 'Execute');
     if (!ok) return;
     try {
       post({ type: 'status', text: 'Executing…' });
@@ -863,7 +861,7 @@ function newTable(n?: Node) {
   panel.webview.html = columnsHtml(panel.webview.cspSource, { conn: conn.name, db, table: 'New table' }, !!conn.readOnly, 'create');
   const c = { ...conn, database: db };
   const post = (m: unknown) => void panel.webview.postMessage(m);
-  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: NewColumn[]; table?: { schema: string; name: string }; schema?: string; name?: string }) => {
+  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: NewColumn[]; tableKeys?: TableKey[]; table?: { schema: string; name: string }; schema?: string; name?: string }) => {
     if (m.type === 'ready') {
       let tables: { schema: string; name: string }[] = [];
       try {
@@ -898,7 +896,7 @@ function newTable(n?: Node) {
       }
     }
     const t = { schema: m.table?.schema ?? d.defaultSchema, name: m.table?.name ?? '' };
-    const r = createTable(ddl, t, m.rows ?? []);
+    const r = createTable(ddl, t, m.rows ?? [], m.tableKeys ?? []);
     const label = `${t.schema ? `${t.schema}.` : ''}${t.name.trim()}`;
     if (m.type === 'change') return post({ type: 'script', ...r, count: r.sql ? 1 : 0, steps: r.sql ? [{ kind: 'create', column: label, sql: r.sql }] : [] });
     if (!r.sql) return;

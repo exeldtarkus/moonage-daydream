@@ -256,6 +256,29 @@ ORDER BY a.attnum;`,
   fkActions: ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'],
   aiLabel: 'identity',
   nameMax: 63,
+  // read_only: index parsial / ekspresi / INCLUDE tidak bisa dibuat ulang apa adanya lewat editor
+  keys: (o) => `SELECT ix.relname AS key_name, 'unique' AS kind, CASE WHEN k.oid IS NULL THEN 1 ELSE 0 END AS is_index,
+  CASE WHEN i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indnkeyatts <> i.indnatts THEN 1 ELSE 0 END AS read_only,
+  att.attname::text AS col_name, x.ordinality AS ord, NULL::text AS ref_schema, NULL::text AS ref_table, NULL::text AS ref_column,
+  NULL::text AS on_delete, NULL::text AS on_update
+FROM pg_index i
+JOIN pg_class ix ON ix.oid = i.indexrelid
+LEFT JOIN pg_constraint k ON k.conindid = i.indexrelid AND k.contype = 'u'
+CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS x(attnum, ordinality)
+LEFT JOIN pg_attribute att ON att.attrelid = i.indrelid AND att.attnum = x.attnum
+WHERE i.indrelid = to_regclass(${litPg(full(o.schema, o.name))}) AND i.indisunique AND NOT i.indisprimary AND i.indnkeyatts > 1 AND x.ordinality <= i.indnkeyatts
+UNION ALL
+SELECT k.conname::text, 'fk', 0, 0, la.attname::text, x.ordinality, rn.nspname::text, rc.relname::text, ra.attname::text,
+  CASE k.confdeltype WHEN 'r' THEN 'RESTRICT' WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' ELSE 'NO ACTION' END,
+  CASE k.confupdtype WHEN 'r' THEN 'RESTRICT' WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' ELSE 'NO ACTION' END
+FROM pg_constraint k
+CROSS JOIN LATERAL unnest(k.conkey, k.confkey) WITH ORDINALITY AS x(lnum, rnum, ordinality)
+JOIN pg_attribute la ON la.attrelid = k.conrelid AND la.attnum = x.lnum
+JOIN pg_attribute ra ON ra.attrelid = k.confrelid AND ra.attnum = x.rnum
+JOIN pg_class rc ON rc.oid = k.confrelid
+JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+WHERE k.conrelid = to_regclass(${litPg(full(o.schema, o.name))}) AND k.contype = 'f' AND cardinality(k.conkey) > 1
+ORDER BY kind DESC, key_name, ord;`,
   dropPk: (o, name) => `ALTER TABLE ${full(o.schema, o.name)} DROP CONSTRAINT ${quotePg(name ?? `PK_${o.name}`)};`,
   addPk: (o, cols, name) => `ALTER TABLE ${full(o.schema, o.name)} ADD CONSTRAINT ${quotePg(name ?? `PK_${o.name}`)} PRIMARY KEY (${cols.map(quotePg).join(', ')});`,
   dropUnique: (o, name, index) => index

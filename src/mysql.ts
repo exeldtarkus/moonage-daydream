@@ -262,6 +262,23 @@ export const myColumnDdl: ColumnDdl = {
 FROM information_schema.columns c
 WHERE c.table_schema = ${litMy(o.schema)} AND c.table_name = ${litMy(o.name)}
 ORDER BY c.ordinal_position;`,
+  // read_only: prefix index / functional key part (column_name NULL) tidak bisa dibuat ulang apa adanya
+  keys: (o) => `SELECT s.index_name AS key_name, 'unique' AS kind, 0 AS is_index,
+  IF(EXISTS (SELECT 1 FROM information_schema.statistics p WHERE p.table_schema = s.table_schema AND p.table_name = s.table_name
+    AND p.index_name = s.index_name AND (p.sub_part IS NOT NULL OR p.column_name IS NULL)), 1, 0) AS read_only,
+  s.column_name AS col_name, s.seq_in_index AS ord, NULL AS ref_schema, NULL AS ref_table, NULL AS ref_column, NULL AS on_delete, NULL AS on_update
+FROM information_schema.statistics s
+WHERE s.table_schema = ${litMy(o.schema)} AND s.table_name = ${litMy(o.name)} AND s.non_unique = 0 AND s.index_name <> 'PRIMARY'
+  AND (SELECT COUNT(*) FROM information_schema.statistics p WHERE p.table_schema = s.table_schema AND p.table_name = s.table_name AND p.index_name = s.index_name) > 1
+UNION ALL
+SELECT k.constraint_name, 'fk', 0, 0, k.column_name, k.ordinal_position, k.referenced_table_schema, k.referenced_table_name, k.referenced_column_name,
+  r.delete_rule, r.update_rule
+FROM information_schema.key_column_usage k
+JOIN information_schema.referential_constraints r ON r.constraint_schema = k.constraint_schema AND r.constraint_name = k.constraint_name AND r.table_name = k.table_name
+WHERE k.table_schema = ${litMy(o.schema)} AND k.table_name = ${litMy(o.name)} AND k.referenced_table_name IS NOT NULL
+  AND (SELECT COUNT(*) FROM information_schema.key_column_usage p WHERE p.constraint_schema = k.constraint_schema
+    AND p.table_name = k.table_name AND p.constraint_name = k.constraint_name) > 1
+ORDER BY kind DESC, key_name, ord;`,
   add: (o, c, pos) => {
     const position = pos?.after === null ? ' FIRST' : pos?.after ? ` AFTER ${quoteMy(pos.after)}` : '';
     const pk = pos?.pkCols?.length ? `, ADD PRIMARY KEY (${pos.pkCols.map(quoteMy).join(', ')})` : '';

@@ -186,6 +186,44 @@ export function checkKeys(ddl: ColumnDdl, obj: DbObject, rows: NewColumn[], keys
   return errors;
 }
 
+/**
+ * hasil ColumnDdl.keys (satu baris per kolom anggota: key_name, kind unique / fk, is_index, read_only, col_name, ord,
+ * ref_schema, ref_table, ref_column, on_delete, on_update) -> key berurutan; NO ACTION tidak ditulis
+ */
+export function readKeys(rs: Pick<ResultSet, 'columns' | 'rows'>): TableKey[] {
+  const at = (k: string) => rs.columns.indexOf(k);
+  const v = (row: unknown[], k: string) => (at(k) < 0 || row[at(k)] === null || row[at(k)] === undefined ? undefined : String(row[at(k)]));
+  const flag = (row: unknown[], k: string) => Number(row[at(k)] ?? 0) === 1 || row[at(k)] === true;
+  const keys = new Map<string, { key: TableKey; members: [number, string, string][] }>();
+  for (const row of rs.rows) {
+    const kind = v(row, 'kind') === 'fk' ? 'fk' : 'unique';
+    const name = v(row, 'key_name') ?? '';
+    let entry = keys.get(`${kind}\u0000${name}`);
+    if (!entry) {
+      const key: TableKey = { kind, name, cols: [] };
+      if (flag(row, 'is_index')) key.index = true;
+      if (flag(row, 'read_only')) key.readOnly = true;
+      if (kind === 'fk') {
+        key.ref = { schema: v(row, 'ref_schema') ?? '', table: v(row, 'ref_table') ?? '', columns: [] };
+        for (const [p, col] of [['onDelete', 'on_delete'], ['onUpdate', 'on_update']] as const) {
+          const act = v(row, col);
+          if (act && act !== 'NO ACTION') key.ref[p] = act;
+        }
+      }
+      entry = { key, members: [] };
+      keys.set(`${kind}\u0000${name}`, entry);
+    }
+    // kolom ekspresi (PostgreSQL / MySQL functional index) tidak punya nama
+    entry.members.push([Number(v(row, 'ord') ?? 0), v(row, 'col_name') ?? '(expression)', v(row, 'ref_column') ?? '']);
+  }
+  return [...keys.values()].map(({ key, members }) => {
+    members.sort((a, b) => a[0] - b[0]);
+    key.cols = members.map((m) => m[1]);
+    if (key.ref) key.ref.columns = members.map((m) => m[2]);
+    return key;
+  });
+}
+
 /** foreign key satu kolom; name = nama constraint yang ada (untuk drop) */
 export interface ColumnFk { schema: string; table: string; column: string; onDelete?: string; onUpdate?: string; name?: string }
 
@@ -226,6 +264,8 @@ export interface ColumnDdl {
   dropPk?(obj: DbObject, name?: string): string;
   addPk?(obj: DbObject, cols: string[], name?: string): string;
   dropUnique?(obj: DbObject, name: string, index: boolean): string;
+  /** query key tabel lebih dari satu kolom (dibaca readKeys); tidak ada = tabel Keys hanya untuk key baru */
+  keys?(obj: DbObject): string;
   /** default nama: UQ_<tabel>_<kolom...> */
   addUnique?(obj: DbObject, cols: string[], name?: string, index?: boolean): string;
   dropFk?(obj: DbObject, name: string): string;
@@ -678,7 +718,8 @@ export function moveSteps(server: string[], grid: string[]): { col: string; afte
 }
 
 /** detail teks konfirmasi Execute untuk data dan constraints yang terdampak */
-export function columnsConfirm(ddl: ColumnDdl, steps: ColumnStep[], rows: ColumnRow[], keys: Record<string, string | undefined>): string {
+/** keys = key tabel dari server (originalKeys); kolom anggota key yang dihapus sudah ditolak columnChanges */
+export function columnsConfirm(ddl: ColumnDdl, steps: ColumnStep[], rows: ColumnRow[], keys: TableKey[]): string {
   const lines: string[] = [];
   const deleted = rows.filter((r) => r.deleted && r.orig);
   if (deleted.length) lines.push(`Deleted columns lose their data: ${deleted.map((r) => r.orig).join(', ')}.`);
@@ -687,18 +728,16 @@ export function columnsConfirm(ddl: ColumnDdl, steps: ColumnStep[], rows: Column
     return s.title?.replace(/^Drop (?:foreign key|unique|primary key)\s*/, '') || s.column;
   });
   if (dropped.length) lines.push(`Constraints dropped: ${dropped.join(', ')}.`);
-  for (const column of deleted) {
-    for (const key of (keys[column.orig!] ?? '').split(';').map((x) => x.trim()).filter(Boolean)) {
-      const match = /^(UQ|FK)\s*\(([^)]*)\)(.*)$/.exec(key);
-      if (ddl.dropKeepsKeys && match?.[1] === 'UQ') {
-        const remaining = match[2].split(',').map((x) => x.trim()).filter((name) => name !== column.orig);
-        lines.push(remaining.length ? `${match[1]} (${match[2]}) becomes ${match[1]} (${remaining.join(', ')}).` : `${key} is removed with the column.`);
-      } else if (ddl.rebuildKeys) {
-        lines.push(`${key} uses a dropped column: the server refuses the drop and nothing is applied.`);
-      } else if (ddl.dropKeepsKeys && match?.[1] === 'FK') {
-        lines.push(`${key} blocks the column drop; MySQL refuses it.`);
-      } else {
-        lines.push(`${key} is dropped with the column.`);
+  // MySQL: unique index yang awal kolomnya sama dengan FK yang tetap ada bisa menjadi index FK itu (error 1553 saat di-drop)
+  if (ddl.dropKeepsKeys) {
+    const droppedName = (prefix: string) => steps.filter((s) => s.kind === 'dropKey' && s.title?.startsWith(prefix)).map((s) => s.title!.slice(prefix.length));
+    const goneFk = new Set(droppedName('Drop foreign key '));
+    const fks = [...keys.filter((k) => k.kind === 'fk').map((k) => ({ name: k.name ?? '', cols: k.cols })),
+      ...rows.filter((r) => r.orig && r.fk?.name).map((r) => ({ name: r.fk!.name!, cols: [r.orig!] }))].filter((f) => !goneFk.has(f.name));
+    for (const uq of droppedName('Drop unique ')) {
+      const cols = keys.find((k) => k.kind === 'unique' && k.name === uq)?.cols ?? rows.filter((r) => r.uqName === uq).map((r) => r.orig!);
+      for (const f of fks.filter((x) => x.cols.every((c, i) => cols[i] === c))) {
+        lines.push(`${uq} may be the index behind foreign key ${f.name}; MySQL refuses the drop (error 1553) unless another index starts with ${f.cols.join(', ')}.`);
       }
     }
   }

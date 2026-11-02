@@ -295,6 +295,27 @@ OUTER APPLY (
 ) keyinfo
 WHERE c.object_id = OBJECT_ID(${lit(tbl(o))})
 ORDER BY c.column_id;`,
+  // read_only: index berfilter / INCLUDE / clustered tidak bisa dibuat ulang apa adanya lewat editor
+  keys: (o) => `SELECT i.name AS key_name, 'unique' AS kind, IIF(i.is_unique_constraint = 1, 0, 1) AS is_index,
+  IIF(i.has_filter = 1 OR i.type <> 2 OR EXISTS (SELECT 1 FROM sys.index_columns n WHERE n.object_id = i.object_id AND n.index_id = i.index_id AND n.is_included_column = 1), 1, 0) AS read_only,
+  c.name AS col_name, x.key_ordinal AS ord, CAST(NULL AS sysname) AS ref_schema, CAST(NULL AS sysname) AS ref_table, CAST(NULL AS sysname) AS ref_column,
+  CAST(NULL AS nvarchar(60)) AS on_delete, CAST(NULL AS nvarchar(60)) AS on_update
+FROM sys.indexes i
+JOIN sys.index_columns x ON x.object_id = i.object_id AND x.index_id = i.index_id AND x.is_included_column = 0
+JOIN sys.columns c ON c.object_id = x.object_id AND c.column_id = x.column_id
+WHERE i.object_id = OBJECT_ID(${lit(tbl(o))}) AND i.is_unique = 1 AND i.is_primary_key = 0
+  AND (SELECT COUNT(*) FROM sys.index_columns k WHERE k.object_id = i.object_id AND k.index_id = i.index_id AND k.is_included_column = 0) > 1
+UNION ALL
+SELECT f.name, 'fk', 0, 0, pc.name, fc.constraint_column_id, SCHEMA_NAME(rt.schema_id), rt.name, rc.name,
+  REPLACE(f.delete_referential_action_desc, '_', ' '), REPLACE(f.update_referential_action_desc, '_', ' ')
+FROM sys.foreign_keys f
+JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = f.object_id
+JOIN sys.columns pc ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+JOIN sys.columns rc ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+JOIN sys.tables rt ON rt.object_id = f.referenced_object_id
+WHERE f.parent_object_id = OBJECT_ID(${lit(tbl(o))})
+  AND (SELECT COUNT(*) FROM sys.foreign_key_columns k WHERE k.constraint_object_id = f.object_id) > 1
+ORDER BY kind DESC, key_name, ord;`,
   add: (o, c) => `ALTER TABLE ${tbl(o)} ADD ${q(c.name)} ${c.type.trim()}${c.ai ? ' IDENTITY(1, 1)' : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}${dflt(c.default) ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(dflt(c.default)!)}` : ''};`,
   drop: (o, name) => `${dropDefault(o, name)}\nALTER TABLE ${tbl(o)} DROP COLUMN ${q(name)};`,
   aiTypes: ['bigint', 'int', 'smallint', 'tinyint'],

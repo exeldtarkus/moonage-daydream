@@ -225,7 +225,7 @@ test('columnChanges: reordering is ignored without ddl.move', () => {
   assert.equal(columnChanges(attrDdl(), ot, original, rows).count, 0);
 });
 
-test('columnsConfirm: lists drops, shrinking composite keys, rebuild notes, and database note', () => {
+test('columnsConfirm: lists drops, rebuild notes, and database note', () => {
   const ddl = Object.assign(attrDdl(), { dropKeepsKeys: true, note: 'N' });
   const steps = [
     { kind: 'dropKey' as const, column: 'order_id', sql: 'dropFk FK_order_item_order_id', title: 'Drop foreign key FK_order_item_order_id' },
@@ -233,20 +233,23 @@ test('columnsConfirm: lists drops, shrinking composite keys, rebuild notes, and 
     { kind: 'move' as const, column: 'qty', sql: 'move qty', title: 'Move qty after sku' },
     { kind: 'addKey' as const, column: 'id, line_no', sql: 'replace PK', title: 'Replace primary key (id, line_no)' },
   ];
-  const text = columnsConfirm(ddl, steps, [col('order_id', { orig: 'order_id', deleted: true })], { order_id: 'UQ (order_id, sku)' });
+  const text = columnsConfirm(ddl, steps, [col('order_id', { orig: 'order_id', deleted: true })], []);
   assert.match(text, /Deleted columns lose their data: order_id\./);
   assert.match(text, /Constraints dropped: FK_order_item_order_id, primary key\./);
-  assert.match(text, /UQ \(order_id, sku\) becomes UQ \(sku\)\./);
   assert.match(text, /Moving columns rebuilds the table; on a big table this takes time and locks writes\./);
   assert.match(text, /Changing the primary key rebuilds its index\./);
   assert.ok(text.endsWith('The script in SQL preview is executed and committed.\nN'));
 });
 
-test('columnsConfirm: MySQL warns that a composite foreign key blocks dropping a column', () => {
-  const ddl = Object.assign(attrDdl(), { dropKeepsKeys: true, rebuildKeys: false });
-  const text = columnsConfirm(ddl, [], [col('tenant_id', { orig: 'tenant_id', deleted: true })],
-    { tenant_id: 'FK (tenant_id, org_id) → tenant(id, org_id)' });
-  assert.match(text, /FK \(tenant_id, org_id\) → tenant\(id, org_id\) blocks the column drop; MySQL refuses it\./);
+test('columnsConfirm: MySQL warns when a dropped unique key backs a kept foreign key (error 1553)', () => {
+  const ddl = Object.assign(attrDdl(), { dropKeepsKeys: true });
+  const keys = [{ kind: 'unique' as const, name: 'UQ_ab', cols: ['a', 'b'] },
+    { kind: 'fk' as const, name: 'FK_a', cols: ['a'], ref: { schema: 's', table: 'p', columns: ['x'] } }];
+  const drop = [{ kind: 'dropKey' as const, column: 'a, b', sql: 'x', title: 'Drop unique UQ_ab' }];
+  assert.match(columnsConfirm(ddl, drop, [], keys), /UQ_ab may be the index behind foreign key FK_a; MySQL refuses the drop \(error 1553\)/);
+  // FK ikut di-drop: tidak ada peringatan
+  const both = [{ kind: 'dropKey' as const, column: 'a', sql: 'x', title: 'Drop foreign key FK_a' }, ...drop];
+  assert.doesNotMatch(columnsConfirm(ddl, both, [], keys), /1553/);
 });
 
 test('execScript: one connection runs, commits, and closes; run failure is preserved', async () => {
