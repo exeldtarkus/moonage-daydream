@@ -64,7 +64,7 @@ Open the **Moonage Daydream** view in the Activity Bar and click **+** (**Add Co
 
 **Search databases** (top right of step 1) filters the cards.
 
-![Step 1 of a new connection: the New connection header and brand-colored cards for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite and MongoDB, each with a logo and a short description; the hovered PostgreSQL card shows Connect →](images/screenshots/new-connection.png)
+![Step 1 of a new connection: the New connection header and brand-colored cards for SQL Server, MySQL, MariaDB, PostgreSQL, SQLite, MongoDB and Consul, each with a logo and a short description; the hovered PostgreSQL card shows Connect →](images/screenshots/new-connection.png)
 
 The form has a sidebar on the left; each item opens its own section and shows a short summary of its settings (for example *Off*, *Defaults*, *Read & write*, *3 setting(s)*):
 

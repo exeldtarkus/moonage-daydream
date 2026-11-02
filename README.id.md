@@ -64,7 +64,7 @@ Buka view **Moonage Daydream** di Activity Bar lalu klik **+** (**Add Connection
 
 **Search databases** (kanan atas langkah 1) menyaring kartu.
 
-![Langkah 1 koneksi baru: header New connection dan kartu berwarna khas untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite dan MongoDB, masing-masing dengan logo dan deskripsi singkat; kartu PostgreSQL yang di-hover menampilkan Connect →](images/screenshots/new-connection.png)
+![Langkah 1 koneksi baru: header New connection dan kartu berwarna khas untuk SQL Server, MySQL, MariaDB, PostgreSQL, SQLite, MongoDB dan Consul, masing-masing dengan logo dan deskripsi singkat; kartu PostgreSQL yang di-hover menampilkan Connect →](images/screenshots/new-connection.png)
 
 Form punya sidebar di kiri; tiap item membuka bagiannya sendiri dan menampilkan ringkasan singkat pengaturannya (mis. *Off*, *Defaults*, *Read & write*, *3 setting(s)*):
 

@@ -145,7 +145,7 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
     // 7. form koneksi (tipe database, group, warna)
     const logos = Object.fromEntries(fs.readdirSync(path.join(root, 'media', 'db')).filter((f) => f.endsWith('.svg'))
       .map((f) => [f.replace('.svg', ''), `data:image/svg+xml;base64,${fs.readFileSync(path.join(root, 'media', 'db', f)).toString('base64')}`]));
-    p = await page(formHtml('csp', undefined, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 380 });
+    p = await page(formHtml('csp', undefined, ['non-prod', 'prod'], undefined, logos), { w: 960, h: 510 }); // 7 kartu termasuk Consul
     await p.waitForTimeout(900); // animasi masuk kartu
     await p.hover('.db[data-type="postgres"]');
     await p.waitForTimeout(300);
