@@ -6,6 +6,22 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '0.7.0', date: '2026-11-02', items: [
+      { kind: 'new', title: 'Columns editor for every database', detail: 'MySQL / MariaDB, PostgreSQL, SQLite and MongoDB join SQL Server: add, rename, change and drop columns, toggle PK / AI / UQ / FK chips, and reorder columns on MySQL / MariaDB.' },
+      { kind: 'new', title: 'New Database and New Table', detail: 'Right-click a connection or the Tables folder: a form with a live script for every database (MongoDB creates a collection, SQLite a new file).' },
+      { kind: 'new', title: 'Drop Database and Drop Table', detail: 'Right-click a database or table; a confirmation names exactly what will be dropped.' },
+      { kind: 'new', title: 'Add Data', detail: 'Right-click a table → Add Data…: one field per column, a live INSERT script and a confirmation before it runs.' },
+      { kind: 'new', title: 'Edit rows in the result grid', detail: 'Add, delete and edit rows, review the statements, then save them in one transaction (MongoDB: document by document). Results that cannot be edited show why.' },
+      { kind: 'new', title: 'Click a table to see its data', detail: 'Left-click a table, view or collection in the Explorer to run Select Top 100.' },
+      { kind: 'new', title: 'Database Info dashboard (SQL Server)', detail: 'State, recovery model, collation, object counts, file sizes with usage bars and the last backup, each with its query.' },
+      { kind: 'new', title: 'New Linked Server (SQL Server)', detail: 'Create a linked server from a form; the remote password never appears in the script and the connection is tested right after.' },
+      { kind: 'new', title: "What's New", detail: 'This page: it opens once after an update with new features.' },
+      { kind: 'fixed', title: 'Connection form search', detail: 'Searching database types splits on spaces again instead of the letter "s".' },
+      { kind: 'fixed', title: 'Foreign keys to another schema', detail: 'The MySQL / MariaDB Columns editor now shows foreign keys that point to a table in another database.' },
+      { kind: 'fixed', title: 'Identity columns in new tables', detail: 'Identity / auto-increment columns are always NOT NULL.' },
+    ],
+  },
+  {
     version: '0.6.5', date: '2026-10-30', items: [
       { kind: 'improved', title: 'Automatic releases', detail: 'New versions are published to the VS Code Marketplace and Open VSX from GitHub Actions, with a GitHub Release and .vsix for every tag.' },
     ],
