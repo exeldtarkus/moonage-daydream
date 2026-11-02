@@ -1,5 +1,5 @@
 import * as sql from 'mssql';
-import { MAX_ROWS, connectMs, typedOptions } from './db';
+import { MAX_ROWS, connectMs, fkActs, typedOptions } from './db';
 import type { Column, ColumnDdl, NewDatabase, ColumnDef, ConnectionInfo, TypeSpec, Driver, ListKind, ObjectKind, ProcParam, QueryResult, ResultSet, Session, Sink } from './db';
 import { driverLog } from './log';
 import { maskSql, readOnly, splitStatements } from './sqlContext';
@@ -295,6 +295,27 @@ OUTER APPLY (
 ) keyinfo
 WHERE c.object_id = OBJECT_ID(${lit(tbl(o))})
 ORDER BY c.column_id;`,
+  // read_only: index berfilter / INCLUDE / clustered tidak bisa dibuat ulang apa adanya lewat editor
+  keys: (o) => `SELECT i.name AS key_name, 'unique' AS kind, IIF(i.is_unique_constraint = 1, 0, 1) AS is_index,
+  IIF(i.has_filter = 1 OR i.type <> 2 OR EXISTS (SELECT 1 FROM sys.index_columns n WHERE n.object_id = i.object_id AND n.index_id = i.index_id AND n.is_included_column = 1), 1, 0) AS read_only,
+  c.name AS col_name, x.key_ordinal AS ord, CAST(NULL AS sysname) AS ref_schema, CAST(NULL AS sysname) AS ref_table, CAST(NULL AS sysname) AS ref_column,
+  CAST(NULL AS nvarchar(60)) AS on_delete, CAST(NULL AS nvarchar(60)) AS on_update
+FROM sys.indexes i
+JOIN sys.index_columns x ON x.object_id = i.object_id AND x.index_id = i.index_id AND x.is_included_column = 0
+JOIN sys.columns c ON c.object_id = x.object_id AND c.column_id = x.column_id
+WHERE i.object_id = OBJECT_ID(${lit(tbl(o))}) AND i.is_unique = 1 AND i.is_primary_key = 0
+  AND (SELECT COUNT(*) FROM sys.index_columns k WHERE k.object_id = i.object_id AND k.index_id = i.index_id AND k.is_included_column = 0) > 1
+UNION ALL
+SELECT f.name, 'fk', 0, 0, pc.name, fc.constraint_column_id, SCHEMA_NAME(rt.schema_id), rt.name, rc.name,
+  REPLACE(f.delete_referential_action_desc, '_', ' '), REPLACE(f.update_referential_action_desc, '_', ' ')
+FROM sys.foreign_keys f
+JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = f.object_id
+JOIN sys.columns pc ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+JOIN sys.columns rc ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+JOIN sys.tables rt ON rt.object_id = f.referenced_object_id
+WHERE f.parent_object_id = OBJECT_ID(${lit(tbl(o))})
+  AND (SELECT COUNT(*) FROM sys.foreign_key_columns k WHERE k.constraint_object_id = f.object_id) > 1
+ORDER BY kind DESC, key_name, ord;`,
   add: (o, c) => `ALTER TABLE ${tbl(o)} ADD ${q(c.name)} ${c.type.trim()}${c.ai ? ' IDENTITY(1, 1)' : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}${dflt(c.default) ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(dflt(c.default)!)}` : ''};`,
   drop: (o, name) => `${dropDefault(o, name)}\nALTER TABLE ${tbl(o)} DROP COLUMN ${q(name)};`,
   aiTypes: ['bigint', 'int', 'smallint', 'tinyint'],
@@ -311,20 +332,18 @@ ORDER BY c.column_id;`,
   dropPk: (o, name) => `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name ?? `PK_${o.name}`)};`,
   addPk: (o, cols, name) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `PK_${o.name}`)} PRIMARY KEY (${cols.map(q).join(', ')});`,
   dropUnique: (o, name, index) => index ? `DROP INDEX ${q(name)} ON ${tbl(o)};` : `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name)};`,
-  addUnique: (o, col, name, index) => index
-    ? `CREATE UNIQUE INDEX ${q(name ?? `UQ_${o.name}_${col}`)} ON ${tbl(o)} (${q(col)});`
-    : `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `UQ_${o.name}_${col}`)} UNIQUE (${q(col)});`,
+  addUnique: (o, cols, name, index) => index
+    ? `CREATE UNIQUE INDEX ${q(name ?? `UQ_${o.name}_${cols.join('_')}`)} ON ${tbl(o)} (${cols.map(q).join(', ')});`
+    : `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `UQ_${o.name}_${cols.join('_')}`)} UNIQUE (${cols.map(q).join(', ')});`,
   dropFk: (o, name) => `ALTER TABLE ${tbl(o)} DROP CONSTRAINT ${q(name)};`,
-  addFk: (o, col, fk) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${q(col)}) REFERENCES ${q(fk.schema)}.${q(fk.table)} (${q(fk.column)})`
-    + `${fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''};`,
-  create(o, cols) {
+  addFk: (o, cols, ref, name) => `ALTER TABLE ${tbl(o)} ADD CONSTRAINT ${q(name ?? `FK_${o.name}_${cols.join('_')}`)} FOREIGN KEY (${cols.map(q).join(', ')}) REFERENCES ${q(ref.schema)}.${q(ref.table)} (${ref.columns.map(q).join(', ')})${fkActs(ref)};`,
+  create(o, cols, keys) {
     const pk = cols.filter((c) => c.pk);
     const lines = [
       ...cols.map((c) => `${q(c.name)} ${c.type}${c.ai ? ' IDENTITY(1, 1)' : ''} ${c.nullable ? 'NULL' : 'NOT NULL'}${c.default ? ` CONSTRAINT ${dfName(o, c.name)} DEFAULT ${wrapped(c.default)}` : ''}`),
       ...(pk.length ? [`CONSTRAINT ${q(`PK_${o.name}`)} PRIMARY KEY (${pk.map((c) => q(c.name)).join(', ')})`] : []),
-      ...cols.filter((c) => c.unique).map((c) => `CONSTRAINT ${q(`UQ_${o.name}_${c.name}`)} UNIQUE (${q(c.name)})`),
-      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${q(`FK_${o.name}_${name}`)} FOREIGN KEY (${q(name)}) REFERENCES ${q(fk!.schema)}.${q(fk!.table)} (${q(fk!.column)})`
-        + `${fk!.onDelete && fk!.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk!.onDelete}` : ''}${fk!.onUpdate && fk!.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk!.onUpdate}` : ''}`),
+      ...keys.map((k) => `CONSTRAINT ${q(k.name!)} ${k.kind === 'unique' ? 'UNIQUE' : 'FOREIGN KEY'} (${k.cols.map(q).join(', ')})`
+        + (k.ref ? ` REFERENCES ${q(k.ref.schema)}.${q(k.ref.table)} (${k.ref.columns.map(q).join(', ')})${fkActs(k.ref)}` : '')),
     ];
     return [`CREATE TABLE ${tbl(o)} (`, ...lines.map((l, i) => `${i ? '  , ' : '    '}${l}`), ');'].join('\n');
   },

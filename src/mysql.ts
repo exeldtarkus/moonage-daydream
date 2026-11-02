@@ -1,7 +1,7 @@
 import * as mysql from 'mysql2/promise';
 import { Types } from 'mysql2';
 import type { ColumnDdl, ColumnDef, ConnectionInfo, Driver, ListKind, NewDatabase, ProcParam, TypeSpec } from './db';
-import { connectMs, typedOptions } from './db';
+import { connectMs, fkActs, typedOptions } from './db';
 import { sqlDriver } from './sqlDriver';
 import type { Link, Raw } from './sqlDriver';
 
@@ -262,6 +262,23 @@ export const myColumnDdl: ColumnDdl = {
 FROM information_schema.columns c
 WHERE c.table_schema = ${litMy(o.schema)} AND c.table_name = ${litMy(o.name)}
 ORDER BY c.ordinal_position;`,
+  // read_only: prefix index / functional key part (column_name NULL) tidak bisa dibuat ulang apa adanya
+  keys: (o) => `SELECT s.index_name AS key_name, 'unique' AS kind, 0 AS is_index,
+  IF(EXISTS (SELECT 1 FROM information_schema.statistics p WHERE p.table_schema = s.table_schema AND p.table_name = s.table_name
+    AND p.index_name = s.index_name AND (p.sub_part IS NOT NULL OR p.column_name IS NULL)), 1, 0) AS read_only,
+  s.column_name AS col_name, s.seq_in_index AS ord, NULL AS ref_schema, NULL AS ref_table, NULL AS ref_column, NULL AS on_delete, NULL AS on_update
+FROM information_schema.statistics s
+WHERE s.table_schema = ${litMy(o.schema)} AND s.table_name = ${litMy(o.name)} AND s.non_unique = 0 AND s.index_name <> 'PRIMARY'
+  AND (SELECT COUNT(*) FROM information_schema.statistics p WHERE p.table_schema = s.table_schema AND p.table_name = s.table_name AND p.index_name = s.index_name) > 1
+UNION ALL
+SELECT k.constraint_name, 'fk', 0, 0, k.column_name, k.ordinal_position, k.referenced_table_schema, k.referenced_table_name, k.referenced_column_name,
+  r.delete_rule, r.update_rule
+FROM information_schema.key_column_usage k
+JOIN information_schema.referential_constraints r ON r.constraint_schema = k.constraint_schema AND r.constraint_name = k.constraint_name AND r.table_name = k.table_name
+WHERE k.table_schema = ${litMy(o.schema)} AND k.table_name = ${litMy(o.name)} AND k.referenced_table_name IS NOT NULL
+  AND (SELECT COUNT(*) FROM information_schema.key_column_usage p WHERE p.constraint_schema = k.constraint_schema
+    AND p.table_name = k.table_name AND p.constraint_name = k.constraint_name) > 1
+ORDER BY kind DESC, key_name, ord;`,
   add: (o, c, pos) => {
     const position = pos?.after === null ? ' FIRST' : pos?.after ? ` AFTER ${quoteMy(pos.after)}` : '';
     const pk = pos?.pkCols?.length ? `, ADD PRIMARY KEY (${pos.pkCols.map(quoteMy).join(', ')})` : '';
@@ -278,21 +295,18 @@ ORDER BY c.ordinal_position;`,
   addPk: (o, cols) => `ALTER TABLE ${myTbl(o)} ADD PRIMARY KEY (${cols.map(quoteMy).join(', ')});`,
   replacePk: (o, cols) => `ALTER TABLE ${myTbl(o)} DROP PRIMARY KEY, ADD PRIMARY KEY (${cols.map(quoteMy).join(', ')});`,
   dropUnique: (o, name) => `ALTER TABLE ${myTbl(o)} DROP INDEX ${quoteMy(name)};`,
-  addUnique: (o, col, name) => `ALTER TABLE ${myTbl(o)} ADD UNIQUE KEY ${quoteMy(name ?? `UQ_${o.name}_${col}`)} (${quoteMy(col)});`,
+  addUnique: (o, cols, name) => `ALTER TABLE ${myTbl(o)} ADD UNIQUE KEY ${quoteMy(name ?? `UQ_${o.name}_${cols.join('_')}`)} (${cols.map(quoteMy).join(', ')});`,
   dropFk: (o, name) => `ALTER TABLE ${myTbl(o)} DROP FOREIGN KEY ${quoteMy(name)};`,
-  addFk: (o, col, fk) => `ALTER TABLE ${myTbl(o)} ADD CONSTRAINT ${quoteMy(fk.name ?? `FK_${o.name}_${col}`)} FOREIGN KEY (${quoteMy(col)}) REFERENCES ${myTbl({ schema: fk.schema, name: fk.table })} (${quoteMy(fk.column)})`
-    + `${fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` ON DELETE ${fk.onDelete}` : ''}${fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${fk.onUpdate}` : ''};`,
+  addFk: (o, cols, ref, name) => `ALTER TABLE ${myTbl(o)} ADD CONSTRAINT ${quoteMy(name ?? `FK_${o.name}_${cols.join('_')}`)} FOREIGN KEY (${cols.map(quoteMy).join(', ')}) REFERENCES ${myTbl({ schema: ref.schema, name: ref.table })} (${ref.columns.map(quoteMy).join(', ')})${fkActs(ref)};`,
   setAi: (o, col, on) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql({ ...col, ai: on })};`,
   move: (o, col, after) => `ALTER TABLE ${myTbl(o)} MODIFY COLUMN ${myColumnSql(col)}${after === null ? ' FIRST' : ` AFTER ${quoteMy(after)}`};`,
-  create(o, cols) {
-    const act = (k: string, v?: string) => (v && v !== 'NO ACTION' ? ` ON ${k} ${v}` : '');
+  create(o, cols, keys) {
     const pk = cols.filter((c) => c.pk);
     const lines = [
       ...cols.map(myColumnSql),
       ...(pk.length ? [`PRIMARY KEY (${pk.map((c) => quoteMy(c.name)).join(', ')})`] : []),
-      ...cols.filter((c) => c.unique).map((c) => `UNIQUE KEY ${quoteMy(`UQ_${o.name}_${c.name}`)} (${quoteMy(c.name)})`),
-      ...cols.filter((c) => c.fk).map(({ name, fk }) => `CONSTRAINT ${quoteMy(`FK_${o.name}_${name}`)} FOREIGN KEY (${quoteMy(name)}) REFERENCES ${myTbl({ schema: fk!.schema, name: fk!.table })} (${quoteMy(fk!.column)})`
-        + act('DELETE', fk!.onDelete) + act('UPDATE', fk!.onUpdate)),
+      ...keys.map((k) => (k.kind === 'unique' ? `UNIQUE KEY ${quoteMy(k.name!)} (${k.cols.map(quoteMy).join(', ')})`
+        : `CONSTRAINT ${quoteMy(k.name!)} FOREIGN KEY (${k.cols.map(quoteMy).join(', ')}) REFERENCES ${myTbl({ schema: k.ref!.schema, name: k.ref!.table })} (${k.ref!.columns.map(quoteMy).join(', ')})${fkActs(k.ref!)}`)),
     ];
     return [`CREATE TABLE ${myTbl(o)} (`, lines.map((l) => `  ${l}`).join(',\n'), ');'].join('\n');
   },

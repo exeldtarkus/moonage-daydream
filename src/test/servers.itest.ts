@@ -1,7 +1,7 @@
 // Test driver ke server sungguhan (Docker, lihat scripts/test-servers.sh): database "shop" sementara, boleh ditulis.
 import { test, after } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { columnChanges, drivers, execScript, showColumns, type ColumnRow } from '../db';
+import { columnChanges, drivers, execScript, readKeys, showColumns, type ColumnRow, type TableKey } from '../db';
 import type { ConnectionInfo, DbType } from '../db';
 import { updateScript } from '../sqlContext';
 
@@ -340,6 +340,26 @@ for (const s of SERVERS) {
       }
     } finally {
       await run('DROP TABLE IF EXISTS order_item; DROP TABLE IF EXISTS orders');
+    }
+  });
+
+  test(`${d.label}: Keys table reads a composite unique key, adds and drops another one`, async () => {
+    const ddl = d.columnDdl!;
+    const o = { schema: s.type === 'postgres' ? 'public' : 'shop', name: 'order_item' };
+    const state = async () => ({ cols: showColumns((await run(ddl.show(o))).resultSets[0]).cols, keys: readKeys((await run(ddl.keys!(o))).resultSets[0]) });
+    await run(ordersFixture(s.type));
+    try {
+      const k0 = await state();
+      assert.deepEqual(k0.keys.map((k) => [k.kind, k.name, k.cols.join(',')]), [['unique', 'uq_order_item_order_sku', 'order_id,sku']]);
+      const rows = k0.cols.map((x) => ({ ...x, orig: x.name }));
+      const added: TableKey[] = [...k0.keys, { kind: 'unique', cols: ['order_id', 'line_no'] }];
+      await execScript(d, c, PW, columnChanges(ddl, o, k0.cols, rows, added, k0.keys).sql, false);
+      const k1 = await state();
+      assert.deepEqual(k1.keys.map((k) => k.name).sort(), ['UQ_order_item_order_id_line_no', 'uq_order_item_order_sku']);
+      await execScript(d, c, PW, columnChanges(ddl, o, k1.cols, k1.cols.map((x) => ({ ...x, orig: x.name })), k0.keys, k1.keys).sql, false);
+      assert.deepEqual((await state()).keys.map((k) => k.name), ['uq_order_item_order_sku']);
+    } finally {
+      await run(s.type === 'postgres' ? 'DROP TABLE IF EXISTS public.order_item; DROP TABLE IF EXISTS public.orders' : 'DROP TABLE IF EXISTS order_item; DROP TABLE IF EXISTS orders');
     }
   });
 

@@ -101,6 +101,16 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
   tr.fkrow td { background: var(--raise); padding: 8px 8px 10px 44px; }
   .fkedit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .fkedit label { color: var(--muted); }
+  .keys { margin: 18px 0 8px; }
+  .keys .khead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .keys h2 { margin: 0; font-size: 13px; font-weight: 600; }
+  .keys .hint { color: var(--muted); margin-right: auto; }
+  .keys td { vertical-align: middle; }
+  .keys .kcols { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+  .keys .kcol { display: inline-flex; align-items: center; gap: 2px; }
+  .keys .kname { width: 170px; font-family: var(--mono); }
+  .keys tr.ro td { color: var(--muted); }
+  .keys .none { color: var(--muted); padding: 4px 0; }
   .newname { display: flex; align-items: center; gap: 6px; font-family: var(--mono); }
   .newname input { font-family: var(--mono); font-size: 15px; height: 30px; }
   #tableName { min-width: 220px; font-weight: 600; }
@@ -181,6 +191,9 @@ let keys = false, reorder = false, aiExisting = true, schema = '', orderNote = '
 const fkKey = (fk) => fk.schema + '.' + fk.table;
 const CUSTOM = '\\u0000custom';
 let orig = [], rows = [], info = { columns: [], rows: [] }, types = [], newType = '', timer;
+// key tabel (UNIQUE / FK satu atau lebih kolom); tkeys = state UI, origKeys = dari server
+let tkeys = [], origKeys = [], keysTable = false;
+const clone = (x) => JSON.parse(JSON.stringify(x));
 const $ = (id) => document.getElementById(id);
 const h = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const spec = (base) => types.find((x) => x.name === base);
@@ -267,26 +280,106 @@ function row(r, i) {
     + '<td><div class="attrs">' + attributeHtml + '</div></td>'
     + '<td>' + (readOnly ? '' : '<button class="x" data-del="' + i + '" title="' + (r.deleted ? 'Keep this column' : 'Delete column') + '" aria-label="' + (r.deleted ? 'Keep' : 'Delete') + ' ' + h(r.name || 'new column') + '">' + (r.deleted ? '↺' : '✕') + '</button>') + '</td></tr>';
 }
+const liveNames = () => rows.filter((r) => !r.deleted && r.name.trim()).map((r) => r.name.trim());
+function keyCls(k) {
+  if (k.readOnly) return 'ro';
+  const o = k.orig === undefined ? undefined : origKeys[k.orig];
+  if (!o) return 'added';
+  const { orig: _o, ...cur } = k;
+  return JSON.stringify(cur) === JSON.stringify(o) ? '' : 'changed';
+}
+function keyRow(k, i) {
+  const opt = (v, label, sel) => '<option value="' + h(v) + '"' + (sel ? ' selected' : '') + '>' + h(label) + '</option>';
+  const ref = k.ref || { schema: '', table: '', columns: [] };
+  const target = (k.kind === 'fk' ? (ref.schema && ref.schema !== (mode === 'create' ? $('tableSchema')?.value : schema) ? ref.schema + '.' : '') + ref.table + ' (' + ref.columns.join(', ') + ')' : '');
+  const type = (k.kind === 'unique' ? 'UNIQUE' : 'FOREIGN KEY') + (k.index ? ' <span class="badge" title="Unique index, not a constraint">index</span>' : '');
+  if (k.readOnly || readOnly) {
+    return '<tr class="' + keyCls(k) + '" data-ki="' + i + '"><td>' + type + (k.readOnly ? ' <span class="badge" title="Filtered, partial, prefix or expression index: change it in SQL">read-only</span>' : '') + '</td>'
+      + '<td><code>' + h(k.name || '') + '</code></td><td>' + h(k.cols.join(', ')) + '</td><td>' + h(target) + '</td><td>' + h(ref.onDelete || '') + '</td><td>' + h(ref.onUpdate || '') + '</td><td></td></tr>';
+  }
+  const names = liveNames();
+  const colSel = (c, j) => '<span class="kcol"><select data-kf="col" data-ki="' + i + '" data-kj="' + j + '" aria-label="Column ' + (j + 1) + ' of key ' + (i + 1) + '">'
+    + (names.includes(c) ? '' : opt(c, c + ' (missing)', true)) + names.map((n) => opt(n, n, n === c)).join('') + '</select>'
+    + '<button class="x" data-kact="uncol" data-ki="' + i + '" data-kj="' + j + '" title="Remove ' + h(c) + ' from the key" aria-label="Remove ' + h(c) + ' from key ' + (i + 1) + '">✕</button></span>';
+  const add = '<select data-kf="addcol" data-ki="' + i + '" aria-label="Add a column to key ' + (i + 1) + '">' + opt('', '+ column', true)
+    + names.filter((n) => !k.cols.includes(n)).map((n) => opt(n, n, false)).join('') + '</select>';
+  let refCell = '', acts = '<td></td><td></td>';
+  if (k.kind === 'fk') {
+    const list = ref.table && !tables.some((x) => x.name === ref.table && x.schema === ref.schema) ? [{ schema: ref.schema, name: ref.table }, ...tables] : tables;
+    const tcols = fkCols[fkKey(ref)] || [];
+    refCell = '<div class="kcols"><select data-kf="table" data-ki="' + i + '" aria-label="Referenced table of key ' + (i + 1) + '">' + opt('', 'choose a table…', !ref.table)
+      + list.map((x) => opt(x.schema + '\u0000' + x.name, (x.schema ? x.schema + '.' : '') + x.name, ref.table === x.name && ref.schema === x.schema)).join('') + '</select>'
+      + k.cols.map((c, j) => '<select data-kf="refcol" data-ki="' + i + '" data-kj="' + j + '" aria-label="Referenced column for ' + h(c) + '">'
+        + opt('', ref.table && !tcols.length ? 'loading…' : 'column for ' + c + '…', !ref.columns[j])
+        + (ref.columns[j] && !tcols.includes(ref.columns[j]) ? opt(ref.columns[j], ref.columns[j], true) : '')
+        + tcols.map((c2) => opt(c2, c2, ref.columns[j] === c2)).join('') + '</select>').join('') + '</div>';
+    const act = (f) => '<td><select data-kf="' + f + '" data-ki="' + i + '" aria-label="' + (f === 'onDelete' ? 'On delete' : 'On update') + ' of key ' + (i + 1) + '">'
+      + fkActions.map((a) => opt(a, a, (ref[f] || fkActions[0]) === a)).join('') + '</select></td>';
+    acts = act('onDelete') + act('onUpdate');
+  }
+  // nama key yang sudah ada tidak diubah (ubah definisi = drop + add dengan nama sama)
+  const name = k.orig !== undefined ? '<code>' + h(k.name) + '</code>'
+    : '<input type="text" class="kname" data-kf="name" data-ki="' + i + '" value="' + h(k.name || '') + '" placeholder="automatic name" aria-label="Name of key ' + (i + 1) + '">';
+  return '<tr class="' + keyCls(k) + '" data-ki="' + i + '"><td>' + type + '</td><td>' + name + '</td><td><div class="kcols">' + k.cols.map(colSel).join('') + add + '</div></td>'
+    + '<td>' + refCell + '</td>' + acts + '<td><button class="x" data-kact="remove" data-ki="' + i + '" title="Remove key" aria-label="Remove key ' + (i + 1) + '">✕</button></td></tr>';
+}
+function keysHtml() {
+  if (!keysTable) return '';
+  const buttons = readOnly ? '' : '<button data-kact="add-unique">Add unique key</button>' + (canFk ? '<button data-kact="add-fk">Add foreign key</button>' : '');
+  return '<section class="keys" aria-label="Table keys"><div class="khead"><h2>Keys</h2><span class="hint">UNIQUE and FOREIGN KEY on one or more columns, in order</span>' + buttons + '</div>'
+    + (tkeys.length ? '<table><thead><tr><th>Type</th><th>Name</th><th>Columns</th><th>References</th><th>On delete</th><th>On update</th><th></th></tr></thead><tbody>'
+      + tkeys.map(keyRow).join('') + '</tbody></table>' : '<p class="none">No keys with more than one column. Single-column UQ / FK stay on the column chips.</p>') + '</section>';
+}
+function renderKeys(focus) {
+  if ($('keys')) $('keys').innerHTML = keysHtml();
+  if (focus) document.querySelector(focus)?.focus();
+}
 function render() {
   $('grid').innerHTML = '<table><thead><tr>' + (reorder ? '<th></th>' : '') + '<th></th><th title="' + (!reorder ? h(orderNote) : '') + '">#</th><th>Name</th><th>Data type</th><th>Not null</th><th>Default</th><th>Attributes</th><th></th></tr></thead><tbody>'
-    + rows.map((r, i) => row(r, i) + (i === openFk ? fkRow(r, i) : '')).join('') + '</tbody></table>';
+    + rows.map((r, i) => row(r, i) + (i === openFk ? fkRow(r, i) : '')).join('') + '</tbody></table><div id="keys">' + keysHtml() + '</div>';
   if (mode === 'create') { $('summary').innerHTML = '<b>' + rows.length + '</b> column' + (rows.length === 1 ? '' : 's'); return; }
   const pkCount = orig.filter((c) => c.pk).length;
   $('summary').innerHTML = '<b>' + orig.length + '</b> column' + (orig.length === 1 ? '' : 's') + (pkCount ? ', <b>' + pkCount + '</b> in the primary key' : '');
 }
 const table = () => (mode === 'create' ? { schema: $('tableSchema').value, name: $('tableName').value } : undefined);
-const send = (type) => vscode.postMessage({ type, rows, table: table() });
+const send = (type) => vscode.postMessage({ type, rows, table: table(), tableKeys: tkeys.map(({ orig: _o, ...k }) => k) });
 function changed() {
   clearTimeout(timer);
   timer = setTimeout(() => send('change'), 120);
 }
+function onKey(e) {
+  const el = e.target, i = +el.dataset.ki, k = tkeys[i], f = el.dataset.kf, j = +el.dataset.kj;
+  if (!k) return;
+  if (f === 'name') { k.name = el.value; changed(); return; }
+  if (e.type !== 'change') return;
+  if (f === 'col') k.cols[j] = el.value;
+  else if (f === 'addcol') { if (!el.value) return; k.cols.push(el.value); if (k.ref) k.ref.columns.push(''); }
+  else if (f === 'table') {
+    const [s, n] = el.value.split('\u0000');
+    k.ref = { ...k.ref, schema: s || '', table: n || '', columns: k.cols.map(() => '') };
+    if (k.ref.table && !fkCols[fkKey(k.ref)]) vscode.postMessage({ type: 'fkColumns', schema: k.ref.schema, name: k.ref.table });
+  } else if (f === 'refcol') k.ref.columns[j] = el.value;
+  else if (f === 'onDelete' || f === 'onUpdate') k.ref[f] = el.value;
+  render(); changed();
+  document.querySelector('[data-kf="' + (f === 'table' ? 'refcol' : f) + '"][data-ki="' + i + '"]' + (f === 'col' || f === 'refcol' ? '[data-kj="' + j + '"]' : ''))?.focus();
+}
 function onEdit(e) {
+  if (e.target.dataset.kf) return onKey(e);
   if (e.target.dataset.fk) return onFk(e);
   const el = e.target, tr = el.closest('tr[data-i]');
   if (!tr || !el.dataset.k) return;
   const r = rows[+tr.dataset.i], t = split(r.type), k = el.dataset.k;
   if (k === 'notnull') r.nullable = !el.checked;
-  else if (k === 'name' || k === 'default') r[k] = el.value;
+  else if (k === 'name') {
+    // nama kolom di key ikut berganti (key menyimpan nama kolom final)
+    const prev = r.name.trim(), next = el.value.trim();
+    r.name = el.value;
+    if (prev && prev !== next && tkeys.some((x) => x.cols.includes(prev))) {
+      tkeys.forEach((x) => { x.cols = x.cols.map((c) => (c === prev ? next : c)); });
+      renderKeys();
+    }
+  }
+  else if (k === 'default') r[k] = el.value;
   else if (k === 'custom') r.type = el.value;
   else if (k === 'size') r.type = t.base + (el.value.trim() ? '(' + el.value.trim() + ')' : '');
   else if (k === 'base' && e.type === 'change') {
@@ -300,7 +393,7 @@ function onEdit(e) {
   changed();
 }
 $('grid').addEventListener('input', onEdit);
-$('grid').addEventListener('change', (e) => { if (e.target.dataset.k === 'base' || e.target.dataset.fk) onEdit(e); });
+$('grid').addEventListener('change', (e) => { if (e.target.dataset.k === 'base' || e.target.dataset.fk || e.target.dataset.kf) onEdit(e); });
 function onFk(e) {
   const el = e.target, r = rows[openFk];
   if (!r || e.type !== 'change') return;
@@ -326,6 +419,25 @@ function moveRow(from, to, target) {
   document.querySelector('tr[data-i="' + to + '"] ' + selector)?.focus();
 }
 $('grid').addEventListener('click', (e) => {
+  const ka = e.target.closest('[data-kact]');
+  if (ka) {
+    const act = ka.dataset.kact, i = +ka.dataset.ki;
+    let focus;
+    if (act === 'add-unique' || act === 'add-fk') {
+      tkeys.push(act === 'add-unique' ? { kind: 'unique', name: '', cols: [] } : { kind: 'fk', name: '', cols: [], ref: { schema: '', table: '', columns: [] } });
+      if (act === 'add-fk' && mode === 'edit' && !tables.length && !fkTablesRequested) { fkTablesRequested = true; vscode.postMessage({ type: 'fkTables' }); }
+      focus = '[data-kf="addcol"][data-ki="' + (tkeys.length - 1) + '"]';
+    } else if (act === 'remove') { tkeys.splice(i, 1); focus = '[data-kact="add-unique"]'; }
+    else if (act === 'uncol') {
+      const j = +ka.dataset.kj;
+      tkeys[i].cols.splice(j, 1);
+      if (tkeys[i].ref) tkeys[i].ref.columns.splice(j, 1);
+      focus = '[data-kf="addcol"][data-ki="' + i + '"]';
+    }
+    render(); changed();
+    if (focus) document.querySelector(focus)?.focus();
+    return;
+  }
   const c = e.target.closest('[data-chip]'), a = e.target.closest('[data-fkact]');
   if (c || a) {
     if (c && c.getAttribute('aria-disabled') === 'true') return;
@@ -366,7 +478,7 @@ $('addCol')?.addEventListener('click', () => {
   $('grid').scrollTop = $('grid').scrollHeight;
 });
 $('refresh')?.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
-$('revert')?.addEventListener('click', () => { rows = orig.map((c) => ({ ...c, orig: c.name })); render(); changed(); });
+$('revert')?.addEventListener('click', () => { rows = orig.map((c) => ({ ...c, orig: c.name })); tkeys = origKeys.map((k, i) => ({ ...clone(k), orig: i })); render(); changed(); });
 $('tableName')?.addEventListener('input', changed);
 $('tableSchema')?.addEventListener('change', changed);
 $('grid').addEventListener('pointerdown', (e) => {
@@ -432,6 +544,7 @@ window.addEventListener('message', ({ data: m }) => {
     keys = !!m.keys; reorder = !!m.reorder; aiExisting = !!m.aiExisting; aiTypes = m.aiTypes || [];
     fkActions = m.fkActions || []; schema = m.schema || ''; orderNote = m.orderNote || '';
     tables = m.tables || []; fkTablesRequested = false; fkSnapshot = undefined;
+    keysTable = !!m.keysTable; origKeys = m.tableKeys || []; tkeys = origKeys.map((k, i) => ({ ...clone(k), orig: i }));
     if (reorder && !$('live')) document.body.insertAdjacentHTML('beforeend', '<div id="live" aria-live="polite" class="sr"></div>');
     if (mode === 'create') {
       schemas = m.schemas || [];
