@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { applyFilters, connStateChange, connText, filterKey, matchFilter, treeParent } from '../treeFilter';
+import { applyFilters, connStateChange, connText, connTooltip, filterKey, matchFilter, treeParent } from '../treeFilter';
 import type { Node } from '../explorer';
 import { groupEnv, type ConnectionInfo } from '../db';
 
@@ -85,11 +85,23 @@ test('group environment: guessed from the group name, an explicit choice wins (n
   assert.equal(groupEnv('Production', { Production: { env: 'none' } }), undefined);
 });
 
-test('connection row text: label is "- [ name ]" (colored by the connection), details after " - "', () => {
+test('connection row: label [ name ], details without dashes, active = star; rich tooltip lines', () => {
   assert.deepEqual(connText('test-db', 'SQL Server', '10.1.40.129\\UAT02', { active: true }),
-    { label: '- [ test-db ]', description: '- SQL Server · 10.1.40.129\\UAT02 · active' });
+    { label: '[ test-db ]', description: 'SQL Server · 10.1.40.129\\UAT02 · ★' });
   assert.deepEqual(connText('local-mysql (docker)', 'MySQL', '127.0.0.1:23306', { noConfirm: true }),
-    { label: '- [ local-mysql (docker) ]', description: '- MySQL · 127.0.0.1:23306 · no commit confirm' });
+    { label: '[ local-mysql (docker) ]', description: 'MySQL · 127.0.0.1:23306 · no commit confirm' });
+  assert.deepEqual(connTooltip({ name: 'test-db', type: 'SQL Server', addr: '10.1.40.129\\UAT02', user: 'sa', database: 'BIMA_HERITAGE',
+    connected: true, active: true, group: 'Production', env: 'production', confirm: true }), [
+    'test-db — connected',
+    'SQL Server · 10.1.40.129\\UAT02',
+    'user sa · database BIMA_HERITAGE',
+    'group Production (production) · commit confirm on · ★ active connection',
+  ]);
+  assert.deepEqual(connTooltip({ name: 'lite', type: 'SQLite', addr: '/tmp/a.db', user: '', database: '', connected: false, active: false, confirm: false }), [
+    'lite — not connected',
+    'SQLite · /tmp/a.db',
+    'commit confirm off',
+  ]);
 });
 
 test('connection state: only the connections that changed are redrawn; a disconnect asks for a full redraw', () => {

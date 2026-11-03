@@ -63,12 +63,20 @@ export function treeParent(n: Node): Node | undefined {
   }
 }
 
-/** teks baris koneksi di Connections: label = - [ nama ] (satu warna = warna koneksi), detail di deskripsi setelah " - " */
+/** teks baris koneksi di Connections: label [ nama ] (satu warna = warna koneksi), deskripsi jenis · host, koneksi aktif = ★ */
 export function connText(name: string, type: string, addr: string, o: { active?: boolean; noConfirm?: boolean }): { label: string; description: string } {
   return {
-    label: `- [ ${name} ]`,
-    description: `- ${type} · ${addr}${o.active ? ' · active' : ''}${o.noConfirm ? ' · no commit confirm' : ''}`,
+    label: `[ ${name} ]`,
+    description: `${type} · ${addr}${o.active ? ' · ★' : ''}${o.noConfirm ? ' · no commit confirm' : ''}`,
   };
+}
+
+/** baris tooltip koneksi (ditampilkan sebagai teks, tanpa password): status, jenis + host, login, group / lingkungan, konfirmasi commit */
+export function connTooltip(o: { name: string; type: string; addr: string; user: string; database: string; connected: boolean; active: boolean;
+  group?: string; env?: string; confirm: boolean }): string[] {
+  const login = [o.user && `user ${o.user}`, o.database && `database ${o.database}`].filter(Boolean).join(' · ');
+  const extra = [o.group && `group ${o.group}${o.env ? ` (${o.env})` : ''}`, `commit confirm ${o.confirm ? 'on' : 'off'}`, o.active && '★ active connection'].filter(Boolean).join(' · ');
+  return [`${o.name} — ${o.connected ? 'connected' : 'not connected'}`, `${o.type} · ${o.addr}`, ...(login ? [login] : []), extra];
 }
 
 /** koneksi yang baru terhubung / terputus sejak snapshot sebelumnya (nama koneksi) */

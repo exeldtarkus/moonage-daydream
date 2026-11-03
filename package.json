@@ -101,7 +101,7 @@
         "command": "moonageDaydream.selectConnection",
         "title": "Select Connection",
         "category": "Moonage Daydream",
-        "icon": "$(plug)"
+        "icon": "$(star-empty)"
       },
       {
         "command": "moonageDaydream.connect",
@@ -769,11 +769,6 @@
         {
           "command": "moonageDaydream.selectConnection",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
-          "group": "inline"
-        },
-        {
-          "command": "moonageDaydream.selectConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "1_conn@1"
         },
         {
@@ -930,11 +925,6 @@
           "command": "moonageDaydream.changeConnectionColor",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
           "group": "2_edit@3"
-        },
-        {
-          "command": "moonageDaydream.editConnection",
-          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn(\\.\\w+)?\\.(on|off)$/",
-          "group": "inline@2"
         },
         {
           "command": "moonageDaydream.editColumns",

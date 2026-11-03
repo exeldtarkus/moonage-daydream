@@ -6,7 +6,7 @@ import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './
 import { folderContext, objectTemplates } from './objTemplates';
 import { monitorKit } from './monitorKits';
 import { ConsulClient, consulTarget, kvChildren } from './consul';
-import { applyFilters, connText, filterKey, treeParent } from './treeFilter';
+import { applyFilters, connText, connTooltip, filterKey, treeParent } from './treeFilter';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -126,17 +126,21 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       }
       case 'conn': {
         const active = this.conns.active === n.c.name;
-        const text = connText(n.c.name, drivers[n.c.type].label, address(n.c), {
-          active, noConfirm: n.c.type !== 'consul' && !confirmAutoCommit(n.c, this.conns.groupSettings()),
-        });
+        const on = this.connected(n.c);
+        const groups = this.conns.groupSettings();
+        const confirm = n.c.type === 'consul' || confirmAutoCommit(n.c, groups);
+        const text = connText(n.c.name, drivers[n.c.type].label, address(n.c), { active, noConfirm: !confirm });
+        const tip = new vscode.MarkdownString();
+        // tiap baris sebagai teks (nama / host bisa berisi karakter markdown), dipisah paragraf
+        connTooltip({ name: n.c.name, type: drivers[n.c.type].label, addr: address(n.c), user: n.c.user, database: n.c.database, connected: on, active,
+          group: n.c.group, env: n.c.group ? groupEnv(n.c.group, groups) : undefined, confirm: n.c.type === 'consul' || confirm })
+          .forEach((line, i) => { if (i) tip.appendMarkdown('\n\n'); tip.appendText(line); });
         return Object.assign(new vscode.TreeItem(text.label, C), {
           description: text.description,
-          tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}${this.connected(n.c) ? '\nconnected' : ''}`,
-          // terhubung: titik hijau; selain itu logo jenis database. Warna koneksi lewat ConnDecorations (nama berwarna + ●)
-          // titik hijau sebagai gambar: codicon ikut diwarnai dekorasi koneksi (mis. merah Production)
-          iconPath: this.connected(n.c) && this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'connected.svg')
-            : this.connected(n.c) ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
-            : this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
+          tooltip: tip,
+          // logo jenis database; terhubung = logo + titik hijau berdenyut di pojok (media/db-on, dibuat scripts/conn-icons.js).
+          // Gambar, bukan codicon: codicon ikut diwarnai dekorasi koneksi (mis. merah Production). Warna nama lewat ConnDecorations.
+          iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', on ? 'db-on' : 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
           id: `conn:${n.c.name}#${SESSION}.${this.generation.get(n.c.name) ?? 0}`,
