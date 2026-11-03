@@ -75,3 +75,14 @@ export async function pruneMeta(dir: string, names: string[]): Promise<void> {
   const dirs = await fs.readdir(dir).catch(() => [] as string[]); // folder belum ada = tidak ada yang dibuang
   for (const d of dirs) if (!keep.has(d)) await fs.rm(join(dir, d), { recursive: true, force: true });
 }
+
+/** total ukuran file di folder (rekursif); folder belum ada = 0 */
+export async function dirSize(dir: string): Promise<number> {
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []); // folder belum ada = 0 byte
+  let n = 0;
+  for (const e of entries) n += e.isDirectory() ? await dirSize(join(dir, e.name)) : (await fs.stat(join(dir, e.name))).size;
+  return n;
+}
+
+/** Clear Cache: hapus seluruh folder cache Moonage (metadata Find Object, dll); dibuat ulang saat dipakai lagi */
+export const clearCache = (dir: string) => fs.rm(dir, { recursive: true, force: true });

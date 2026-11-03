@@ -32,7 +32,7 @@ import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 import { findObject } from './findObject';
-import { pruneMeta, refreshMeta, removeMeta } from './metaCache';
+import { clearCache, dirSize, pruneMeta, refreshMeta, removeMeta } from './metaCache';
 import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
 import { columnsEditor, newTable } from './tablePanels';
@@ -78,7 +78,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   status.command = 'moonageDaydream.selectConnection';
   explorer = new Explorer(conns, log, ctx.extensionUri);
   explorer.connected = isConnected;
-  metaDir = vscode.Uri.joinPath(ctx.globalStorageUri, 'moonage-cache', 'metadata').fsPath;
+  cacheDir = vscode.Uri.joinPath(ctx.globalStorageUri, 'moonage-cache').fsPath;
+  metaDir = path.join(cacheDir, 'metadata');
   pruneMeta(metaDir, conns.list().map((c) => c.name)).catch((e: unknown) => log.error(`pruneMeta - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
   ctx.subscriptions.push(conns.used.event(touchConn), idleWatcher());
   connDecorations = new ConnDecorations(conns);
@@ -322,6 +323,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       explorer.clearFilters();
       void vscode.commands.executeCommand('setContext', 'moonageDaydream.explorerFiltered', false);
     }),
+    vscode.commands.registerCommand('moonageDaydream.clearCache', (confirmed?: boolean) => clearCacheCommand(confirmed === true)),
     vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject({ conns, log, dir: metaDir, refresh: refreshMetadata, reveal: (x) => explorerView.reveal(x, { select: true, focus: false, expand: false }) }, n)),
     vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
       if (n?.kind !== 'db') return;
@@ -1411,8 +1413,34 @@ function touchConn(name: string) {
   if (c) void refreshMetadata(c);
 }
 
-/** folder cache metadata Find Object (globalStorage extension) */
+/** folder cache Moonage (globalStorage extension) dan metadata Find Object di dalamnya */
+let cacheDir = '';
 let metaDir = '';
+
+/** Command Palette "Clear Cache": hapus folder cache (metadata Find Object, dll) + cache di memori; dibangun ulang saat dipakai lagi */
+async function clearCacheCommand(confirmed = false): Promise<boolean> {
+  try {
+    const mb = ((await dirSize(cacheDir)) / 1024 / 1024).toFixed(1);
+    if (!confirmed) {
+      const ok = await vscode.window.showWarningMessage(`Clear the Moonage Daydream cache (${mb} MB)?`, {
+        modal: true, detail: 'Removes the Find Object metadata of every connection, autocomplete and grid metadata. They are read again from the servers when used. Saved connections, files and backups are kept.',
+      }, 'Clear Cache');
+      if (ok !== 'Clear Cache') return false;
+    }
+    await Promise.all(metaRunning.values()); // refresh yang sedang berjalan selesai dulu supaya tidak menulis ulang setelah dihapus
+    await clearCache(cacheDir);
+    metaFresh.clear();
+    completion.clear();
+    gridMeta.clear();
+    log.info(`clear cache: ${mb} MB removed (${cacheDir})`);
+    void vscode.window.showInformationMessage(`Moonage Daydream cache cleared (${mb} MB).`);
+    return true;
+  } catch (e) {
+    log.error(`clearCache - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    showError(`Clear Cache failed: ${errMsg(e)}`);
+    return false;
+  }
+}
 /** koneksi yang cache metadata-nya sudah dibaca ulang di sesi ini (dikosongkan saat Disconnect) */
 const metaFresh = new Set<string>();
 const metaRunning = new Map<string, Promise<void>>();
