@@ -31,6 +31,8 @@ import { importDbcode } from './connString';
 import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
+import { findObject } from './findObject';
+import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
 import { columnsEditor, newTable } from './tablePanels';
 import { consulDashboard } from './consulDashboard';
@@ -285,6 +287,21 @@ export function activate(ctx: vscode.ExtensionContext) {
       gridMeta.clear();
       explorer.refresh(n);
     }),
+    vscode.commands.registerCommand('moonageDaydream.filterNode', async (n?: Node, text?: string) => {
+      if (!n || filterKey(n) === undefined) return;
+      text ??= await vscode.window.showInputBox({
+        title: 'Filter', value: explorer.filterOf(n) ?? '',
+        prompt: n.kind === 'conn' ? 'Show databases whose name contains… (empty = clear)' : n.kind === 'db' ? 'Show tables, views and procedures whose name contains… (empty = clear)' : 'Show items whose name contains… (empty = clear)',
+      });
+      if (text === undefined) return;
+      explorer.setFilter(n, text);
+      void vscode.commands.executeCommand('setContext', 'moonageDaydream.explorerFiltered', explorer.filters.size > 0);
+    }),
+    vscode.commands.registerCommand('moonageDaydream.clearFilters', () => {
+      explorer.clearFilters();
+      void vscode.commands.executeCommand('setContext', 'moonageDaydream.explorerFiltered', false);
+    }),
+    vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject(conns, log, n)),
     vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
       if (n?.kind !== 'db') return;
       // tab SQL baru yang langsung terikat ke koneksi + database ini (CodeLens: conn | db)

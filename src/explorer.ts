@@ -6,6 +6,7 @@ import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './
 import { folderContext, objectTemplates } from './objTemplates';
 import { monitorKit } from './monitorKits';
 import { ConsulClient, consulTarget, kvChildren } from './consul';
+import { applyFilters, filterKey } from './treeFilter';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -51,7 +52,32 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
     this.changed.fire(node);
   }
 
+  /** filter per node (koneksi / database / folder), hanya di memori; kunci dari filterKey */
+  readonly filters = new Map<string, string>();
+  filterOf(n: Node): string | undefined {
+    const k = filterKey(n);
+    return k === undefined ? undefined : this.filters.get(k);
+  }
+  /** teks kosong = hapus filter; node digambar ulang (deskripsi + isi) */
+  setFilter(n: Node, text: string): void {
+    const k = filterKey(n);
+    if (k === undefined) return;
+    if (text.trim()) this.filters.set(k, text.trim()); else this.filters.delete(k);
+    this.refresh(n);
+  }
+  clearFilters(): void {
+    this.filters.clear();
+    this.refresh();
+  }
+
   getTreeItem(n: Node): vscode.TreeItem {
+    const item = this.item(n);
+    const f = this.filterOf(n);
+    if (f) item.description = [`filter: ${f}`, item.description].filter(Boolean).join(' · ');
+    return item;
+  }
+
+  private item(n: Node): vscode.TreeItem {
     const C = vscode.TreeItemCollapsibleState.Collapsed;
     switch (n.kind) {
       case 'group': {
@@ -173,7 +199,9 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           }));
           break;
       }
-      return out.length ? out : [{ kind: 'msg', label: '(empty)' }];
+      const shown = applyFilters(n, out, (k) => this.filters.get(k));
+      if (out.length && !shown.length) return [{ kind: 'msg', label: 'No match for the filter' }];
+      return shown.length ? shown : [{ kind: 'msg', label: '(empty)' }];
     } catch (e) {
       this.log.error(`Explorer.getChildren - EXCEPTION CAUGHT | ${n.c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return [{ kind: 'msg', label: e instanceof Error ? e.message : String(e), error: true }];
