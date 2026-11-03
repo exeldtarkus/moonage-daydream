@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src 'nonce-{{nonce}}';">
+<style>
+  :root {
+    --fg: var(--vscode-foreground); --muted: var(--vscode-descriptionForeground); --line: var(--vscode-panel-border, #8884);
+    --bg: var(--vscode-editor-background); --raise: var(--vscode-sideBar-background, var(--bg)); --focus: var(--vscode-focusBorder);
+    --accent: var(--vscode-charts-blue, #3794ff); --mono: var(--vscode-editor-font-family, monospace);
+    --warn: var(--vscode-editorWarning-foreground, #cca700); --err: var(--vscode-errorForeground, #f48771);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; padding: 20px 22px 32px; color: var(--fg); background: var(--bg); font-family: var(--vscode-font-family); font-size: 13px; max-width: 1100px; }
+  .top { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin-bottom: 16px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .where { margin: 2px 0 0; color: var(--muted); }
+  .top .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .part { border: 1px solid var(--line); border-radius: 6px; background: var(--raise); padding: 12px 14px; min-width: 0; }
+  .part.summary, .part.files { grid-column: 1 / -1; }
+  .part.files { order: 1; } /* Objects + Last backup berdampingan, Files di bawahnya */
+  h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+  .card { border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); border-radius: 4px; padding: 8px 10px; min-width: 0; }
+  .card span { display: block; color: var(--muted); font-size: 11px; }
+  .card b { display: block; margin-top: 2px; font-weight: 600; overflow-wrap: anywhere; }
+  .stats { display: flex; flex-wrap: wrap; gap: 18px; }
+  .stat b { font-size: 22px; font-weight: 600; }
+  .stat span { color: var(--muted); }
+  table.files { width: 100%; border-collapse: collapse; }
+  .files th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; padding: 4px 8px 6px 0; border-bottom: 1px solid var(--line); }
+  .files td { padding: 7px 8px 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); vertical-align: top; }
+  .path { color: var(--muted); font-family: var(--mono); font-size: 11px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { width: 140px; max-width: 100%; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--line) 80%, transparent); margin: 4px 0; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  ul.backups { list-style: none; margin: 0; padding: 0; }
+  ul.backups li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+  ul.backups span, .muted { color: var(--muted); }
+  .perm { color: var(--warn); margin: 0; }
+  .fail { color: var(--err); margin: 0; }
+  details.q { margin-top: 10px; }
+  details.q summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details.q pre { margin: 6px 0; padding: 8px 10px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  button { font: inherit; height: 26px; padding: 0 12px; border-radius: 4px; cursor: pointer; border: 1px solid var(--vscode-button-border, transparent);
+    color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+  button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  button.primary { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+  :focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } body { padding: 14px; } .top .actions { margin-left: 0; } .files th:nth-child(4), .files td:nth-child(4) { display: none; } }
+</style>
+</head>
+<body>
+<div class="top">
+  <div><h1>Database Info</h1><p class="where">{{conn}} · {{db}}{{updated}}</p></div>
+  <div class="actions"><button data-open="all">Open all queries in SQL Editor</button><button id="refresh" class="primary">Refresh</button></div>
+</div>
+<div class="grid">
+{{sections}}
+</div>
+<script nonce="{{nonce}}">
+const vscode = acquireVsCodeApi();
+document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-open]'); if (b) vscode.postMessage({ type: 'open', key: b.dataset.open }); });
+</script>
+</body>
+</html>

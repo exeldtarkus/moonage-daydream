@@ -201,7 +201,7 @@ test('columns editor: page has grid, Pending changes list and Execute / Open in 
   for (const id of ['grid', 'preview', 'execute', 'openSql', 'revert', 'addCol', 'refresh', 'splitter']) assert.match(h, new RegExp(`id="${id}"`), id);
   assert.match(h, /Pending changes/);
   const ro = columnsHtml('csp-src', { conn: 'x', db: 'y', table: 'z' }, true);
-  assert.match(ro, /const readOnly = true/);
+  assert.match(ro, /"readOnly":true/);
   assert.match(ro, /read-only/i);
   assert.doesNotMatch(ro, /id="execute"/);
   assert.doesNotMatch(ro, /id="addCol"/);
