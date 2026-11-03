@@ -382,6 +382,24 @@
         "category": "Moonage Daydream"
       },
       {
+        "command": "moonageDaydream.openNewFile",
+        "title": "New SQL File",
+        "category": "Moonage Daydream",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "moonageDaydream.openSaveAll",
+        "title": "Save All SQL Files",
+        "category": "Moonage Daydream",
+        "icon": "$(save-all)"
+      },
+      {
+        "command": "moonageDaydream.openCloseAll",
+        "title": "Close All SQL Files",
+        "category": "Moonage Daydream",
+        "icon": "$(close-all)"
+      },
+      {
         "command": "moonageDaydream.newSqlFile",
         "title": "New SQL File",
         "category": "Moonage Daydream",
@@ -631,6 +649,21 @@
           "command": "moonageDaydream.pinResults",
           "when": "view == moonageDaydream.results",
           "group": "navigation@0"
+        },
+        {
+          "command": "moonageDaydream.openNewFile",
+          "when": "view == moonageDaydream.openSql",
+          "group": "navigation@1"
+        },
+        {
+          "command": "moonageDaydream.openSaveAll",
+          "when": "view == moonageDaydream.openSql",
+          "group": "navigation@2"
+        },
+        {
+          "command": "moonageDaydream.openCloseAll",
+          "when": "view == moonageDaydream.openSql",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [

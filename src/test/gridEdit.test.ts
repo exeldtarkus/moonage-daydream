@@ -180,16 +180,17 @@ test('open sql: every open SQL tab once (saved .sql files and unsaved SQL tabs),
     { uri: 'file:///w/big/a.sql', path: '/w/big/a.sql', untitled: false },
     { uri: 'file:///w/B.SQL', path: '/w/B.SQL', untitled: false },
   ];
-  const docs: Record<string, { languageId: string; getText(): string }> = {
-    'untitled:Untitled-1': { languageId: 'sql', getText: () => 'SELECT *\n FROM a;' },
+  const docs: Record<string, { languageId: string; getText(): string; isDirty?: boolean }> = {
+    'untitled:Untitled-1': { languageId: 'sql', getText: () => 'SELECT *\n FROM a;', isDirty: true },
+    'file:///w/B.SQL': { languageId: 'sql', getText: () => '', isDirty: true },
     'untitled:Untitled-2': { languageId: 'plaintext', getText: () => 'x' },
     'untitled:Untitled-3': { languageId: 'sql', getText: () => '' },
   };
   assert.deepEqual(openSqlItems(tabs, (u: string) => docs[u]), [
-    { uri: 'untitled:Untitled-1', label: 'SELECT * FROM a;', untitled: true },
-    { uri: 'file:///w/big/a.sql', label: 'a.sql', untitled: false },
-    { uri: 'untitled:Untitled-3', label: 'Untitled-3', untitled: true },
-    { uri: 'file:///w/B.SQL', label: 'B.SQL', untitled: false },
+    { uri: 'untitled:Untitled-1', label: 'SELECT * FROM a;', untitled: true, dirty: true },
+    { uri: 'file:///w/big/a.sql', label: 'a.sql', untitled: false, dirty: false },
+    { uri: 'untitled:Untitled-3', label: 'Untitled-3', untitled: true, dirty: false },
+    { uri: 'file:///w/B.SQL', label: 'B.SQL', untitled: false, dirty: true },
   ]);
 });
 
