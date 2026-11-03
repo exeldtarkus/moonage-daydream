@@ -31,6 +31,8 @@ const FOLDERS: { objKind: ListKind; label: string; icon: string }[] = [
 const ICONS: Record<ObjectKind, string> = { table: 'table', view: 'eye', procedure: 'symbol-method', function: 'symbol-function', trigger: 'zap' };
 const icon = (k: ObjectKind) => ICONS[k];
 const isMs = (c: ConnectionInfo) => c.type === 'mssql';
+/** bagian id group / koneksi per sesi VS Code: status buka / tutup tidak diingat antar sesi, jadi selalu mulai tertutup */
+const SESSION = Date.now().toString(36);
 
 /** Sidebar: koneksi → database → Tables / Views / Stored Procedures → objek → kolom. */
 export class Explorer implements vscode.TreeDataProvider<Node> {
@@ -87,8 +89,8 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
     switch (n.kind) {
       case 'group': {
         const count = this.conns.list().filter((c) => c.group === n.group).length;
-        return Object.assign(new vscode.TreeItem(n.group, vscode.TreeItemCollapsibleState.Expanded), {
-          id: `group:${n.group}`, description: `${count}${this.conns.groupSettings()[n.group]?.confirmAutoCommit === false ? ' · no commit confirm' : ''}`,
+        return Object.assign(new vscode.TreeItem(n.group, C), {
+          id: `group:${n.group}#${SESSION}`, description: `${count}${this.conns.groupSettings()[n.group]?.confirmAutoCommit === false ? ' · no commit confirm' : ''}`,
           iconPath: new vscode.ThemeIcon('folder-library'), contextValue: 'group',
         });
       }
@@ -101,7 +103,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
-          id: `conn:${n.c.name}#${this.generation.get(n.c.name) ?? 0}`,
+          id: `conn:${n.c.name}#${SESSION}.${this.generation.get(n.c.name) ?? 0}`,
           // .on / .off: ikon inline Disconnect / Connect sesuai status
           contextValue: `${isMs(n.c) ? 'conn.mssql' : monitorKit(n.c.type) ? 'conn.live' : n.c.type === 'consul' ? 'conn.consul' : 'conn'}.${this.connected(n.c) ? 'on' : 'off'}`,
         });
