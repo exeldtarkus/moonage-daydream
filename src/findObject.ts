@@ -5,6 +5,7 @@ import type { Connections } from './connections';
 import type { Node } from './explorer';
 import { MetaKind, readMeta } from './metaCache';
 import { showError } from './gridEdit';
+import { matchWords } from './treeFilter';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : String(e));
@@ -34,7 +35,10 @@ export async function findObject(deps: FindDeps, n?: Node): Promise<void> {
   const qp = vscode.window.createQuickPick<Pick>();
   qp.title = scope ? `Find Object · ${scope.c.name}${scope.kind === 'db' ? ` / ${scope.db}` : ''}` : 'Find Object';
   qp.placeholder = 'Type part of a connection, database, table, view or procedure name';
-  qp.matchOnDescription = true;
+  // pencarian sendiri: tiap kata harus ada (mis. "tbl_policy BIMA_HERITAGE"); filter bawaan VS Code mencocokkan satu frasa
+  let all: Pick[] = [];
+  const show = () => { qp.items = all.filter((i) => matchWords(qp.value, i)).map((i) => ({ ...i, alwaysShow: true })); };
+  qp.onDidChangeValue(show);
   qp.busy = true;
   qp.onDidHide(() => qp.dispose());
   qp.onDidAccept(() => {
@@ -70,7 +74,8 @@ export async function findObject(deps: FindDeps, n?: Node): Promise<void> {
         ? { label: `$(${ICON.db}) ${r.db}`, description: `${c.name} · database`, node: { kind: 'db', c, db: r.db } }
         : { label: `$(${ICON[r.kind]}) ${r.schema ? `${r.schema}.${r.name}` : r.name}`, description: `${c.name} / ${r.db} · ${r.kind}`, node: { kind: 'obj', c, db: r.db, objKind: r.kind, obj: { schema: r.schema, name: r.name } } });
     }
-    qp.items = items;
+    all = items;
+    show();
     qp.placeholder = 'Type part of a connection, database, table, view or procedure name';
   } catch (e) {
     log.error(`findObject - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
