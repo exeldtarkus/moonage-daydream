@@ -86,3 +86,19 @@ export async function dirSize(dir: string): Promise<number> {
 
 /** Clear Cache: hapus seluruh folder cache Moonage (metadata Find Object, dll); dibuat ulang saat dipakai lagi */
 export const clearCache = (dir: string) => fs.rm(dir, { recursive: true, force: true });
+
+/**
+ * Update Metadata: jalankan satu per satu (berurutan, bukan paralel); run mengembalikan pesan error atau undefined bila berhasil.
+ * cancelled() dicek sebelum tiap langkah: sisanya masuk skipped.
+ */
+export async function updateSequential<T>(items: T[], run: (t: T) => Promise<string | undefined>, progress: (t: T, i: number) => void,
+  cancelled: () => boolean): Promise<{ ok: T[]; failed: [T, string][]; skipped: T[] }> {
+  const out = { ok: [] as T[], failed: [] as [T, string][], skipped: [] as T[] };
+  for (const [i, t] of items.entries()) {
+    if (cancelled()) { out.skipped.push(...items.slice(i)); break; }
+    progress(t, i);
+    const err = await run(t);
+    if (err === undefined) out.ok.push(t); else out.failed.push([t, err]);
+  }
+  return out;
+}

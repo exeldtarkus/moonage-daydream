@@ -18,7 +18,7 @@ export interface FindDeps {
   /** folder cache metadata (lihat metaCache.ts) */
   dir: string;
   /** baca ulang metadata satu koneksi ke cache */
-  refresh(c: ConnectionInfo): Promise<void>;
+  refresh(c: ConnectionInfo): Promise<unknown>;
   /** sorot node terpilih di view Connections */
   reveal(n: Node): Thenable<void>;
 }

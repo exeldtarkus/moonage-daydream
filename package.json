@@ -152,6 +152,12 @@
         "icon": "$(search)"
       },
       {
+        "command": "moonageDaydream.updateMetadata",
+        "title": "Update Metadata",
+        "category": "Moonage Daydream",
+        "icon": "$(sync)"
+      },
+      {
         "command": "moonageDaydream.clearCache",
         "title": "Clear Cache",
         "category": "Moonage Daydream",

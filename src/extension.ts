@@ -32,7 +32,7 @@ import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 import { findObject } from './findObject';
-import { clearCache, dirSize, pruneMeta, refreshMeta, removeMeta } from './metaCache';
+import { clearCache, dirSize, pruneMeta, refreshMeta, removeMeta, updateSequential } from './metaCache';
 import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
 import { columnsEditor, newTable } from './tablePanels';
@@ -323,6 +323,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       explorer.clearFilters();
       void vscode.commands.executeCommand('setContext', 'moonageDaydream.explorerFiltered', false);
     }),
+    vscode.commands.registerCommand('moonageDaydream.updateMetadata', (names?: string[]) => updateMetadataCommand(names)),
     vscode.commands.registerCommand('moonageDaydream.clearCache', (confirmed?: boolean) => clearCacheCommand(confirmed === true)),
     vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject({ conns, log, dir: metaDir, refresh: refreshMetadata, reveal: (x) => explorerView.reveal(x, { select: true, focus: false, expand: false }) }, n)),
     vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
@@ -1443,30 +1444,72 @@ async function clearCacheCommand(confirmed = false): Promise<boolean> {
 }
 /** koneksi yang cache metadata-nya sudah dibaca ulang di sesi ini (dikosongkan saat Disconnect) */
 const metaFresh = new Set<string>();
-const metaRunning = new Map<string, Promise<void>>();
+const metaRunning = new Map<string, Promise<string | undefined>>();
 
-/** baca ulang database + tabel / view / procedure satu koneksi ke cache (di belakang, satu proses per koneksi) */
-function refreshMetadata(c: ConnectionInfo): Promise<void> {
-  if (c.type === 'consul' || !metaDir) return Promise.resolve();
+/**
+ * baca ulang database + tabel / view / procedure satu koneksi ke cache (di belakang, satu proses per koneksi).
+ * Hasil: undefined = berhasil, selain itu pesan error (koneksi gagal / sebagian database tidak terbaca).
+ */
+function refreshMetadata(c: ConnectionInfo): Promise<string | undefined> {
+  if (c.type === 'consul' || !metaDir) return Promise.resolve(undefined);
   metaFresh.add(c.name);
   let p = metaRunning.get(c.name);
   if (!p) {
     const d = drivers[c.type];
     const t = Date.now();
-    p = (async () => {
+    p = (async (): Promise<string | undefined> => {
       const pw = await conns.password(c.name);
-      await refreshMeta(metaDir, c.name, { databases: () => d.databases(c, pw), objects: (db, kind) => d.objects(c, pw, db, kind) },
-        (db, e) => log.error(`refreshMetadata ${c.name} / ${db} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
+      const failed: string[] = [];
+      await refreshMeta(metaDir, c.name, { databases: () => d.databases(c, pw), objects: (db, kind) => d.objects(c, pw, db, kind) }, (db, e) => {
+        failed.push(db);
+        log.error(`refreshMetadata ${c.name} / ${db} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      });
       // koneksi dihapus selama refresh berjalan: hasilnya ikut dibuang
       if (!conns.get(c.name)) await removeMeta(metaDir, c.name);
-      else log.info(`metadata cache ${c.name}: refreshed in ${Date.now() - t} ms`);
+      else log.info(`metadata cache ${c.name}: refreshed in ${Date.now() - t} ms${failed.length ? ` (could not read ${failed.join(', ')})` : ''}`);
+      return failed.length ? `could not read ${failed.join(', ')}` : undefined;
     })().catch((e: unknown) => {
       metaFresh.delete(c.name); // gagal (mis. server mati): dicoba lagi pada pemakaian berikutnya
       log.error(`refreshMetadata ${c.name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      return errMsg(e);
     }).finally(() => metaRunning.delete(c.name));
     metaRunning.set(c.name, p);
   }
   return p;
+}
+
+/**
+ * Command Palette "Update Metadata": koneksi terpilih diproses satu per satu (buka koneksi -> baca metadata -> simpan cache ->
+ * tutup koneksi bila sebelumnya belum terhubung), dengan progress bar + Cancel, lalu notifikasi ringkasan.
+ */
+async function updateMetadataCommand(names?: string[]): Promise<void> {
+  const all = conns.list().filter((c) => c.type !== 'consul');
+  let picked = names ? all.filter((c) => names.includes(c.name)) : undefined;
+  if (!picked) {
+    if (!all.length) { void vscode.window.showInformationMessage('No database connections to update.'); return; }
+    picked = (await vscode.window.showQuickPick(all.map((c) => ({ label: c.name, description: drivers[c.type].label, picked: true, c })),
+      { title: 'Update Metadata', placeHolder: 'Connections to read again (one at a time)', canPickMany: true }))?.map((x) => x.c);
+  }
+  if (!picked?.length) return;
+  const list = picked;
+  const t = Date.now();
+  const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Updating metadata', cancellable: true }, (progress, token) =>
+    updateSequential(list, async (c) => {
+      const wasOpen = isConnected(c);
+      const err = await refreshMetadata(c);
+      if (!wasOpen) {
+        // dibuka hanya untuk metadata: ditutup lagi; koneksi yang sedang dipakai dibiarkan
+        await closePool(c).catch((e: unknown) => log.error(`updateMetadata closePool ${c.name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
+        metaFresh.add(c.name); // pemakaian berikutnya tidak membaca ulang lagi
+        refreshConnState(0);
+      }
+      return err;
+    }, (c, i) => progress.report({ message: `${c.name} (${i + 1}/${list.length})`, increment: i ? 100 / list.length : 0 }), () => token.isCancellationRequested));
+  const secs = ((Date.now() - t) / 1000).toFixed(1);
+  log.info(`update metadata: ${r.ok.length} ok, ${r.failed.length} failed, ${r.skipped.length} skipped in ${secs} s`);
+  const summary = `Metadata updated: ${r.ok.length} of ${list.length} connection(s) in ${secs} s${r.skipped.length ? ` (cancelled, ${r.skipped.length} skipped)` : ''}.`;
+  if (r.failed.length) showError(`${summary} Failed: ${r.failed.map(([c, e]) => `${c.name} (${e})`).join('; ')}`);
+  else void vscode.window.showInformationMessage(summary);
 }
 
 /** koneksi dihapus / di-rename: cache lamanya dibuang */
