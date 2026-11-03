@@ -60,6 +60,7 @@ let openSql: OpenSql | undefined;
 export let banner: ConnBanner;
 let connDecorations: ConnDecorations;
 let sqlFilesView: vscode.TreeView<SqlNode>;
+let activatedAt = 0;
 let explorerView: vscode.TreeView<Node>;
 export let completion: SqlCompletion;
 /** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
@@ -73,6 +74,7 @@ const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : St
 export let extCtx: vscode.ExtensionContext;
 
 export function activate(ctx: vscode.ExtensionContext) {
+  activatedAt = Date.now();
   extCtx = ctx;
   log = vscode.window.createOutputChannel('Moonage Daydream', { log: true });
   driverLog.error = (m) => log.error(m);
@@ -151,10 +153,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     log,
     status,
     runningView,
-    vscode.window.registerTreeDataProvider('moonageDaydream.running', runningView),
-    vscode.window.registerTreeDataProvider('moonageDaydream.history', history),
+    vscode.window.registerTreeDataProvider('moonageDaydream.running', loadedOnce('running', runningView)),
+    vscode.window.registerTreeDataProvider('moonageDaydream.history', loadedOnce('history', history)),
     // view "Open" + keterangan "N unsaved" di judulnya (hasil assignment = TreeView, ikut di-dispose)
-    (openSql = new OpenSql(conns, ctx.workspaceState)).view = vscode.window.createTreeView('moonageDaydream.openSql', { treeDataProvider: openSql, dragAndDropController: openSql, canSelectMany: true }),
+    (openSql = new OpenSql(conns, ctx.workspaceState)).view = vscode.window.createTreeView('moonageDaydream.openSql', { treeDataProvider: loadedOnce('openSql', openSql), dragAndDropController: openSql, canSelectMany: true }),
     vscode.commands.registerCommand('moonageDaydream.openNewFile', () => openSql?.newFile()),
     vscode.commands.registerCommand('moonageDaydream.openSaveAll', async () => {
       try {
@@ -173,7 +175,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.workspace.onDidOpenTextDocument(() => openSql?.redraw()),
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'sql' && openSql?.redraw()), // judul untitled + status unsaved
     vscode.workspace.onDidSaveTextDocument((d) => d.languageId === 'sql' && openSql?.redraw()),
-    (sqlFilesView = vscode.window.createTreeView('moonageDaydream.sqlFiles', { treeDataProvider: sqlFiles, dragAndDropController: sqlFilesDnd(sqlFiles, conns, log), canSelectMany: true })),
+    (sqlFilesView = vscode.window.createTreeView('moonageDaydream.sqlFiles', { treeDataProvider: loadedOnce('sqlFiles', sqlFiles), dragAndDropController: sqlFilesDnd(sqlFiles, conns, log), canSelectMany: true })),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesFlat', () => sqlFiles.setFlat(true)),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesTree', () => sqlFiles.setFlat(false)),
     vscode.commands.registerCommand('moonageDaydream.refreshSqlFiles', () => sqlFiles.refresh()),
@@ -315,7 +317,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     // garis warna mengikuti jumlah baris; label ikut akhir baris pertama
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'sql' && banner.update(fileConn)),
     vscode.window.registerWebviewViewProvider(VIEW_ID, results),
-    (explorerView = vscode.window.createTreeView('moonageDaydream.explorer', { treeDataProvider: explorer })),
+    (explorerView = vscode.window.createTreeView('moonageDaydream.explorer', { treeDataProvider: loadedOnce('explorer', explorer) })),
     vscode.commands.registerCommand('moonageDaydream.renameConnection', (n?: Node, name?: string) => renameConnection(n, name)),
     vscode.commands.registerCommand('moonageDaydream.changeConnectionColor', (n?: Node, color?: string) => changeConnectionColor(n, color)),
     vscode.commands.registerCommand('moonageDaydream.moveConnectionToGroup', (n?: Node, pick?: string) => moveToGroup(n, pick)),
@@ -403,8 +405,28 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (picked) await results.setLocation(picked.id);
     }),
   );
-  // semua view terdaftar: pesan "Loading Moonage Daydream…" di sidebar diganti isi / pesan kosong (viewsWelcome)
-  void vscode.commands.executeCommand('setContext', 'moonageDaydream.ready', true);
+}
+
+/**
+ * pesan "Loading Moonage Daydream…" (viewsWelcome) di view ini hilang setelah isi level atasnya selesai dimuat pertama kali,
+ * bukan saat activate selesai (muatan pertama masih bisa beberapa detik = view blank). Waktunya dicatat di Output.
+ */
+function loadedOnce<T>(view: string, p: vscode.TreeDataProvider<T>): vscode.TreeDataProvider<T> {
+  const get = p.getChildren.bind(p);
+  let done = false;
+  p.getChildren = async (e?: T) => {
+    try {
+      return await get(e);
+    } finally {
+      // gagal juga dianggap selesai: pesan loading tidak boleh tertinggal selamanya (error dicatat provider)
+      if (!e && !done) {
+        done = true;
+        log.info(`view ${view}: first data ${Date.now() - activatedAt} ms after activate`);
+        void vscode.commands.executeCommand('setContext', `moonageDaydream.loaded.${view}`, true);
+      }
+    }
+  };
+  return p;
 }
 
 export async function deactivate() {
