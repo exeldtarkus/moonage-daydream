@@ -63,10 +63,10 @@ export function treeParent(n: Node): Node | undefined {
   }
 }
 
-/** teks baris koneksi di Connections: label = [ nama ] (satu warna = warna koneksi), detail di deskripsi setelah " - " */
+/** teks baris koneksi di Connections: label = - [ nama ] (satu warna = warna koneksi), detail di deskripsi setelah " - " */
 export function connText(name: string, type: string, addr: string, o: { active?: boolean; noConfirm?: boolean }): { label: string; description: string } {
   return {
-    label: `[ ${name} ]`,
+    label: `- [ ${name} ]`,
     description: `- ${type} · ${addr}${o.active ? ' · active' : ''}${o.noConfirm ? ' · no commit confirm' : ''}`,
   };
 }
