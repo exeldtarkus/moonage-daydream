@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import { firstLine, runningStatus, where } from './runningStatus';
+
+export { firstLine };
 
 /** query yang sedang berjalan (satu per file .sql) */
 export interface RunningQuery {
@@ -29,27 +32,35 @@ export interface HistoryEntry {
 const HISTORY = 'queryHistory';
 export const MAX_HISTORY = 200;
 
-export const firstLine = (sql: string) => {
-  const line = sql.trim().split(/\r?\n/).find((l) => l.trim()) ?? '';
-  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
-};
-const where = (conn: string, db: string) => (db ? `${conn} / ${db}` : conn);
-
 /** Sidebar "Running Queries": tombol cancel per query; elapsed diperbarui tiap detik selama ada yang berjalan. */
 export class RunningView implements vscode.TreeDataProvider<RunningQuery> {
   private changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   private timer: NodeJS.Timeout | undefined;
+  /** status bar kanan bawah selama ada query berjalan; klik = buka view Running Queries */
+  private bar = vscode.window.createStatusBarItem('moonageDaydream.running', vscode.StatusBarAlignment.Right, 100);
 
-  constructor(readonly running: Map<string, RunningQuery>) {}
+  constructor(readonly running: Map<string, RunningQuery>) {
+    this.bar.name = 'Moonage Daydream: Running Queries';
+    this.bar.command = 'moonageDaydream.running.focus';
+  }
 
   refresh(): void {
     this.changed.fire();
-    if (this.running.size && !this.timer) this.timer = setInterval(() => this.changed.fire(), 1000);
+    this.updateBar();
+    if (this.running.size && !this.timer) this.timer = setInterval(() => { this.changed.fire(); this.updateBar(); }, 1000);
     if (!this.running.size && this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+  }
+
+  private updateBar(): void {
+    const s = runningStatus([...this.running.values()], Date.now());
+    if (!s) { this.bar.hide(); return; }
+    this.bar.text = s.text;
+    this.bar.tooltip = `${s.tooltip.join('\n')}\n\nClick to open Running Queries`;
+    this.bar.show();
   }
 
   getChildren(q?: RunningQuery): RunningQuery[] {
@@ -68,6 +79,7 @@ export class RunningView implements vscode.TreeDataProvider<RunningQuery> {
 
   dispose(): void {
     if (this.timer) clearInterval(this.timer);
+    this.bar.dispose();
   }
 }
 
