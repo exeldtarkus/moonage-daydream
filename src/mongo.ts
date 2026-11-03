@@ -103,6 +103,8 @@ export function toSet(docs: Document[], total = docs.length, limited?: number): 
 }
 
 const clients = new Map<string, Promise<MongoClient>>();
+/** client yang sudah benar-benar terhubung (status connected di Connections; yang masih mencoba tidak dihitung) */
+const ready = new Set<string>();
 
 /** opsi MongoClient: login, TLS, timeout, Driver settings (mis. replicaSet, retryWrites) */
 export const mongoOptions = (conn: ConnectionInfo, password: string): MongoClientOptions => ({
@@ -120,7 +122,7 @@ function client(conn: ConnectionInfo, password: string): Promise<MongoClient> {
     const url = /^mongodb(\+srv)?:\/\//.test(conn.host) ? conn.host : `mongodb://${conn.host}:${conn.port}`;
     c = new MongoClient(url, mongoOptions(conn, password)).connect();
     clients.set(conn.name, c);
-    c.catch(() => clients.delete(conn.name)); // gagal connect: coba ulang di run berikutnya (error dilaporkan pemanggil)
+    c.then(() => ready.add(conn.name), () => clients.delete(conn.name)); // gagal connect: coba ulang di run berikutnya (error dilaporkan pemanggil)
   }
   return c;
 }
@@ -409,10 +411,11 @@ export const mongoDriver: Driver = {
   },
   primaryKey: async () => ['_id'],
   selectTop: (_db, obj, n) => `db.getCollection(${JSON.stringify(obj.name)}).find({}).limit(${n});`,
-  isOpen: (name) => clients.has(name),
+  isOpen: (name) => ready.has(name) && clients.has(name),
   async close(name) {
     const c = clients.get(name);
     clients.delete(name);
+    ready.delete(name);
     if (c) await (await c).close();
   },
 };

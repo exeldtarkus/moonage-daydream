@@ -8,6 +8,8 @@ const errText = (e: unknown) => (e instanceof Error ? `${e.message} - stack-trac
 
 /** pool per koneksi + database (database bisa beda per file .sql) */
 const pools = new Map<string, Promise<sql.ConnectionPool>>();
+/** pool yang sudah benar-benar terhubung (status connected di Connections; yang masih mencoba tidak dihitung) */
+const readyPools = new Set<string>();
 const poolKey = (conn: ConnectionInfo) => `${conn.name}\n${conn.database}`;
 
 /** gagal connect yang layak dicoba ulang: timeout / pencarian port named instance (SQL Server Browser, UDP 1434) */
@@ -49,7 +51,7 @@ function pool(conn: ConnectionInfo, password: string): Promise<sql.ConnectionPoo
   if (!p) {
     p = retryOnce(() => new sql.ConnectionPool(poolConfig(conn, password)).connect(), retryableConnectError);
     pools.set(key, p);
-    p.catch(() => pools.delete(key)); // gagal connect: coba ulang di run berikutnya (error dilaporkan oleh pemanggil)
+    p.then(() => readyPools.add(key), () => pools.delete(key)); // gagal connect: coba ulang di run berikutnya (error dilaporkan oleh pemanggil)
   }
   return p;
 }
@@ -936,10 +938,10 @@ export const mssqlDriver: Driver = {
     return { sql, params: ps.length };
   },
 
-  isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`)),
+  isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`) && readyPools.has(k)),
   async close(name) {
     const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
-    for (const [k] of mine) pools.delete(k);
+    for (const [k] of mine) { pools.delete(k); readyPools.delete(k); }
     // error (mis. pool gagal connect) diteruskan ke pemanggil untuk di-log
     await Promise.all(mine.map(async ([, p]) => (await p).close()));
   },
