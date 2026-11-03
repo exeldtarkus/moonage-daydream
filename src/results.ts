@@ -13,7 +13,8 @@ export interface ResultMessage {
   where?: string;
   part?: number;
   set?: number;
-  scope?: 'all' | 'sel';
+  /** export: all = semua baris grid, sel = seleksi; Load all: cache = semua baris cache, view = hasil filter + sort, server = query ulang tanpa batas */
+  scope?: 'all' | 'sel' | 'cache' | 'view' | 'server';
   rows?: number[];
   cols?: number[];
   format?: string;
@@ -24,6 +25,13 @@ export interface ResultMessage {
   inserts?: string[][];
   /** copy: false = tanpa baris header (Ctrl+C di grid) */
   header?: boolean;
+  /** grid mode cache (Load all): key Search Output, filter corong per kolom, sort, versi tampilan, halaman */
+  keys?: string[];
+  filters?: Record<number, string>;
+  sort?: { c: number; dir: 1 | -1 } | null;
+  gen?: number;
+  start?: number;
+  count?: number;
 }
 export const VIEW_ID = 'moonageDaydream.results';
 const LOCATION_KEY = 'resultsLocation';
@@ -35,7 +43,9 @@ export class Results implements vscode.WebviewViewProvider {
   private last: { title: string; outcome: Outcome } | undefined;
 
   /** pesan dari script grid (mis. filter WHERE); diisi extension */
-  onMessage: ((msg: ResultMessage, outcome: Outcome | undefined) => unknown) | undefined;
+  onMessage: ((msg: ResultMessage, outcome: Outcome | undefined, post: (m: unknown) => unknown) => unknown) | undefined;
+  /** hasil yang tampil berganti / tab pin ditutup (cache Load all yang tidak dipakai lagi dibuang) */
+  onChange: (() => void) | undefined;
   /** tab hasil yang di-pin (snapshot, tidak ditimpa run berikutnya) */
   readonly pinned: { panel: vscode.WebviewPanel; title: string; outcome: Outcome }[] = [];
 
@@ -58,13 +68,14 @@ export class Results implements vscode.WebviewViewProvider {
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = { enableScripts: true, enableCommandUris: [CANCEL_COMMAND] }; // script grid (filter / sort / WHERE) + tombol Cancel
-    view.webview.onDidReceiveMessage((m) => this.onMessage?.(m, this.last?.outcome));
+    view.webview.onDidReceiveMessage((m) => this.onMessage?.(m, this.last?.outcome, (x) => view.webview.postMessage(x)));
     view.onDidDispose(() => (this.view = undefined));
     this.paint(view.webview);
   }
 
   async show(title: string, outcome: Outcome): Promise<void> {
     this.last = { title, outcome };
+    this.onChange?.();
     const editor = vscode.window.activeTextEditor;
     if (this.location === 'panel') {
       this.panel?.dispose();
@@ -79,7 +90,8 @@ export class Results implements vscode.WebviewViewProvider {
         this.panel?.dispose();
         this.panel = vscode.window.createWebviewPanel(VIEW_ID, 'Results', { viewColumn: vscode.ViewColumn.Beside, preserveFocus: this.location === 'right' },
           { enableScripts: true, enableCommandUris: [CANCEL_COMMAND] });
-        this.panel.webview.onDidReceiveMessage((m) => this.onMessage?.(m, this.last?.outcome));
+        const p = this.panel;
+        p.webview.onDidReceiveMessage((m) => this.onMessage?.(m, this.last?.outcome, (x) => p.webview.postMessage(x)));
         this.panel.onDidDispose(() => (this.panel = undefined));
         if (this.location === 'left') {
           // panel baru (aktif) ada di group kanan: pindahkan group-nya ke kiri editor
@@ -112,6 +124,12 @@ export class Results implements vscode.WebviewViewProvider {
     if (w && this.last) this.paint(w);
   }
 
+  /** gambar ulang hasil yang tampil + semua tab pin (mis. setelah Clear Result Cache) */
+  refreshAll(): void {
+    this.refresh();
+    for (const p of this.pinned) p.panel.webview.html = render(p.panel.webview.cspSource, p.panel.title.replace(/^📌 /, ''), p.outcome, true);
+  }
+
   /** gambar ulang hasil yang sedang tampil (run paralel: statement selesai satu per satu) tanpa memindah fokus */
   repaint(uri: string): void {
     const o = this.last?.outcome;
@@ -132,8 +150,8 @@ export class Results implements vscode.WebviewViewProvider {
       { enableScripts: true, retainContextWhenHidden: true });
     const entry = { panel, title: last.title, outcome: last.outcome };
     this.pinned.push(entry);
-    panel.onDidDispose(() => this.pinned.splice(this.pinned.indexOf(entry), 1));
-    panel.webview.onDidReceiveMessage((m) => this.onMessage?.(m, entry.outcome));
+    panel.onDidDispose(() => { this.pinned.splice(this.pinned.indexOf(entry), 1); this.onChange?.(); });
+    panel.webview.onDidReceiveMessage((m) => this.onMessage?.(m, entry.outcome, (x) => panel.webview.postMessage(x)));
     panel.webview.html = render(panel.webview.cspSource, `${last.title} · ${time}`, last.outcome, true);
     return panel;
   }
