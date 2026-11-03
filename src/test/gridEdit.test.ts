@@ -210,3 +210,11 @@ test('grid Ctrl+C: copies in the format of moonageDaydream.grid.copyFormat (defa
   const html = render('csp', 't', { result: { resultSets: [{ columns: ['a'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 } });
   assert.ok(html.includes("send(t, 'copy', 'shortcut', 'sel', false)"), 'webview asks the extension for the configured format');
 });
+
+test('grid copy format can be set from the Command Palette', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json dibaca apa adanya
+  const pkg = require('../../package.json') as { contributes: { commands: { command: string; title: string; category?: string }[] } };
+  const c = pkg.contributes.commands.find((x) => x.command === 'moonageDaydream.setCopyFormat');
+  assert.equal(c?.title, 'Set Grid Copy Format (Ctrl+C)…');
+  assert.equal(c?.category, 'Moonage Daydream');
+});

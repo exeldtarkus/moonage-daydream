@@ -164,6 +164,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "moonageDaydream.setCopyFormat",
+        "title": "Set Grid Copy Format (Ctrl+C)…",
+        "category": "Moonage Daydream",
+        "icon": "$(copy)"
+      },
+      {
         "command": "moonageDaydream.selectTop",
         "title": "Select Top 100",
         "category": "Moonage Daydream",
