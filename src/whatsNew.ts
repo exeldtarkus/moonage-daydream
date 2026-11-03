@@ -7,6 +7,20 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '1.2.0', date: '2026-11-03', items: [
+      { kind: 'new', title: 'Find Object (Ctrl+Alt+O)', detail: 'Search connections, databases, tables, views and procedures of every connection at once from a local metadata cache; pick one to run Select Top 100, open its definition or start a query, and it is revealed in Connections. Command Palette: Update Metadata reads connections again one at a time with progress, Clear Cache removes the cache.' },
+      { kind: 'new', title: 'Filter in Connections (Ctrl+Alt+F)', detail: 'The funnel on a connection, database or folder shows only names that contain your text.' },
+      { kind: 'new', title: 'Open view', detail: 'Every open SQL tab, saved or not: New File, Save All, Close All, close per item, pin to the top and reorder by drag and drop. Clicking a file reveals it in SQL Files.' },
+      { kind: 'new', title: 'SQL syntax check', detail: 'SELECT / INSERT / UPDATE / DELETE / WITH statements are checked offline with the dialect of the file\'s connection and marked as a warning (setting moonageDaydream.lint.syntax).' },
+      { kind: 'new', title: 'Running queries and history in the status bar', detail: 'A popup shows a running query with Cancel and closes when it finishes; "N running" and "History" sit in the status bar and open quick picks to cancel, reopen, run again or copy.' },
+      { kind: 'new', title: 'Group environment icons', detail: 'Production, UAT, Development and Local Development groups get their own icon and color, guessed from the name or set by right-click.' },
+      { kind: 'improved', title: 'Connection rows', detail: 'The database logo stays visible with a pulsing dot while connected, groups show how many are connected, the tooltip lists host, user, database and group, and expanding a disconnected connection shows a loading bar until it is connected.' },
+      { kind: 'improved', title: 'One preview tab', detail: 'Clicking tables and history entries reuses one SQL tab until you edit it.' },
+      { kind: 'improved', title: 'Faster large results', detail: 'The result grid draws only the rows near the viewport.' },
+      { kind: 'fixed', title: 'Slow or failed connections', detail: 'A slow connection no longer freezes the rest of Connections, and a connection that failed is no longer shown as connected.' },
+    ],
+  },
+  {
     version: '1.1.0', date: '2026-11-02', items: [
       { kind: 'improved', title: 'Feedback after saving data', detail: 'A notification confirms an Add Data insert or a grid save; Add Data clears its form for the next row.' },
       { kind: 'fixed', title: 'Results panel and forms', detail: 'Opening a form (Columns, New Table, Add Data, ...) closes the Results panel so the form gets the space.' },
