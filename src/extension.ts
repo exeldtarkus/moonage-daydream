@@ -1430,7 +1430,9 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
   if (!rs) return;
   const src: Source | undefined = part && 'parts' in o ? { uri: o.uri, sql: part.sql } : 'source' in single ? single.source : undefined;
   const toClipboard = target === 'clipboard';
-  const format = (m.format && m.format in FORMATS ? m.format : 'csv') as ExportFormat;
+  // Ctrl+C di grid: format dari setting (default JSON pretty); menu Export: format yang dipilih
+  const wanted = m.format === 'shortcut' ? vscode.workspace.getConfiguration('moonageDaydream.grid').get<string>('copyFormat', 'jsonPretty') : m.format;
+  const format = (wanted && wanted in FORMATS ? wanted : 'csv') as ExportFormat;
   if (toClipboard && format === 'xlsx') return void vscode.window.showWarningMessage('Excel cannot be copied to the clipboard; use Save');
   const cols = m.cols?.length ? m.cols : rs.columns.map((_, i) => i);
   const pick = (row: unknown[]) => cols.map((i) => row[i]);

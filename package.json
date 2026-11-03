@@ -1373,6 +1373,25 @@
           "default": 0,
           "minimum": 0,
           "description": "Disconnect a connection automatically after it has not been used for this many minutes (no running query, open transaction or monitor). 0 = never."
+        },
+        "moonageDaydream.grid.copyFormat": {
+          "type": "string",
+          "enum": [
+            "jsonPretty",
+            "json",
+            "tsv",
+            "csv",
+            "markdown"
+          ],
+          "enumDescriptions": [
+            "JSON array of objects, indented",
+            "JSON array of objects on one line",
+            "Tab separated rows without header (paste into a spreadsheet)",
+            "CSV with header",
+            "Markdown table"
+          ],
+          "default": "jsonPretty",
+          "description": "Format of the selected rows copied with Ctrl+C / Cmd+C in the result grid."
         }
       }
     },

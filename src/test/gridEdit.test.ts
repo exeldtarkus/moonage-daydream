@@ -200,3 +200,13 @@ test('sql files reveal: parent folder of a workspace-relative path ("" = workspa
   assert.equal(parentRel('a.sql'), '');
   assert.equal(parentRel(''), undefined);
 });
+
+test('grid Ctrl+C: copies in the format of moonageDaydream.grid.copyFormat (default pretty JSON, TSV still available)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json dibaca apa adanya
+  const pkg = require('../../package.json') as { contributes: { configuration: { properties: Record<string, { default: unknown; enum?: string[] }> } } };
+  const s = pkg.contributes.configuration.properties['moonageDaydream.grid.copyFormat'];
+  assert.equal(s.default, 'jsonPretty');
+  assert.deepEqual(s.enum, ['jsonPretty', 'json', 'tsv', 'csv', 'markdown']);
+  const html = render('csp', 't', { result: { resultSets: [{ columns: ['a'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 } });
+  assert.ok(html.includes("send(t, 'copy', 'shortcut', 'sel', false)"), 'webview asks the extension for the configured format');
+});
