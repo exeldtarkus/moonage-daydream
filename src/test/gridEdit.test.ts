@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { changeStatements } from '../sqlContext';
+import { changeStatements, reusableSelectTop } from '../sqlContext';
 import { render } from '../resultsHtml';
 import { mongoChanges, mongoFindCollection } from '../mongo';
 
@@ -159,4 +159,13 @@ test('grid: rows are sent as JSON data and drawn by the webview (no <tr> per row
   // '</script>' di data tidak boleh menutup blok JSON
   const evil = render('csp', 't', { result: { ...result, resultSets: [{ columns: ['x'], rows: [['</script><b>']], total: 1 }] } });
   assert.ok(evil.includes('[["\\u003c/script>\\u003cb>"]]'));
+});
+
+test('select top (left-click a table): one preview tab is reused unless it was closed or edited by hand', () => {
+  const doc = (text: string, isClosed = false) => ({ isClosed, getText: () => text });
+  const sql = 'SELECT * FROM `shop`.`a` LIMIT 100;';
+  assert.equal(reusableSelectTop(undefined), false);
+  assert.equal(reusableSelectTop({ doc: doc(sql), sql }), true);
+  assert.equal(reusableSelectTop({ doc: doc(sql, true), sql }), false);
+  assert.equal(reusableSelectTop({ doc: doc(sql + '\nWHERE id = 1'), sql }), false, 'edited by the user: keep it');
 });
