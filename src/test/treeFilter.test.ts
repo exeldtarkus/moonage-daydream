@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { applyFilters, filterKey, loadObjects, matchFilter } from '../treeFilter';
+import { applyFilters, filterKey, loadObjects, matchFilter, treeParent } from '../treeFilter';
 import type { Node } from '../explorer';
 import type { ConnectionInfo } from '../db';
 
@@ -61,4 +61,17 @@ test('find object: loads every database x kind, keeps going after a failure, sto
   let calls = 0;
   await loadObjects(['a', 'b', 'c'], ['table'], async () => { calls++; return []; }, () => undefined, () => undefined, () => calls >= 1, 1);
   assert.equal(calls, 1);
+});
+
+test('reveal: parent chain of an object up to its connection (and group)', () => {
+  const g = { ...c, group: 'lab group' } as ConnectionInfo;
+  const chain = (n: Node | undefined): string[] => {
+    const out: string[] = [];
+    for (let x = n; x; x = treeParent(x)) out.push(x.kind === 'mfolder' ? `ms:${x.folder}` : x.kind === 'folder' ? `folder:${x.objKind}` : x.kind === 'db' ? `db:${x.db}` : x.kind === 'obj' ? `obj:${x.obj.name}` : x.kind === 'conn' ? `conn:${x.c.name}` : x.kind === 'group' ? `group:${x.group}` : x.kind);
+    return out;
+  };
+  assert.deepEqual(chain({ kind: 'obj', c: g, db: 'shop', objKind: 'view', obj: { schema: '', name: 'v' } }), ['obj:v', 'folder:view', 'db:shop', 'conn:lab', 'group:lab group']);
+  assert.deepEqual(chain({ kind: 'obj', c: ms, db: 'B', objKind: 'table', obj: { schema: 'dbo', name: 't' } }), ['obj:t', 'ms:tables', 'db:B', 'ms:databases', 'conn:ms']);
+  assert.deepEqual(chain({ kind: 'obj', c: ms, db: 'B', objKind: 'procedure', obj: { schema: 'dbo', name: 'p' } }), ['obj:p', 'ms:procedures', 'ms:programmability', 'db:B', 'ms:databases', 'conn:ms']);
+  assert.deepEqual(chain({ kind: 'obj', c: ms, db: 'B', objKind: 'view', obj: { schema: 'dbo', name: 'v' } }), ['obj:v', 'ms:views', 'db:B', 'ms:databases', 'conn:ms']);
 });

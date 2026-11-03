@@ -14,7 +14,8 @@ const ICON: Record<ListKind | 'db', string> = { db: 'database', table: 'table', 
 type Pick = vscode.QuickPickItem & { node: Node };
 
 /** pilih tabel / view = Select Top 100, procedure = Show Definition (bila driver punya), database = New Query di database itu */
-export async function findObject(conns: Connections, log: vscode.LogOutputChannel, n?: Node): Promise<void> {
+/** reveal: sorot node terpilih di view Connections (folder induk dibuka) */
+export async function findObject(conns: Connections, log: vscode.LogOutputChannel, reveal: (n: Node) => Thenable<void>, n?: Node): Promise<void> {
   let c: ConnectionInfo | undefined = n?.kind === 'conn' || n?.kind === 'db' ? n.c : undefined;
   if (!c) {
     const list = conns.list().filter((x) => x.type !== 'consul');
@@ -43,6 +44,10 @@ export async function findObject(conns: Connections, log: vscode.LogOutputChanne
     if (node.kind === 'db') void vscode.commands.executeCommand('moonageDaydream.newQueryForDb', node);
     else if (node.kind === 'obj' && node.objKind !== 'procedure') void vscode.commands.executeCommand('moonageDaydream.selectTop', node);
     else if (node.kind === 'obj' && d.definition) void vscode.commands.executeCommand('moonageDaydream.showDefinition', node);
+    Promise.resolve(reveal(node)).catch((e: unknown) => {
+      // objek tetap dibuka; sorot gagal mis. karena tersembunyi oleh filter
+      log.error(`findObject reveal ${conn.name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    });
   });
   qp.show();
   try {
