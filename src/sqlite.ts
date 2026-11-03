@@ -369,6 +369,14 @@ ORDER BY kind DESC, key_name, ord;`,
   wrap: (sql) => `BEGIN;\n${sql}\nCOMMIT;`,
 };
 
+/** koneksi SQLite yang file-nya sudah berhasil dibaca (status connected di Connections) */
+const readOnce = new Set<string>();
+const opened: typeof open = async (conn) => {
+  const db = await open(conn);
+  readOnce.add(conn.name);
+  return db;
+};
+
 export const sqliteDriver = sqlDriver({
   label: 'SQLite',
   defaultPort: 0,
@@ -381,8 +389,8 @@ export const sqliteDriver = sqlDriver({
   explain: (s, mode) => (mode === 'estimated' ? `EXPLAIN QUERY PLAN ${s}` : undefined),
   columnDdl: sqliteColumnDdl,
 
-  link: async (conn) => link(conn, await open(conn), false),
-  dedicated: async (conn) => link(conn, await open(conn), true),
+  link: async (conn) => link(conn, await opened(conn), false),
+  dedicated: async (conn) => link(conn, await opened(conn), true),
   databases: async () => ['main'],
   objects: async (conn, _pw, _db, kind) => (KIND[kind] ? select(conn, KIND[kind]) : []),
   async columns(conn, _pw, _db, obj) {
@@ -399,5 +407,7 @@ export const sqliteDriver = sqlDriver({
   selectTop: (_db, obj, n) => `SELECT * FROM ${quote(obj.name)} LIMIT ${n};`,
   tableRef: (o) => quote(o.name),
   dropTable: (o) => `DROP TABLE ${quote(o.name)};`, // index & trigger tabel ikut terhapus
-  close: async () => undefined, // tidak ada koneksi yang di-cache
+  // tidak ada koneksi yang di-cache: "connected" = file sudah berhasil dibaca sejak Connect / pemakaian pertama sampai Disconnect
+  close: async (name) => { readOnce.delete(name); },
+  isOpen: (name) => readOnce.has(name),
 });

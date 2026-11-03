@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { applyFilters, connStateChange, connText, connTooltip, filterKey, matchFilter, treeParent } from '../treeFilter';
+import { applyFilters, connStateChange, connText, connTooltip, filterKey, groupText, matchFilter, treeParent } from '../treeFilter';
 import type { Node } from '../explorer';
 import { groupEnv, type ConnectionInfo } from '../db';
 
@@ -114,4 +114,10 @@ test('sidebar: default view order is Open, SQL Files, Connections, Running Queri
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json dibaca apa adanya
   const pkg = require('../../package.json') as { contributes: { views: Record<string, { name: string }[]> } };
   assert.deepEqual(pkg.contributes.views.moonageDaydreamExplorer.map((v) => v.name), ['Open', 'SQL Files', 'Connections', 'Running Queries', 'Query History']);
+});
+
+test('group row: connection count, connected count when any, no-commit-confirm note', () => {
+  assert.equal(groupText(6, 6, false), '6 connections · ● 6 connected');
+  assert.equal(groupText(1, 0, false), '1 connection');
+  assert.equal(groupText(2, 1, true), '2 connections · ● 1 connected · no commit confirm');
 });
