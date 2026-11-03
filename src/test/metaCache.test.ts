@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { pruneMeta, readMeta, refreshMeta, removeMeta } from '../metaCache';
+import { clearCache, dirSize, pruneMeta, readMeta, refreshMeta, removeMeta } from '../metaCache';
 import type { DbObject, ListKind } from '../db';
 
 const objects: Record<string, Partial<Record<ListKind, DbObject[]>>> = {
@@ -60,6 +60,22 @@ test('metadata cache: prune deletes the cache of connections that no longer exis
     await pruneMeta(dir, ['keep/1', 'never cached']);
     assert.deepEqual(readdirSync(dir), [encodeURIComponent('keep/1')]);
     await pruneMeta(join(dir, 'missing'), []); // folder belum ada: tidak error
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('clear cache: reports the size, then deletes the whole cache folder (missing folder = 0 bytes, no error)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'md-meta-'));
+  try {
+    const cache = join(dir, 'moonage-cache');
+    await refreshMeta(join(cache, 'metadata'), 'lab', src(['shop', 'hr/2026']), () => undefined);
+    const size = await dirSize(cache);
+    assert.ok(size > 50, `size ${size}`);
+    await clearCache(cache);
+    assert.deepEqual(readdirSync(dir), []);
+    assert.equal(await dirSize(cache), 0);
+    await clearCache(cache);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

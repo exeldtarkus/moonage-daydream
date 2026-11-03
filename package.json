@@ -152,6 +152,12 @@
         "icon": "$(search)"
       },
       {
+        "command": "moonageDaydream.clearCache",
+        "title": "Clear Cache",
+        "category": "Moonage Daydream",
+        "icon": "$(trash)"
+      },
+      {
         "command": "moonageDaydream.selectTop",
         "title": "Select Top 100",
         "category": "Moonage Daydream",
