@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { applyFilters, connText, filterKey, matchFilter, treeParent } from '../treeFilter';
+import { applyFilters, connStateChange, connText, filterKey, matchFilter, treeParent } from '../treeFilter';
 import type { Node } from '../explorer';
 import { groupEnv, type ConnectionInfo } from '../db';
 
@@ -90,4 +90,10 @@ test('connection row text: "connected · name" while connected, details after " 
     { label: 'connected · test-db', description: '- SQL Server · 10.1.40.129\\UAT02 · active' });
   assert.deepEqual(connText('local-mysql (docker)', 'MySQL', '127.0.0.1:23306', { noConfirm: true }),
     { label: 'local-mysql (docker)', description: '- MySQL · 127.0.0.1:23306 · no commit confirm' });
+});
+
+test('connection state: only the connections that changed are redrawn; a disconnect asks for a full redraw', () => {
+  assert.deepEqual(connStateChange(['a'], ['a', 'b']), { connected: ['b'], disconnected: [] });
+  assert.deepEqual(connStateChange(['a', 'b'], ['b', 'c']), { connected: ['c'], disconnected: ['a'] });
+  assert.deepEqual(connStateChange([], []), { connected: [], disconnected: [] });
 });

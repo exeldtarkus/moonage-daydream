@@ -70,3 +70,8 @@ export function connText(name: string, type: string, addr: string, o: { connecte
     description: `- ${type} · ${addr}${o.active ? ' · active' : ''}${o.noConfirm ? ' · no commit confirm' : ''}`,
   };
 }
+
+/** koneksi yang baru terhubung / terputus sejak snapshot sebelumnya (nama koneksi) */
+export function connStateChange(before: string[], now: string[]): { connected: string[]; disconnected: string[] } {
+  return { connected: now.filter((x) => !before.includes(x)), disconnected: before.filter((x) => !now.includes(x)) };
+}
