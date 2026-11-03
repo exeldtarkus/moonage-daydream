@@ -1,7 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Connections } from './connections';
-import { OpenSqlItem as OpenItem, openSqlItems, parentRel } from './sqlContext';
+import { OpenSqlItem, openSqlItems, parentRel } from './sqlContext';
+import { arrangeOpen, moveInOrder } from './openOrder';
+
+type OpenItem = OpenSqlItem & { pinned: boolean };
+const OPEN_ORDER = 'openSql.order';
+const OPEN_PINNED = 'openSql.pinned';
+const OPEN_MIME = 'application/vnd.code.tree.moonagedaydream.opensql';
 
 /** folder: path relatif (pakai '/') di dalam workspace folder; file: uri file .sql */
 export type SqlNode = { kind: 'folder'; root: vscode.WorkspaceFolder; rel: string } | { kind: 'file'; uri: vscode.Uri };
@@ -301,14 +307,37 @@ export function sqlFilesDnd(sqlFiles: SqlFiles, conns: Connections, log: vscode.
 
 
 /** Sidebar "Open": semua tab SQL yang terbuka (file .sql dari folder mana pun + tab yang belum disimpan), urut tab */
-export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
+export class OpenSql implements vscode.TreeDataProvider<OpenItem>, vscode.TreeDragAndDropController<OpenItem> {
   private changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
 
   /** view-nya: keterangan "N unsaved" di judul */
   view?: vscode.TreeView<OpenItem>;
 
-  constructor(private conns: Connections) {}
+  /** state = workspaceState: urutan (drag & drop) dan pin per workspace */
+  constructor(private conns: Connections, private state: vscode.Memento) {}
+
+  /** pin / lepas pin: yang di-pin selalu di atas dan tidak ikut Close All */
+  async pin(uri: string, on: boolean): Promise<void> {
+    const open = new Set(this.items().map((i) => i.uri));
+    const now = this.state.get<string[]>(OPEN_PINNED, []).filter((u) => u !== uri && open.has(u)); // tab yang sudah ditutup ikut dibuang
+    await this.state.update(OPEN_PINNED, on ? [...now, uri] : now);
+    this.redraw();
+  }
+
+  // drag & drop: urutan item di view (bukan urutan tab editor); drag ke editor = buka file
+  readonly dropMimeTypes = [OPEN_MIME];
+  readonly dragMimeTypes = ['text/uri-list'];
+  handleDrag(items: readonly OpenItem[], data: vscode.DataTransfer): void {
+    data.set(OPEN_MIME, new vscode.DataTransferItem(items.map((i) => i.uri)));
+    data.set('text/uri-list', new vscode.DataTransferItem(items.map((i) => i.uri).join('\r\n')));
+  }
+  async handleDrop(target: OpenItem | undefined, data: vscode.DataTransfer): Promise<void> {
+    const moved = data.get(OPEN_MIME)?.value as string[] | undefined;
+    if (!moved?.length) return;
+    await this.state.update(OPEN_ORDER, moveInOrder(this.items().map((i) => i.uri), moved, target?.uri));
+    this.redraw();
+  }
 
   redraw(): void {
     this.changed.fire();
@@ -325,7 +354,8 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
   items(): OpenItem[] {
     const tabs = this.tabs().flatMap((t) =>
       t.input instanceof vscode.TabInputText ? [{ uri: t.input.uri.toString(), path: t.input.uri.path, untitled: t.input.uri.scheme === 'untitled' }] : []);
-    return openSqlItems(tabs, (u) => vscode.workspace.textDocuments.find((d) => d.uri.toString() === u));
+    const list = openSqlItems(tabs, (u) => vscode.workspace.textDocuments.find((d) => d.uri.toString() === u));
+    return arrangeOpen(list, this.state.get<string[]>(OPEN_ORDER, []), this.state.get<string[]>(OPEN_PINNED, []));
   }
 
   getChildren(n?: OpenItem): OpenItem[] {
@@ -356,9 +386,9 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
     if (tabs.length) await vscode.window.tabGroups.close(tabs);
   }
 
-  /** Close All: hanya tab SQL di daftar Open; tab yang belum disimpan ditanya VS Code seperti biasa */
+  /** Close All: hanya tab SQL di daftar Open yang tidak di-pin; tab yang belum disimpan ditanya VS Code seperti biasa */
   async closeAll(): Promise<void> {
-    const open = new Set(this.items().map((i) => i.uri));
+    const open = new Set(this.items().filter((i) => !i.pinned).map((i) => i.uri));
     const tabs = this.tabs().filter((t) => t.input instanceof vscode.TabInputText && open.has(t.input.uri.toString()));
     if (tabs.length) await vscode.window.tabGroups.close(tabs);
   }
@@ -370,10 +400,10 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
     const dir = n.untitled ? '' : path.posix.dirname(vscode.workspace.asRelativePath(uri, (vscode.workspace.workspaceFolders?.length ?? 0) > 1));
     return Object.assign(n.untitled ? new vscode.TreeItem(n.label) : new vscode.TreeItem(uri), {
       id: n.uri, // label tab untitled berubah saat diketik: id tetap supaya seleksi tidak lompat
-      iconPath: n.untitled ? new vscode.ThemeIcon('file') : undefined,
+      iconPath: n.pinned ? new vscode.ThemeIcon('pinned') : n.untitled ? new vscode.ThemeIcon('file') : undefined,
       description: [n.dirty ? '●' : '', dir !== '.' ? dir : '', where].filter(Boolean).join(' · '),
       tooltip: `${n.untitled ? `${uri.path} (not saved)` : vscode.workspace.asRelativePath(uri)}${where ? `\n${where}` : ''}`,
-      contextValue: n.untitled ? 'openSqlUntitled' : 'openSqlFile',
+      contextValue: `${n.untitled ? 'openSqlUntitled' : 'openSqlFile'}${n.pinned ? '.pinned' : ''}`,
       // file: buka + sorot di SQL Files; untitled: buka saja
       command: n.untitled ? { command: 'vscode.open', title: 'Open', arguments: [uri] } : { command: 'moonageDaydream.openSqlAndReveal', title: 'Open', arguments: [uri] },
     });

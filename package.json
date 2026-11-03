@@ -406,6 +406,18 @@
         "icon": "$(close)"
       },
       {
+        "command": "moonageDaydream.openPin",
+        "title": "Pin",
+        "category": "Moonage Daydream",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "moonageDaydream.openUnpin",
+        "title": "Unpin",
+        "category": "Moonage Daydream",
+        "icon": "$(pinned)"
+      },
+      {
         "command": "moonageDaydream.newSqlFile",
         "title": "New SQL File",
         "category": "Moonage Daydream",
@@ -674,9 +686,29 @@
       ],
       "view/item/context": [
         {
+          "command": "moonageDaydream.openPin",
+          "when": "view == moonageDaydream.openSql && viewItem =~ /^openSql(File|Untitled)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "moonageDaydream.openUnpin",
+          "when": "view == moonageDaydream.openSql && viewItem =~ /\\.pinned$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "moonageDaydream.openPin",
+          "when": "view == moonageDaydream.openSql && viewItem =~ /^openSql(File|Untitled)$/",
+          "group": "0_pin"
+        },
+        {
+          "command": "moonageDaydream.openUnpin",
+          "when": "view == moonageDaydream.openSql && viewItem =~ /\\.pinned$/",
+          "group": "0_pin"
+        },
+        {
           "command": "moonageDaydream.openClose",
           "when": "view == moonageDaydream.openSql",
-          "group": "inline"
+          "group": "inline@2"
         },
         {
           "command": "moonageDaydream.openClose",
@@ -1206,6 +1238,14 @@
         },
         {
           "command": "moonageDaydream.openClose",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.openPin",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.openUnpin",
           "when": "false"
         }
       ],
