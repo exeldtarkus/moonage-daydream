@@ -150,7 +150,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('moonageDaydream.running', runningView),
     vscode.window.registerTreeDataProvider('moonageDaydream.history', history),
     // view "Open" + keterangan "N unsaved" di judulnya (hasil assignment = TreeView, ikut di-dispose)
-    (openSql = new OpenSql(conns)).view = vscode.window.createTreeView('moonageDaydream.openSql', { treeDataProvider: openSql }),
+    (openSql = new OpenSql(conns, ctx.workspaceState)).view = vscode.window.createTreeView('moonageDaydream.openSql', { treeDataProvider: openSql, dragAndDropController: openSql, canSelectMany: true }),
     vscode.commands.registerCommand('moonageDaydream.openNewFile', () => openSql?.newFile()),
     vscode.commands.registerCommand('moonageDaydream.openSaveAll', async () => {
       try {
@@ -162,6 +162,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.openCloseAll', () => openSql?.closeAll()),
     vscode.commands.registerCommand('moonageDaydream.openClose', (i?: { uri: string }) => i && openSql?.close(i.uri)),
+    vscode.commands.registerCommand('moonageDaydream.openPin', (i?: { uri: string }) => i && openSql?.pin(i.uri, true)),
+    vscode.commands.registerCommand('moonageDaydream.openUnpin', (i?: { uri: string }) => i && openSql?.pin(i.uri, false)),
     // view "Open": tab dibuka / ditutup / dipindah, language tab untitled berubah, judul tab untitled ikut isi (baris pertama)
     vscode.window.tabGroups.onDidChangeTabs(() => openSql?.redraw()),
     vscode.workspace.onDidOpenTextDocument(() => openSql?.redraw()),
