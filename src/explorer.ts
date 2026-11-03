@@ -90,7 +90,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       case 'group': {
         const count = this.conns.list().filter((c) => c.group === n.group).length;
         return Object.assign(new vscode.TreeItem(n.group, C), {
-          id: `group:${n.group}#${SESSION}`, description: `${count}${this.conns.groupSettings()[n.group]?.confirmAutoCommit === false ? ' · no commit confirm' : ''}`,
+          id: `group:${n.group}#${SESSION}`, description: `- ${count} connection${count === 1 ? '' : 's'}${this.conns.groupSettings()[n.group]?.confirmAutoCommit === false ? ' · no commit confirm' : ''}`,
           iconPath: new vscode.ThemeIcon('folder-library'), contextValue: 'group',
         });
       }
