@@ -48,7 +48,20 @@ export interface ConnectionInfo {
 }
 
 /** pengaturan per group di Connections */
-export type GroupSettings = Record<string, { confirmAutoCommit?: boolean }>;
+/** lingkungan group (ikon + warna di Connections); 'none' = tanpa ikon lingkungan walau nama group mirip */
+export type GroupEnv = 'production' | 'uat' | 'development' | 'local';
+export type GroupSettings = Record<string, { confirmAutoCommit?: boolean; env?: GroupEnv | 'none' }>;
+
+/** lingkungan group: pilihan user, selain itu ditebak dari nama (UAT dicek dulu supaya "pre-prod" tidak jadi production) */
+export function groupEnv(group: string, settings: GroupSettings): GroupEnv | undefined {
+  const set = settings[group]?.env;
+  if (set) return set === 'none' ? undefined : set;
+  if (/uat|stag|stg|pre-?prod|\bqa\b/i.test(group)) return 'uat';
+  if (/prod|\blive\b/i.test(group)) return 'production';
+  if (/local|docker/i.test(group)) return 'local';
+  if (/dev/i.test(group)) return 'development';
+  return undefined;
+}
 /** konfirmasi Auto-commit aktif? koneksi -> group -> default aktif */
 export const confirmAutoCommit = (c: ConnectionInfo, groups: GroupSettings) =>
   c.confirmAutoCommit ?? (c.group ? groups[c.group]?.confirmAutoCommit : undefined) ?? true;

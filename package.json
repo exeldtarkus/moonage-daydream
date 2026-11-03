@@ -528,6 +528,12 @@
         "icon": "$(edit)"
       },
       {
+        "command": "moonageDaydream.setGroupEnv",
+        "title": "Set Group Environment…",
+        "category": "Moonage Daydream",
+        "icon": "$(symbol-color)"
+      },
+      {
         "command": "moonageDaydream.renameConnection",
         "title": "Rename…",
         "category": "Moonage Daydream",
@@ -901,6 +907,11 @@
           "group": "1_group"
         },
         {
+          "command": "moonageDaydream.setGroupEnv",
+          "when": "view == moonageDaydream.explorer && viewItem == group",
+          "group": "1_group"
+        },
+        {
           "command": "moonageDaydream.addConnection",
           "when": "view == moonageDaydream.explorer && viewItem == group",
           "group": "inline"
@@ -1246,6 +1257,10 @@
         },
         {
           "command": "moonageDaydream.openUnpin",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.setGroupEnv",
           "when": "false"
         }
       ],

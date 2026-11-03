@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { Connections } from './connections';
-import { ConnectionInfo, DbObject, ListKind, ObjectKind, address, confirmAutoCommit, drivers, objContext } from './db';
+import { ConnectionInfo, DbObject, GroupEnv, ListKind, ObjectKind, address, confirmAutoCommit, drivers, groupEnv, objContext } from './db';
 import { CONN_COLORS } from './connColor';
 import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './mssqlTree';
 import { folderContext, objectTemplates } from './objTemplates';
@@ -31,6 +31,11 @@ const FOLDERS: { objKind: ListKind; label: string; icon: string }[] = [
 const ICONS: Record<ObjectKind, string> = { table: 'table', view: 'eye', procedure: 'symbol-method', function: 'symbol-function', trigger: 'zap' };
 const icon = (k: ObjectKind) => ICONS[k];
 const isMs = (c: ConnectionInfo) => c.type === 'mssql';
+/** ikon + warna group per lingkungan (codicon, ikut tema) */
+const ENV_ICON: Record<GroupEnv, [string, string]> = {
+  production: ['flame', 'charts.red'], uat: ['beaker', 'charts.yellow'], development: ['tools', 'charts.blue'], local: ['home', 'charts.green'],
+};
+const groupIcon = (env?: GroupEnv) => (env ? new vscode.ThemeIcon(ENV_ICON[env][0], new vscode.ThemeColor(ENV_ICON[env][1])) : new vscode.ThemeIcon('folder-library'));
 /** bagian id group / koneksi per sesi VS Code: status buka / tutup tidak diingat antar sesi, jadi selalu mulai tertutup */
 const SESSION = Date.now().toString(36);
 
@@ -91,7 +96,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         const count = this.conns.list().filter((c) => c.group === n.group).length;
         return Object.assign(new vscode.TreeItem(n.group, C), {
           id: `group:${n.group}#${SESSION}`, description: `- ${count} connection${count === 1 ? '' : 's'}${this.conns.groupSettings()[n.group]?.confirmAutoCommit === false ? ' · no commit confirm' : ''}`,
-          iconPath: new vscode.ThemeIcon('folder-library'), contextValue: 'group',
+          iconPath: groupIcon(groupEnv(n.group, this.conns.groupSettings())), contextValue: 'group',
         });
       }
       case 'conn': {
