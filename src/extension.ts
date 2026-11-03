@@ -33,6 +33,7 @@ import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 import { findObject } from './findObject';
 import { syntaxIssues } from './sqlSyntax';
+import { connStateChange } from './treeFilter';
 import { clearCache, dirSize, pruneMeta, refreshMeta, removeMeta, updateSequential } from './metaCache';
 import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
@@ -1463,11 +1464,15 @@ let connTimer: NodeJS.Timeout | undefined;
 function refreshConnState(delay = 1500) {
   if (connTimer) clearTimeout(connTimer);
   connTimer = setTimeout(() => {
-    const now = conns.list().filter(isConnected).map((c) => c.name).join('\n');
-    if (now !== connSnapshot) {
-      connSnapshot = now;
-      explorer.refresh();
-    }
+    const now = conns.list().filter(isConnected).map((c) => c.name);
+    const before = connSnapshot;
+    connSnapshot = now.join('\n');
+    if (before === connSnapshot) return;
+    const change = connStateChange(before ? before.split('\n') : [], now);
+    // baru terhubung: hanya baris koneksi itu (koneksi lain yang masih connecting tidak ditunggu);
+    // terputus / snapshot direset (Disconnect): seluruh tree, karena id koneksi berganti supaya node tertutup
+    if (before === undefined || change.disconnected.length) explorer.refresh();
+    else explorer.refreshConns(change.connected);
   }, delay);
 }
 function touchConn(name: string) {

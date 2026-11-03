@@ -66,6 +66,24 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
     this.changed.fire(node);
   }
 
+  /** node koneksi yang terakhir diberikan ke tree (per nama): untuk refresh satu baris saja */
+  private connNodes = new Map<string, Node>();
+  private remember(nodes: Node[]): Node[] {
+    for (const x of nodes) if (x.kind === 'conn') this.connNodes.set(x.c.name, x);
+    return nodes;
+  }
+
+  /**
+   * gambar ulang hanya baris koneksi ini (label / ikon connected). Refresh seluruh tree membuat VS Code menunggu semua node
+   * yang sedang memuat, jadi koneksi yang lambat (mis. 60 detik) membuat koneksi lain ikut tidak merespons.
+   */
+  refreshConns(names: string[]): void {
+    for (const name of names) {
+      const n = this.connNodes.get(name);
+      if (n) this.changed.fire(n);
+    }
+  }
+
   /** induk node: TreeView.reveal (Find Object menyorot objek di tree) */
   getParent(n: Node): Node | undefined {
     return treeParent(n);
@@ -176,8 +194,8 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
 
   async getChildren(n?: Node): Promise<Node[]> {
     // level atas: folder group (urut nama), lalu koneksi tanpa group
-    if (!n) return [...this.conns.groups().map((group): Node => ({ kind: 'group', group })), ...this.conns.list().filter((c) => !c.group).map((c): Node => ({ kind: 'conn', c }))];
-    if (n.kind === 'group') return this.conns.list().filter((c) => c.group === n.group).map((c) => ({ kind: 'conn', c }));
+    if (!n) return this.remember([...this.conns.groups().map((group): Node => ({ kind: 'group', group })), ...this.conns.list().filter((c) => !c.group).map((c): Node => ({ kind: 'conn', c }))]);
+    if (n.kind === 'group') return this.remember(this.conns.list().filter((c) => c.group === n.group).map((c) => ({ kind: 'conn', c })));
     if (n.kind === 'col' || n.kind === 'msg' || n.kind === 'consulDash') return [];
     const d = drivers[n.c.type];
     try {
