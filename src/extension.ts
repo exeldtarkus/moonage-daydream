@@ -8,7 +8,7 @@ import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
-import { SqlFiles, SqlNode, SqlTreeNode, isSqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
+import { OpenSql, SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
 import { SqlCompletion } from './completion';
 import { driverLog } from './log';
 import { ConnBanner } from './connBanner';
@@ -52,9 +52,10 @@ export const running = new Map<string, RunningQuery>();
 export let runningView: RunningView;
 export let history: History;
 export let sqlFiles: SqlFiles;
+let openSql: OpenSql | undefined;
 export let banner: ConnBanner;
 let connDecorations: ConnDecorations;
-let sqlFilesView: vscode.TreeView<SqlTreeNode>;
+let sqlFilesView: vscode.TreeView<SqlNode>;
 export let completion: SqlCompletion;
 /** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
 export let ownFormatter = false;
@@ -142,13 +143,15 @@ export function activate(ctx: vscode.ExtensionContext) {
     runningView,
     vscode.window.registerTreeDataProvider('moonageDaydream.running', runningView),
     vscode.window.registerTreeDataProvider('moonageDaydream.history', history),
+    vscode.window.registerTreeDataProvider('moonageDaydream.openSql', (openSql = new OpenSql(conns))),
+    // view "Open": tab dibuka / ditutup / dipindah, language tab untitled berubah, judul tab untitled ikut isi (baris pertama)
+    vscode.window.tabGroups.onDidChangeTabs(() => openSql?.redraw()),
+    vscode.workspace.onDidOpenTextDocument(() => openSql?.redraw()),
+    vscode.workspace.onDidChangeTextDocument((e) => e.document.isUntitled && e.document.languageId === 'sql' && openSql?.redraw()),
     (sqlFilesView = vscode.window.createTreeView('moonageDaydream.sqlFiles', { treeDataProvider: sqlFiles, dragAndDropController: sqlFilesDnd(sqlFiles, conns, log), canSelectMany: true })),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesFlat', () => sqlFiles.setFlat(true)),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesTree', () => sqlFiles.setFlat(false)),
     vscode.commands.registerCommand('moonageDaydream.refreshSqlFiles', () => sqlFiles.refresh()),
-    // grup "Unsaved" di SQL Files: tab SQL untitled dibuka / ditutup / diganti isinya (judul = baris pertama)
-    ...[vscode.workspace.onDidOpenTextDocument, vscode.workspace.onDidCloseTextDocument].map((ev) => ev((d) => d.isUntitled && sqlFiles.redraw())),
-    vscode.workspace.onDidChangeTextDocument((e) => e.document.isUntitled && e.document.languageId === 'sql' && sqlFiles.redraw()),
     vscode.commands.registerCommand('moonageDaydream.newSqlFile', async (n?: SqlNode, name?: string) => {
       try {
         return await newSqlFile(sqlFiles, n, name);
@@ -166,9 +169,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       ['copySqlFileRelativePath', 'Copy relative path', (n: SqlNode) => vscode.env.clipboard.writeText(vscode.workspace.asRelativePath(nodeUri(n)))],
       ['openSqlFileToSide', 'Open to the side', (n: SqlNode) => vscode.window.showTextDocument(nodeUri(n), { viewColumn: vscode.ViewColumn.Beside })],
       ['revealSqlFile', 'Reveal in Explorer', (n: SqlNode) => vscode.commands.executeCommand('revealInExplorer', nodeUri(n))],
-    ] as [string, string, (n: SqlNode) => Thenable<unknown>][]).map(([id, what, f]) => vscode.commands.registerCommand(`moonageDaydream.${id}`, async (n?: SqlTreeNode) => {
+    ] as [string, string, (n: SqlNode) => Thenable<unknown>][]).map(([id, what, f]) => vscode.commands.registerCommand(`moonageDaydream.${id}`, async (n?: SqlNode) => {
       const node = n ?? sqlFilesView.selection[0];
-      if (!isSqlNode(node)) return; // grup / tab Unsaved: bukan file
+      if (!node) return;
       try {
         return await f(node);
       } catch (e) {
@@ -489,6 +492,7 @@ function updateFileStatus() {
   lensChanged.fire();
   banner?.update(fileConn); // "you are using connection …" + warna koneksi di editor
   sqlFiles?.redraw(); // deskripsi koneksi / database per file di SQL Files
+  openSql?.redraw();
   const uri = sqlUri();
   const c = fileConn(uri);
   const tx = uri && txs.get(uri.toString());

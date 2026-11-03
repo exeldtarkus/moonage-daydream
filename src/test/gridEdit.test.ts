@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { changeStatements, reusableSelectTop, untitledSqlDocs } from '../sqlContext';
+import { changeStatements, openSqlItems, reusableSelectTop } from '../sqlContext';
 import { render } from '../resultsHtml';
 import { mongoChanges, mongoFindCollection } from '../mongo';
 
@@ -170,10 +170,25 @@ test('select top (left-click a table): one preview tab is reused unless it was c
   assert.equal(reusableSelectTop({ doc: doc(sql + '\nWHERE id = 1'), sql }), false, 'edited by the user: keep it');
 });
 
-test('sql files: unsaved (untitled) SQL tabs are listed with a one-line label, saved / other languages / closed are not', () => {
-  const d = (path: string, text: string, o: { isUntitled?: boolean; languageId?: string; isClosed?: boolean } = {}) =>
-    ({ uri: { path }, isUntitled: o.isUntitled ?? true, languageId: o.languageId ?? 'sql', isClosed: o.isClosed ?? false, getText: () => text });
-  const docs = [d('Untitled-1', 'SELECT *\n  FROM `shop`.`a` LIMIT 100;'), d('Untitled-2', '  \n'), d('/w/a.sql', 'x', { isUntitled: false }),
-    d('Untitled-3', 'x', { languageId: 'plaintext' }), d('Untitled-4', 'x', { isClosed: true })];
-  assert.deepEqual(untitledSqlDocs(docs).map((x) => [x.label, x.doc.uri.path]), [['SELECT * FROM `shop`.`a` LIMIT 100;', 'Untitled-1'], ['Untitled-2', 'Untitled-2']]);
+test('open sql: every open SQL tab once (saved .sql files and unsaved SQL tabs), in tab order', () => {
+  const tabs = [
+    { uri: 'untitled:Untitled-1', path: 'Untitled-1', untitled: true },
+    { uri: 'file:///w/big/a.sql', path: '/w/big/a.sql', untitled: false },
+    { uri: 'file:///w/readme.md', path: '/w/readme.md', untitled: false },
+    { uri: 'untitled:Untitled-2', path: 'Untitled-2', untitled: true },
+    { uri: 'untitled:Untitled-3', path: 'Untitled-3', untitled: true },
+    { uri: 'file:///w/big/a.sql', path: '/w/big/a.sql', untitled: false },
+    { uri: 'file:///w/B.SQL', path: '/w/B.SQL', untitled: false },
+  ];
+  const docs: Record<string, { languageId: string; getText(): string }> = {
+    'untitled:Untitled-1': { languageId: 'sql', getText: () => 'SELECT *\n FROM a;' },
+    'untitled:Untitled-2': { languageId: 'plaintext', getText: () => 'x' },
+    'untitled:Untitled-3': { languageId: 'sql', getText: () => '' },
+  };
+  assert.deepEqual(openSqlItems(tabs, (u: string) => docs[u]), [
+    { uri: 'untitled:Untitled-1', label: 'SELECT * FROM a;', untitled: true },
+    { uri: 'file:///w/big/a.sql', label: 'a.sql', untitled: false },
+    { uri: 'untitled:Untitled-3', label: 'Untitled-3', untitled: true },
+    { uri: 'file:///w/B.SQL', label: 'B.SQL', untitled: false },
+  ]);
 });

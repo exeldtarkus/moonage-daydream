@@ -440,7 +440,20 @@ export function reusableSelectTop(prev: { doc: { isClosed: boolean; getText(): s
   return !!prev && !prev.doc.isClosed && prev.doc.getText() === prev.sql;
 }
 
-/** tab SQL yang belum disimpan (untitled, masih terbuka) untuk grup "Unsaved" di SQL Files; label = baris ringkas isinya */
-export function untitledSqlDocs<D extends { uri: { path: string }; isUntitled: boolean; languageId: string; isClosed: boolean; getText(): string }>(docs: readonly D[]): { doc: D; label: string }[] {
-  return docs.filter((d) => d.isUntitled && d.languageId === 'sql' && !d.isClosed).map((doc) => ({ doc, label: preview(doc.getText()) || doc.uri.path }));
+/**
+ * view "Open": tab SQL yang terbuka, sekali per dokumen, urut tab. File = berakhiran .sql (dokumennya bisa belum dimuat setelah
+ * reload); untitled = hanya bila dokumennya ber-language sql, label = baris ringkas isinya.
+ */
+export function openSqlItems(tabs: { uri: string; path: string; untitled: boolean }[], doc: (uri: string) => { languageId: string; getText(): string } | undefined):
+  { uri: string; label: string; untitled: boolean }[] {
+  const seen = new Set<string>();
+  const out: { uri: string; label: string; untitled: boolean }[] = [];
+  for (const t of tabs) {
+    if (seen.has(t.uri)) continue;
+    seen.add(t.uri);
+    const d = doc(t.uri);
+    if (t.untitled ? d?.languageId !== 'sql' : !/\.sql$/i.test(t.path) && d?.languageId !== 'sql') continue;
+    out.push({ uri: t.uri, label: t.untitled ? preview(d!.getText()) || t.path : t.path.slice(t.path.lastIndexOf('/') + 1), untitled: t.untitled });
+  }
+  return out;
 }

@@ -31,6 +31,7 @@
     "onLanguage:sql",
     "onUri",
     "onView:moonageDaydream.explorer",
+    "onView:moonageDaydream.openSql",
     "onView:moonageDaydream.sqlFiles"
   ],
   "main": "./out/extension.js",
@@ -1169,6 +1170,10 @@
         {
           "id": "moonageDaydream.explorer",
           "name": "Connections"
+        },
+        {
+          "id": "moonageDaydream.openSql",
+          "name": "Open"
         },
         {
           "id": "moonageDaydream.sqlFiles",
