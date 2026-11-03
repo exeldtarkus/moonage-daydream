@@ -17,6 +17,9 @@ export function cacheLimits(maxRows?: number, memMB?: number): { maxRows: number
   return { maxRows: pick(maxRows, MAX_CACHED_ROWS), memBytes: pick(memMB, MAX_CACHE_MB) * 1024 * 1024 };
 }
 
+/** RAM untuk chunk: batas dikurangi ruang daftar nomor baris hasil search + sort (Uint32Array, 2 x 4 byte x maxRows) */
+export const chunkBudget = (l: { maxRows: number; memBytes: number }) => Math.max(0, l.memBytes - 8 * l.maxRows);
+
 /** folder .moonage-cache di base + .gitignore berisi * (mengabaikan dirinya sendiri, .gitignore project tidak diubah) */
 export async function cacheRoot(base: string): Promise<string> {
   const root = join(base, CACHE_DIR);
@@ -179,9 +182,13 @@ export function rowMatches(row: Row, keys: SearchKey[], cols?: number[]): boolea
   });
 }
 
-/** Search Output atas seluruh cache: nomor baris yang cocok; progres dalam persen per chunk, signal = Cancel */
+/** filter corong per kolom (sama dengan grid): mengandung, tidak peka huruf besar / kecil; "null" = sel NULL */
+export const filterMatch = (v: string | null, f: string) => (f.toLowerCase() === 'null' ? v === null : v !== null && v.toLowerCase().includes(f.toLowerCase()));
+
+/** Search Output (+ filter corong per kolom, AND) atas seluruh cache: nomor baris yang cocok; progres persen per chunk, signal = Cancel */
 export async function searchCache(cache: ResultCache, keys: SearchKey[],
-  o: { cols?: number[]; signal?: AbortSignal; onProgress?: (percent: number) => void } = {}): Promise<Uint32Array> {
+  o: { cols?: number[]; filters?: Record<number, string>; signal?: AbortSignal; onProgress?: (percent: number) => void } = {}): Promise<Uint32Array> {
+  const filters = Object.entries(o.filters ?? {}).map(([c, f]) => [+c, f] as const);
   let out = new Uint32Array(1024);
   let n = 0;
   const total = cache.chunkCount;
@@ -190,7 +197,7 @@ export async function searchCache(cache: ResultCache, keys: SearchKey[],
     const rows = await cache.chunk(ci);
     const base = ci * cache.chunkRows;
     for (let r = 0; r < rows.length; r++) {
-      if (!rowMatches(rows[r], keys, o.cols)) continue;
+      if (!rowMatches(rows[r], keys, o.cols) || !filters.every(([c, f]) => filterMatch(rows[r][c], f))) continue;
       if (n === out.length) { const g = new Uint32Array(out.length * 2); g.set(out); out = g; }
       out[n++] = base + r;
     }

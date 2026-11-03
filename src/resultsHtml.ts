@@ -1,4 +1,6 @@
-import { GRID_MAX_ROWS, PAGE_ROWS, QueryResult } from './db';
+import { GRID_MAX_ROWS, PAGE_ROWS, QueryResult, ResultSet } from './db';
+import type { GridCache } from './cacheView';
+import { MAX_CACHED_ROWS } from './resultCache';
 import { preview } from './sqlContext';
 import { FORMATS } from './exporter';
 import type { PlanStatement } from './plan';
@@ -78,26 +80,59 @@ function whereBar(where: string | undefined, part?: number): string {
     + `${where ? '<button type="button" class="clear" title="Clear filter">×</button>' : ''}</form>`;
 }
 
+/** kolom angka (rata kanan, sort angka): dari tipe driver, tanpa tipe = tebak dari nilai baris pertama */
+export const isNumCol = (s: ResultSet, c: number) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number');
+
+const LOAD_ALL_READONLY = 'rows loaded with Load all are read-only (run the query again without Load all to edit)';
+
+/** kotak Search Output gaya Kibana "is one of": key jadi chip (digambar script grid), beberapa chip = OR, cocok di kolom mana pun */
+const SEARCH_OUTPUT = '<div class="sout" role="search"><label>Search Output</label><div class="chips"><input class="skey" spellcheck="false" placeholder="type a value, Enter to add…  (&quot;exact&quot;, null)" aria-label="Search Output: type a value, Enter to add"></div>'
+  + '<button class="sclear" title="Remove all search keys" hidden>Clear</button><span class="sbusy" hidden></span><span class="smatch" aria-live="polite"></span></div>';
+
+/** navigasi halaman (menggulir grid ke halaman itu); jumlah halaman diisi script grid */
+const PAGER = '<span class="pager"><button class="pprev" title="Previous page" aria-label="Previous page">‹</button>Page <input class="pnum" type="number" min="1" value="1" aria-label="Page number"> of <b class="pcount">1</b>'
+  + '<button class="pnext" title="Next page" aria-label="Next page">›</button><select class="psize" aria-label="Rows per page"><option>100</option><option selected>500</option><option>1000</option></select></span>';
+
+const mb = (b: number) => (b / 1024 / 1024).toFixed(1);
+/** judul result set hasil Load all: jumlah baris cache + ukuran RAM / disk + waktu snapshot, atau progres / cleared */
+function cacheTitle(gc: GridCache): string {
+  if (gc.cleared) return 'Result cache cleared, run the query again';
+  const c = gc.view.cache;
+  if (gc.loading) return `Loading ${gc.loading.rows.toLocaleString('en-US')} rows…<button class="cancelload" title="Stop loading; the rows loaded so far stay">Cancel</button>`;
+  const n = c.length.toLocaleString('en-US');
+  return `${c.partial ? `Partial: ${n} rows cached (limit reached)` : `${n} rows cached`} · RAM ${mb(c.memBytes)} MB · disk ${mb(c.diskBytes)} MB · snapshot ${new Date(gc.at).toLocaleTimeString()}`;
+}
+/** state awal grid mode cache (search / filter / sort tersimpan di host, tidak hilang saat panel digambar ulang) */
+const cacheState = (gc: GridCache) => ({
+  count: gc.cleared ? 0 : gc.view.count, total: gc.cleared ? 0 : gc.view.cache.length, keys: gc.view.keys, filters: gc.view.filters,
+  sort: gc.view.sort, partial: gc.view.cache.partial, loading: !!gc.loading,
+});
+
 /** canMore: statement asal diketahui (satu SELECT) -> tombol Load more di result set pertama */
 /** editBlock: alasan result set tidak bisa diedit (dicek extension setelah hasil tampil) -> tombol edit nonaktif */
 function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols: string[] = []): string {
   const gen = new Set(genCols.map((g) => g.toLowerCase()));
   const sets = r.resultSets.map((s, i) => {
+    const gc = s.cache;
+    const block = gc ? LOAD_ALL_READONLY : editBlock;
     // kolom angka rata kanan; tanpa info tipe: tebak dari nilai baris pertama
-    const num = s.columns.map((_, c) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number'));
-    const more = s.limited ? ` · auto limit ${s.limited}` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
+    const num = s.columns.map((_, c) => isNumCol(s, c));
+    const more = gc ? '' : s.limited ? ` · auto limit ${s.limited}` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
     const head = s.columns.map((c, k) => {
       const t = s.types?.[k] ?? '';
       return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${canMore && i === 0 && gen.has(c.toLowerCase()) ? ' data-gen="1"' : ''}${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
-        + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
+        + `<span class="hb"><button class="fbtn" data-c="${k}" title="${gc ? 'Filter all cached rows' : 'Filter loaded rows'}">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
-    return `<div class="blk"><h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
-<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 && !editBlock ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody></tbody></table>
-<script type="application/json" class="rows">${pageJson(s.rows.map((row) => row.map(cellText)))}</script></div>
-<div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0
-      ? editBlock ? `<span class="editbar off" title="Editing is off: ${esc(editBlock)}"><button class="addrow" disabled>Add row</button><button class="delrow" disabled>Delete rows</button></span>`
-        : '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS
-      ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div></div>`;
+    const truncated = !gc && (!!s.limited || s.total > s.rows.length);
+    const title = gc ? cacheTitle(gc) : `${s.total} row(s)${more}`;
+    return `<div class="blk"><h3>Result ${i + 1} <span class="rtitle">${title}</span></h3>${SEARCH_OUTPUT}
+<div class="grid"><table class="rs" data-set="${i}"${gc ? ` data-cache="${esc(JSON.stringify(cacheState(gc)))}"` : ''}${canMore && i === 0 && !block ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody></tbody></table>
+<script type="application/json" class="rows">${pageJson(gc ? [] : s.rows.map((row) => row.map(cellText)))}</script></div>
+<div class="foot"><span>Rows: <b class="count" data-total="${gc ? gc.view.cache.length : s.rows.length}">${gc ? gc.view.count : s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${PAGER}${canMore && i === 0
+      ? block ? `<span class="editbar off" title="Editing is off: ${esc(block)}"><button class="addrow" disabled>Add row</button><button class="delrow" disabled>Delete rows</button></span>`
+        : '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && truncated && s.rows.length < GRID_MAX_ROWS
+      ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${PAGE_ROWS})</button>` : ''}${canMore && i === 0 && truncated
+      ? `<button class="allbtn" title="Stream every row (up to ${MAX_CACHED_ROWS.toLocaleString('en-US')}) into a local result cache; search, sort and export then work on all of them">Load all</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div></div>`;
   }).join('');
   // jumlah baris per statement non-SELECT (urut), juga di samping result set SELECT: berjudul statement asalnya bila pasti
   const named = r.rowsAffected.flatMap((n, i) => {

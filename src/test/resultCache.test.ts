@@ -183,3 +183,25 @@ test('clearResultCaches removes every cache folder and returns the size; pruneSt
     assert.equal(existsSync(ra), false);
   } finally { rmSync(a, { recursive: true, force: true }); rmSync(b, { recursive: true, force: true }); }
 });
+
+test('loadAll with the real SQLite driver stream: limit stops at maxRows (partial), search runs over the cached rows', async () => {
+  const { drivers } = await import('../db');
+  const { writeFileSync } = await import('fs');
+  const root = tmp();
+  try {
+    const file = join(root, 'lab.db');
+    writeFileSync(file, '');
+    const c = { name: 'lite', type: 'sqlite' as const, host: '', port: 0, user: '', database: '', trustServerCertificate: false, file };
+    const values = Array.from({ length: 30 }, (_, i) => `(${i + 1}, '${i % 3 ? 'joni' : 'exel'}', ${i % 5 ? `'kota${i}'` : 'NULL'})`).join(', ');
+    await drivers.sqlite.run(c, '', `CREATE TABLE t (id INTEGER, nama TEXT, kota TEXT); INSERT INTO t VALUES ${values};`);
+    const cache = new ResultCache(root, { chunkRows: 10, maxRows: 25, memBytes: 1 });
+    await loadAll(cache, (signal, sink) => drivers.sqlite.stream(c, '', 'SELECT id, nama, kota FROM t ORDER BY id', signal, sink));
+    assert.deepEqual(cache.cols, ['id', 'nama', 'kota']);
+    assert.equal(cache.length, 25);
+    assert.equal(cache.partial, true);
+    assert.deepEqual(await cache.page(0, 2), [['1', 'exel', null], ['2', 'joni', 'kota1']]);
+    assert.equal((await searchCache(cache, parseKeys(['exel']))).length, 9); // id 1,4,...,25
+    assert.deepEqual([...await searchCache(cache, parseKeys(['null']))], [0, 5, 10, 15, 20]);
+    await cache.dispose();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

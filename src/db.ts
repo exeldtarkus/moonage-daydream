@@ -83,6 +83,8 @@ export interface ResultSet {
   total: number;
   /** auto limit: query dihentikan di server setelah sekian baris */
   limited?: number;
+  /** Load all: baris ada di result cache extension host (rows tetap halaman awal) */
+  cache?: import('./cacheView').GridCache;
 }
 
 export interface QueryResult {

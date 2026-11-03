@@ -36,7 +36,8 @@ import { findObject } from './findObject';
 import { syntaxIssues } from './sqlSyntax';
 import { connStateChange } from './treeFilter';
 import { clearCache, dirSize, pruneMeta, refreshMeta, removeMeta, updateSequential } from './metaCache';
-import { CACHE_DIR, clearResultCaches, pruneStale } from './resultCache';
+import { pruneStale } from './resultCache';
+import { cachePage, cacheViewMessage, cancelLoad, cancelView, clearAllResultCaches, disposeCaches, gcCaches, resultRoots, setResultFallback, startLoadAll } from './loadAllGrid';
 import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
 import { columnsEditor, newTable } from './tablePanels';
@@ -89,7 +90,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   cacheDir = vscode.Uri.joinPath(ctx.globalStorageUri, 'moonage-cache').fsPath;
   metaDir = path.join(cacheDir, 'metadata');
   pruneMeta(metaDir, conns.list().map((c) => c.name)).catch((e: unknown) => log.error(`pruneMeta - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
-  resultFallback = vscode.Uri.joinPath(ctx.globalStorageUri, 'result-cache').fsPath;
+  setResultFallback(vscode.Uri.joinPath(ctx.globalStorageUri, 'result-cache').fsPath);
   for (const r of resultRoots()) pruneStale(r).catch((e: unknown) => log.error(`pruneStale - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
   ctx.subscriptions.push(conns.used.event(touchConn), idleWatcher());
   connDecorations = new ConnDecorations(conns);
@@ -102,7 +103,13 @@ export function activate(ctx: vscode.ExtensionContext) {
   updateStatus();
   status.show();
   results = new Results(ctx);
-  results.onMessage = (m, o) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part)
+  results.onChange = gcCaches;
+  results.onMessage = (m, o, post) => (m.type === 'where' ? applyWhere(m.where ?? '', m.part)
+    : m.type === 'loadAll' ? startLoadAll(m, o, post)
+    : m.type === 'cancelLoad' ? cancelLoad(m, o)
+    : m.type === 'cpage' ? cachePage(m, o, post)
+    : m.type === 'cview' ? cacheViewMessage(m, o, post)
+    : m.type === 'cancelView' ? cancelView(m, o)
     : m.type === 'export' ? exportResult(m, undefined, o)
     : m.type === 'copy' ? exportResult(m, 'clipboard', o)
     : m.type === 'planXml' ? openPlanXml(o)
@@ -451,6 +458,7 @@ function loadedOnce<T>(view: string, p: vscode.TreeDataProvider<T>): vscode.Tree
 
 export async function deactivate() {
   for (const q of running.values()) q.ac.abort();
+  await disposeCaches().catch((e: unknown) => log?.error(`disposeCaches - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
   // transaksi manual yang masih terbuka tidak pernah di-commit diam-diam: rollback
   for (const [key, tx] of txs) await closeTx(key, tx, 'rollback');
   for (const c of conns?.list() ?? []) await closePool(c);
@@ -1455,13 +1463,15 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
   if (toClipboard && format === 'xlsx') return void vscode.window.showWarningMessage('Excel cannot be copied to the clipboard; use Save');
   const cols = m.cols?.length ? m.cols : rs.columns.map((_, i) => i);
   const pick = (row: unknown[]) => cols.map((i) => row[i]);
-  const fromServer = m.scope !== 'sel' && !!src && m.set === 0 && (rs.total > rs.rows.length || !!rs.limited);
+  // Load all: baris dari result cache (semua / hasil filter + sort / seleksi); 'server' = query ulang tanpa batas cache
+  const cached = rs.cache && !rs.cache.cleared && m.scope !== 'server' ? rs.cache.view : undefined;
+  const fromServer = !cached && m.scope !== 'sel' && !!src && m.set === 0 && (m.scope === 'server' || rs.total > rs.rows.length || !!rs.limited);
   const base = src ? vscode.Uri.parse(src.uri) : undefined;
   const dir = (base && vscode.workspace.getWorkspaceFolder(base)?.uri) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
   const uri = toClipboard ? undefined : target ?? await vscode.window.showSaveDialog({
     defaultUri: dir && vscode.Uri.joinPath(dir, `result.${FORMATS[format].ext}`),
     filters: { [FORMATS[format].label]: [FORMATS[format].ext] },
-    title: `Export ${m.scope === 'sel' ? `${m.rows?.length ?? 0} selected row(s)` : 'all data'} as ${FORMATS[format].label}`,
+    title: `Export ${m.scope === 'sel' ? `${m.rows?.length ?? 0} selected row(s)` : m.scope === 'view' ? 'filtered rows' : m.scope === 'cache' ? 'all cached rows' : 'all data'} as ${FORMATS[format].label}`,
   });
   if (!uri && !toClipboard) return;
   const quiet = target !== undefined && !toClipboard; // test: tanpa dialog / notifikasi
@@ -1473,7 +1483,16 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
       const sink: Sink = mem ?? await openSink(format, uri!.fsPath, names);
       let n = 0;
       try {
-        if (m.scope === 'sel') {
+        if (cached) {
+          // shortcut: nilai cache berupa teks sel grid, jadi angka ikut ditulis sebagai teks di JSON / Excel; simpan tipe asli bila dibutuhkan
+          const rows = m.scope === 'sel' ? await cached.rowsAt(m.rows ?? []) : cached.rows(m.scope === 'view' ? 'view' : 'cache');
+          for await (const row of rows) {
+            if (token.isCancellationRequested) throw new Error('Export cancelled');
+            if (++n % 10000 === 0) progress.report({ message: `${n.toLocaleString()} rows` });
+            if (toClipboard && n > CLIPBOARD_MAX_ROWS) throw new Error(`More than ${CLIPBOARD_MAX_ROWS.toLocaleString()} rows: too many for the clipboard, use Save`);
+            await sink.row(pick(row));
+          }
+        } else if (m.scope === 'sel') {
           for (const i of m.rows ?? []) if (rs.rows[i]) {
             n++;
             await sink.row(pick(rs.rows[i]));
@@ -1508,17 +1527,18 @@ export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clip
         if (quiet) throw e;
         return undefined;
       }
-      const partial = m.scope !== 'sel' && !fromServer && rs.total > rs.rows.length;
+      const partial = !cached && m.scope !== 'sel' && !fromServer && rs.total > rs.rows.length;
+      const capped = cached?.cache.partial && m.scope !== 'sel' ? ` (from the first ${cached.cache.length.toLocaleString()} rows: result cache limit reached)` : '';
       if (mem) {
         await vscode.env.clipboard.writeText(mem.text());
         log.info(`copy ${format} ${n} rows to clipboard${partial ? ' (loaded rows only)' : ''}`);
-        vscode.window.setStatusBarMessage(`$(copy) Copied ${n.toLocaleString()} row(s) as ${FORMATS[format].label}${partial ? ' (loaded rows only)' : ''}`, 4000);
+        vscode.window.setStatusBarMessage(`$(copy) Copied ${n.toLocaleString()} row(s) as ${FORMATS[format].label}${partial ? ' (loaded rows only)' : ''}${capped}`, 4000);
         return n;
       }
       log.info(`export ${format} ${n} rows -> ${uri!.fsPath}${partial ? ' (loaded rows only)' : ''}`);
       if (!quiet) {
         void vscode.window.showInformationMessage(
-          `Exported ${n.toLocaleString()} row(s) to ${uri!.fsPath}${partial ? ` (loaded rows only: ${rs.total} rows in result)` : ''}`, 'Open',
+          `Exported ${n.toLocaleString()} row(s) to ${uri!.fsPath}${partial ? ` (loaded rows only: ${rs.total} rows in result)` : ''}${capped}`, 'Open',
         ).then((a) => a && vscode.commands.executeCommand(format === 'xlsx' ? 'revealFileInOS' : 'vscode.open', uri!));
       }
       return n;
@@ -1613,11 +1633,6 @@ async function clearCacheCommand(confirmed = false): Promise<boolean> {
     return false;
   }
 }
-/** fallback result cache bila tidak ada workspace folder (globalStorage) */
-let resultFallback = '';
-/** folder result cache "Load all": .moonage-cache di tiap workspace folder + fallback globalStorage */
-const resultRoots = () => [...(vscode.workspace.workspaceFolders ?? []).map((f) => path.join(f.uri.fsPath, CACHE_DIR)), resultFallback];
-
 /** Command Palette "Clear Result Cache": hapus semua cache hasil Load all (semua workspace folder + fallback) */
 async function clearResultCacheCommand(confirmed = false): Promise<boolean> {
   try {
@@ -1631,7 +1646,7 @@ async function clearResultCacheCommand(confirmed = false): Promise<boolean> {
       }, 'Clear Result Cache');
       if (ok !== 'Clear Result Cache') return false;
     }
-    await clearResultCaches(roots);
+    await clearAllResultCaches(); // hasil yang tampil memakai cache ditandai cleared
     log.info(`clear result cache: ${mb} MB removed (${roots.join(', ')})`);
     void vscode.window.showInformationMessage(`Moonage Daydream result cache cleared (${mb} MB).`);
     return true;

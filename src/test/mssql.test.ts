@@ -33,8 +33,8 @@ test('render shows result sets, messages and errors', () => {
     resultSets: [{ columns: ['id', 'a<b'], rows: [[1, null]], total: 1 }, { columns: ['x'], rows: [], total: 0 }, { columns: ['y'], rows: [[1], [2]], total: 5000 }],
     rowsAffected: [1, 0], messages: ['hello'], durationMs: 7,
   } });
-  assert.ok(html.includes('Result 1 <span>1 row(s)<') && html.includes('Result 2 <span>0 row(s)<'));
-  assert.ok(html.includes('Result 3 <span>5000 row(s) (showing first 2)'));
+  assert.ok(html.includes('Result 1 <span class="rtitle">1 row(s)<') && html.includes('Result 2 <span class="rtitle">0 row(s)<'));
+  assert.ok(html.includes('Result 3 <span class="rtitle">5000 row(s) (showing first 2)'));
   assert.ok(html.includes('<span class="ty"></span>a&lt;b<span class="hb">') && html.includes('hello') && html.includes('Done in 7 ms'));
   assert.ok(html.includes('<script type="application/json" class="rows">[["1",null]]</script>') && html.includes('Rows: <b class="count" data-total="2">5000</b>') && html.includes('</svg><b>7ms</b>'), 'numbers right-aligned, footer');
   const typed = render('csp', 't', { result: { resultSets: [{ columns: ['n', 's'], types: ['int', 'nvarchar'], rows: [], total: 0 }], rowsAffected: [], messages: [], durationMs: 1 } });

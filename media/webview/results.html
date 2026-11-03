@@ -13,7 +13,7 @@
   .pinbtn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
   h3 { font-size: 12px; margin: 12px 0 4px; } h3 span { font-weight: normal; opacity: .7; }
   /* grid gaya DBCode: header tebal + ikon tipe, baris lega selang-seling, angka rata kanan, footer Rows / waktu */
-  .grid { overflow: auto; max-height: 70vh; border: 1px solid var(--vscode-panel-border); border-bottom: 0; }
+  .grid { overflow: auto; max-height: 70vh; border: 1px solid var(--vscode-panel-border); border-bottom: 0; overflow-anchor: none; } /* virtual scroll: browser tidak boleh menggeser scroll saat baris diganti */
   table { border-collapse: separate; border-spacing: 0; white-space: nowrap; min-width: 100%; }
   th, td { padding: 0 14px; height: 30px; text-align: left; border-bottom: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, .15)); }
   th { position: sticky; top: 0; z-index: 1; height: 34px; font-weight: 600; font-family: var(--vscode-font-family);
@@ -119,6 +119,33 @@
   .foot .clock { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
   .foot { display: flex; gap: 16px; padding: 6px 12px; font-family: var(--vscode-font-family); font-size: 12px; opacity: .8;
     border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
+  /* Search Output gaya Kibana "is one of": key = chip (OR), cocok di kolom mana pun */
+  .sout { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-family: var(--vscode-font-family); font-size: 12px; }
+  .sout label { font-size: 11px; font-weight: 600; opacity: .8; white-space: nowrap; }
+  .sout .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 2px 4px; min-height: 22px;
+    background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }
+  .sout .chips:focus-within { outline: 1px solid var(--vscode-focusBorder); }
+  .sout .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: 0; border-radius: 9px; cursor: pointer; font: inherit;
+    color: var(--vscode-badge-foreground, #fff); background: var(--vscode-badge-background, #4d4d4d); }
+  .sout .chip:hover, .sout .chip:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+  .sout .skey { flex: 1; min-width: 140px; padding: 2px 4px; border: 0; outline: 0; font-family: var(--vscode-editor-font-family); font-size: 12px;
+    color: var(--vscode-input-foreground); background: transparent; }
+  .sout .skey:disabled { opacity: .5; }
+  .sout .sclear, .sbusy button, .rtitle .cancelload, .foot .allbtn, .pager button { padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
+    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  .rtitle .cancelload { margin-left: 8px; font-weight: normal; }
+  .foot .allbtn { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
+  .foot .allbtn:disabled { opacity: .5; cursor: progress; }
+  .sout .smatch, .sout .sbusy { white-space: nowrap; opacity: .85; }
+  .sout .sbusy { color: var(--vscode-editorWarning-foreground, #cca700); } .sbusy button { margin-left: 6px; }
+  td.hit { box-shadow: inset 0 -2px var(--vscode-editor-findMatchBorder, #d18616); }
+  tbody tr.ph td { opacity: .4; }
+  .pager { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .pager .pnum { width: 52px; padding: 0 4px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); }
+  .pager select { font: inherit; color: var(--vscode-dropdown-foreground, inherit); background: var(--vscode-dropdown-background, var(--vscode-input-background));
+    border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); }
+  .foot { flex-wrap: wrap; align-items: center; }
   .err { color: var(--vscode-errorForeground); white-space: pre-wrap; }
   .msg { white-space: pre-wrap; opacity: .8; }
   /* pemisah antar hasil: Result n / Statement n (rows affected) / pesan */
