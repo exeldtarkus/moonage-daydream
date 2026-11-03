@@ -133,6 +133,24 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "moonageDaydream.filterNode",
+        "title": "Filter…",
+        "category": "Moonage Daydream",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "moonageDaydream.clearFilters",
+        "title": "Clear All Filters",
+        "category": "Moonage Daydream",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "moonageDaydream.findObject",
+        "title": "Find Object…",
+        "category": "Moonage Daydream",
+        "icon": "$(search)"
+      },
+      {
         "command": "moonageDaydream.selectTop",
         "title": "Select Top 100",
         "category": "Moonage Daydream",
@@ -536,6 +554,16 @@
           "group": "help@1"
         },
         {
+          "command": "moonageDaydream.findObject",
+          "when": "view == moonageDaydream.explorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "moonageDaydream.clearFilters",
+          "when": "view == moonageDaydream.explorer && moonageDaydream.explorerFiltered",
+          "group": "navigation@2"
+        },
+        {
           "command": "moonageDaydream.refreshExplorer",
           "when": "view == moonageDaydream.explorer",
           "group": "navigation@2"
@@ -577,6 +605,26 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "moonageDaydream.filterNode",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.(?!consul)|db|folder\\.|ms\\.)/",
+          "group": "inline@8"
+        },
+        {
+          "command": "moonageDaydream.findObject",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^conn\\.(?!consul)/",
+          "group": "inline@9"
+        },
+        {
+          "command": "moonageDaydream.filterNode",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.(?!consul)|db|folder\\.|ms\\.)/",
+          "group": "0_filter@1"
+        },
+        {
+          "command": "moonageDaydream.findObject",
+          "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.(?!consul)|db)/",
+          "group": "0_filter@2"
+        },
         {
           "command": "moonageDaydream.selectTop",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^(table|view)(\\.def)?(\\.ms)?(\\.trg)?(\\.cols)?$/",
@@ -1068,6 +1116,10 @@
         },
         {
           "command": "moonageDaydream.disconnect",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.filterNode",
           "when": "false"
         }
       ],
