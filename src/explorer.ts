@@ -53,8 +53,8 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
   openConnection?: (c: ConnectionInfo) => Promise<void>;
   /** koneksi baru terbuka dari expand: status digambar ulang segera (ikon titik hijau) */
   onConnected?: (c: ConnectionInfo) => void;
-  /** isi koneksi yang baru dimuat saat connect: dipakai sekali oleh refresh berikutnya (ganti ikon) supaya tidak query ulang */
-  private justLoaded = new Map<string, Node[]>();
+  /** isi koneksi yang dimuat saat connect dari expand: dipakai ulang oleh refresh sesudahnya (ganti label / ikon) supaya tidak query ulang */
+  private justLoaded = new Map<string, { at: number; out: Promise<Node[]> }>();
   /** id koneksi berganti setelah Disconnect -> VS Code menganggapnya item baru (collapsed), anak tidak dimuat ulang (pool tidak dibuka lagi) */
   private generation = new Map<string, number>();
   collapse(name: string) {
@@ -115,7 +115,9 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           description: text.description,
           tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
           // terhubung: titik hijau; selain itu logo jenis database. Warna koneksi lewat ConnDecorations (nama berwarna + ●)
-          iconPath: this.connected(n.c) ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
+          // titik hijau sebagai gambar: codicon ikut diwarnai dekorasi koneksi (mis. merah Production)
+          iconPath: this.connected(n.c) && this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'connected.svg')
+            : this.connected(n.c) ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
             : this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
@@ -191,16 +193,19 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
             : isMs(c) ? MS_SERVER.map((folder): Node => ({ kind: 'mfolder', c, folder }))
             : (await d.databases(c, pw)).map((db): Node => ({ kind: 'db', c, db })));
           const hit = this.justLoaded.get(c.name);
-          this.justLoaded.delete(c.name);
-          if (hit && this.connected(c)) out = hit; // hanya selama masih terhubung (Disconnect = muat ulang + connect lagi)
+          // dipakai ulang 5 detik dan hanya selama masih terhubung (Disconnect = connect lagi)
+          if (hit && Date.now() - hit.at < 5000 && this.connected(c)) out = await hit.out;
           else if (!this.connected(c) && this.openConnection) {
-            // terputus: loading bar di view sampai koneksi terbuka dan isinya termuat, lalu ikon langsung jadi titik hijau
+            // terputus: loading bar di view; urutan: koneksi terbuka -> label "connected" + titik hijau digambar -> isi tampil
             out = await vscode.window.withProgress({ location: { viewId: 'moonageDaydream.explorer' }, title: `Connecting to ${c.name}` }, async () => {
               await this.openConnection!(c);
-              return load();
+              const children = load();
+              this.justLoaded.set(c.name, { at: Date.now(), out: children });
+              children.catch(() => this.justLoaded.delete(c.name)); // gagal: error ditampilkan getChildren, percobaan berikutnya memuat ulang
+              this.changed.fire(n); // gambar ulang node ini sekarang (label + ikon); VS Code meminta isinya lagi = promise yang sama
+              this.onConnected?.(c);
+              return children;
             });
-            this.justLoaded.set(c.name, out);
-            this.onConnected?.(c);
           } else out = await load();
           break;
         }
