@@ -403,12 +403,12 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' || (e.key === 'Enter' && e.target.id === 'f')) menu.hidden = true;
-    // Ctrl/Cmd+C: baris terpilih sebagai TSV tanpa header (paste langsung ke spreadsheet); tidak saat mengetik di input
+    // Ctrl/Cmd+C: baris terpilih dalam format setting grid.copyFormat (default JSON); tidak saat mengetik di input
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !e.target.closest('input, select, textarea') && !String(getSelection())) {
       const t = [...document.querySelectorAll('table.rs')].find((x) => selected(x).length);
       if (!t) return;
       e.preventDefault();
-      send(t, 'copy', 'tsv', 'sel', false);
+      send(t, 'copy', 'shortcut', 'sel', false); // format dari setting moonageDaydream.grid.copyFormat
     }
   });
   document.addEventListener('submit', (e) => {
