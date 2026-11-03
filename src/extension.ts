@@ -4,6 +4,7 @@ import * as path from 'path';
 import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
+import { firstLine } from './runningStatus';
 import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, GroupEnv, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
@@ -1769,6 +1770,17 @@ function startRun(key: string, c: ConnectionInfo, text: string) {
   running.set(key, q);
   lensChanged.fire();
   runningView.refresh();
+  // popup kanan bawah selama query berjalan (Cancel = batalkan), tertutup sendiri saat selesai; query cepat (< 300 ms) tidak memunculkan popup
+  setTimeout(() => {
+    if (running.get(key) !== q || q.cancelling) return;
+    void vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Running query on ${q.db ? `${q.conn} / ${q.db}` : q.conn}`, cancellable: true }, (progress, token) => {
+      token.onCancellationRequested(() => cancel(q));
+      const tick = () => progress.report({ message: `${firstLine(q.sql)} · ${Math.floor((Date.now() - q.start) / 1000)}s` });
+      tick();
+      const timer = setInterval(tick, 1000);
+      return (q.done ?? Promise.resolve()).finally(() => clearInterval(timer));
+    });
+  }, 300);
   const end = () => {
     finish();
     if (running.get(key) === q) running.delete(key);
