@@ -373,23 +373,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.selectTop', async (n?: Node) => {
       if (n?.kind !== 'obj') return;
-      // satu tab preview: klik tabel lain mengganti isi tab yang sama (bila belum diedit user), bukan menumpuk tab baru
-      const sql = drivers[n.c.type].selectTop(n.db, n.obj, 100);
-      let doc: vscode.TextDocument;
-      if (selectTopDoc && reusableSelectTop(selectTopDoc)) {
-        doc = selectTopDoc.doc;
-        if (doc.getText() !== sql) {
-          const edit = new vscode.WorkspaceEdit();
-          edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)), sql);
-          await vscode.workspace.applyEdit(edit);
-        }
-      } else {
-        doc = await vscode.workspace.openTextDocument({ language: 'sql', content: sql });
-      }
-      selectTopDoc = { doc, sql };
-      await conns.bind(doc.uri.toString(), { conn: n.c.name, db: n.db });
-      await vscode.window.showTextDocument(doc);
-      updateFileStatus(); // tab bisa sudah aktif: CodeLens / banner koneksi ikut tabel baru
+      await openPreview(drivers[n.c.type].selectTop(n.db, n.obj, 100), { conn: n.c.name, db: n.db });
       await runQuery();
     }),
     vscode.commands.registerCommand('moonageDaydream.showDefinition', (n?: Node) => objectScript(n, 'show')),
@@ -1039,7 +1023,7 @@ async function newSqliteDatabase(conn: ConnectionInfo) {
   }
 }
 
-/** tab preview Select Top 100 (klik kiri tabel di Explorer) + SQL yang terakhir ditulis ke sana */
+/** tab preview (klik tabel / Query History) + SQL yang terakhir ditulis ke sana */
 let selectTopDoc: { doc: vscode.TextDocument; sql: string } | undefined;
 
 /** form Add Data per tabel (dibuka lagi = tab yang sama di-reveal) */
@@ -1290,11 +1274,33 @@ async function saveConnection(c: ConnectionInfo, password: string, old?: Connect
 
 /** buka SQL dari history di editor baru, terikat ke koneksi + database yang sama */
 async function openHistory(e: HistoryEntry): Promise<boolean> {
-  const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: e.sql });
-  if (conns.get(e.conn)) await conns.bind(doc.uri.toString(), { conn: e.conn, db: e.db || undefined });
-  await vscode.window.showTextDocument(doc);
-  updateFileStatus();
+  // tab preview yang sama dengan klik tabel (tidak dijalankan); koneksi yang sudah dihapus: tab tanpa binding baru
+  await openPreview(e.sql, conns.get(e.conn) ? { conn: e.conn, db: e.db || undefined } : undefined);
   return true;
+}
+
+/**
+ * satu tab preview untuk klik tabel (Select Top) dan klik Query History: klik berikutnya mengganti isi tab yang sama selama
+ * belum diedit user / belum ditutup (reusableSelectTop); tab yang sudah diedit dibiarkan dan tab baru menjadi preview.
+ */
+async function openPreview(sql: string, bind?: { conn: string; db?: string }): Promise<vscode.TextDocument> {
+  let doc: vscode.TextDocument;
+  // tanpa koneksi (history dari koneksi yang sudah dihapus): tab baru, supaya tidak mewarisi koneksi isi sebelumnya
+  if (bind && selectTopDoc && reusableSelectTop(selectTopDoc)) {
+    doc = selectTopDoc.doc;
+    if (doc.getText() !== sql) {
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)), sql);
+      await vscode.workspace.applyEdit(edit);
+    }
+  } else {
+    doc = await vscode.workspace.openTextDocument({ language: 'sql', content: sql });
+  }
+  selectTopDoc = { doc, sql };
+  if (bind) await conns.bind(doc.uri.toString(), bind);
+  await vscode.window.showTextDocument(doc);
+  updateFileStatus(); // tab bisa sudah aktif: CodeLens / banner koneksi ikut isi baru
+  return doc;
 }
 
 /**
