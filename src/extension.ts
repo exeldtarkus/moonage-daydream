@@ -23,7 +23,7 @@ import { newObjectTemplates } from './msTemplates';
 import { objectTemplates } from './objTemplates';
 import { mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
-import { addWhere, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
 import { parsePlan } from './plan';
 import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
 import { ConsulClient, consulTarget } from './consul';
@@ -292,15 +292,23 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.selectTop', async (n?: Node) => {
       if (n?.kind !== 'obj') return;
-      // klik berulang pada tabel yang sama memakai kembali tab yang masih terbuka (tidak menumpuk dokumen / query)
-      const key = `${n.c.name}\u0000${n.db}\u0000${n.obj.schema}.${n.obj.name}`;
-      let doc = selectTopDocs.get(key);
-      if (!doc || doc.isClosed) {
-        doc = await vscode.workspace.openTextDocument({ language: 'sql', content: drivers[n.c.type].selectTop(n.db, n.obj, 100) });
-        selectTopDocs.set(key, doc);
-        await conns.bind(doc.uri.toString(), { conn: n.c.name, db: n.db });
+      // satu tab preview: klik tabel lain mengganti isi tab yang sama (bila belum diedit user), bukan menumpuk tab baru
+      const sql = drivers[n.c.type].selectTop(n.db, n.obj, 100);
+      let doc: vscode.TextDocument;
+      if (selectTopDoc && reusableSelectTop(selectTopDoc)) {
+        doc = selectTopDoc.doc;
+        if (doc.getText() !== sql) {
+          const edit = new vscode.WorkspaceEdit();
+          edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)), sql);
+          await vscode.workspace.applyEdit(edit);
+        }
+      } else {
+        doc = await vscode.workspace.openTextDocument({ language: 'sql', content: sql });
       }
+      selectTopDoc = { doc, sql };
+      await conns.bind(doc.uri.toString(), { conn: n.c.name, db: n.db });
       await vscode.window.showTextDocument(doc);
+      updateFileStatus(); // tab bisa sudah aktif: CodeLens / banner koneksi ikut tabel baru
       await runQuery();
     }),
     vscode.commands.registerCommand('moonageDaydream.showDefinition', (n?: Node) => objectScript(n, 'show')),
@@ -918,8 +926,8 @@ async function newSqliteDatabase(conn: ConnectionInfo) {
   }
 }
 
-/** dokumen Select Top 100 per tabel (klik kiri di Explorer) */
-const selectTopDocs = new Map<string, vscode.TextDocument>();
+/** tab preview Select Top 100 (klik kiri tabel di Explorer) + SQL yang terakhir ditulis ke sana */
+let selectTopDoc: { doc: vscode.TextDocument; sql: string } | undefined;
 
 /** form Add Data per tabel (dibuka lagi = tab yang sama di-reveal) */
 const addDataPanels = new Map<string, vscode.WebviewPanel>();
