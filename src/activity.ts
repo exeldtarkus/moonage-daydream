@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { firstLine, runningStatus, where } from './runningStatus';
+import { firstLine, runningStatus } from './runningStatus';
 
 export { firstLine };
 
@@ -32,23 +32,19 @@ export interface HistoryEntry {
 const HISTORY = 'queryHistory';
 export const MAX_HISTORY = 200;
 
-/** Sidebar "Running Queries": tombol cancel per query; elapsed diperbarui tiap detik selama ada yang berjalan. */
-export class RunningView implements vscode.TreeDataProvider<RunningQuery> {
-  private changed = new vscode.EventEmitter<void>();
-  readonly onDidChangeTreeData = this.changed.event;
+/** status bar kanan bawah "⟳ N running" selama ada query berjalan (elapsed tiap detik); klik = Quick Pick untuk cancel. */
+export class RunningView {
   private timer: NodeJS.Timeout | undefined;
-  /** status bar kanan bawah selama ada query berjalan; klik = buka view Running Queries */
   private bar = vscode.window.createStatusBarItem('moonageDaydream.running', vscode.StatusBarAlignment.Right, 100);
 
   constructor(readonly running: Map<string, RunningQuery>) {
     this.bar.name = 'Moonage Daydream: Running Queries';
-    this.bar.command = 'moonageDaydream.running.focus';
+    this.bar.command = 'moonageDaydream.showRunning';
   }
 
   refresh(): void {
-    this.changed.fire();
     this.updateBar();
-    if (this.running.size && !this.timer) this.timer = setInterval(() => { this.changed.fire(); this.updateBar(); }, 1000);
+    if (this.running.size && !this.timer) this.timer = setInterval(() => this.updateBar(), 1000);
     if (!this.running.size && this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
@@ -59,22 +55,13 @@ export class RunningView implements vscode.TreeDataProvider<RunningQuery> {
     const s = runningStatus([...this.running.values()], Date.now());
     if (!s) { this.bar.hide(); return; }
     this.bar.text = s.text;
-    this.bar.tooltip = `${s.tooltip.join('\n')}\n\nClick to open Running Queries`;
+    this.bar.tooltip = `${s.tooltip.join('\n')}\n\nClick to cancel a query`;
     this.bar.show();
   }
 
-  getChildren(q?: RunningQuery): RunningQuery[] {
-    return q ? [] : [...this.running.values()].sort((a, b) => a.start - b.start);
-  }
-
-  getTreeItem(q: RunningQuery): vscode.TreeItem {
-    const secs = Math.floor((Date.now() - q.start) / 1000);
-    return Object.assign(new vscode.TreeItem(firstLine(q.sql)), {
-      description: `${q.cancelling ? 'Cancelling… · ' : ''}${where(q.conn, q.db)} · ${secs}s`,
-      tooltip: new vscode.MarkdownString().appendCodeblock(q.sql, 'sql'),
-      iconPath: new vscode.ThemeIcon('loading~spin', q.cancelling ? new vscode.ThemeColor('errorForeground') : undefined),
-      contextValue: q.cancelling ? 'cancelling' : 'running',
-    });
+  /** query berjalan, terlama dulu */
+  list(): RunningQuery[] {
+    return [...this.running.values()].sort((a, b) => a.start - b.start);
   }
 
   dispose(): void {
@@ -83,12 +70,17 @@ export class RunningView implements vscode.TreeDataProvider<RunningQuery> {
   }
 }
 
-/** Sidebar "Query History": MAX_HISTORY query terakhir di globalState, terbaru di atas. */
-export class History implements vscode.TreeDataProvider<HistoryEntry> {
-  private changed = new vscode.EventEmitter<void>();
-  readonly onDidChangeTreeData = this.changed.event;
+/** Query History: MAX_HISTORY query terakhir di globalState, terbaru di atas; status bar kanan bawah "🕘 History" membuka Quick Pick. */
+export class History {
+  private bar = vscode.window.createStatusBarItem('moonageDaydream.history', vscode.StatusBarAlignment.Right, 99);
 
-  constructor(private state: vscode.Memento) {}
+  constructor(private state: vscode.Memento) {
+    this.bar.name = 'Moonage Daydream: Query History';
+    this.bar.text = '$(history) History';
+    this.bar.tooltip = 'Query History: open, run again, copy or remove a past query';
+    this.bar.command = 'moonageDaydream.showHistory';
+    this.bar.show();
+  }
 
   list(): HistoryEntry[] {
     return this.state.get<HistoryEntry[]>(HISTORY, []);
@@ -96,34 +88,17 @@ export class History implements vscode.TreeDataProvider<HistoryEntry> {
 
   async add(e: HistoryEntry): Promise<void> {
     await this.state.update(HISTORY, [e, ...this.list()].slice(0, MAX_HISTORY));
-    this.changed.fire();
   }
 
   async remove(e: HistoryEntry): Promise<void> {
     await this.state.update(HISTORY, this.list().filter((x) => x.at !== e.at || x.sql !== e.sql));
-    this.changed.fire();
   }
 
   async clear(): Promise<void> {
     await this.state.update(HISTORY, []);
-    this.changed.fire();
   }
 
-  getChildren(e?: HistoryEntry): HistoryEntry[] {
-    return e ? [] : this.list();
-  }
-
-  getTreeItem(e: HistoryEntry): vscode.TreeItem {
-    const icon = { ok: 'pass', error: 'error', cancelled: 'circle-slash' }[e.status];
-    const color = { ok: 'testing.iconPassed', error: 'errorForeground', cancelled: 'disabledForeground' }[e.status];
-    const time = new Date(e.at).toLocaleString();
-    return Object.assign(new vscode.TreeItem(firstLine(e.sql)), {
-      description: `${where(e.conn, e.db)} · ${time} · ${e.durationMs} ms`,
-      tooltip: new vscode.MarkdownString(`**${e.status}** · ${where(e.conn, e.db)} · ${time} · ${e.durationMs} ms${e.message ? `\n\n${e.message}` : ''}`)
-        .appendCodeblock(e.sql, 'sql'),
-      iconPath: new vscode.ThemeIcon(icon, new vscode.ThemeColor(color)),
-      contextValue: 'history',
-      command: { command: 'moonageDaydream.openHistory', title: 'Open', arguments: [e] },
-    });
+  dispose(): void {
+    this.bar.dispose();
   }
 }
