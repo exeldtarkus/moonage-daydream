@@ -1,7 +1,4 @@
 import { GRID_MAX_ROWS, PAGE_ROWS, QueryResult } from './db';
-
-/** lebih dari sekian baris: baris disimpan di <template> (tidak di-layout) dan hanya yang dekat viewport dipasang di tabel */
-export const VIRTUAL_ROWS = 300;
 import { preview } from './sqlContext';
 import { FORMATS } from './exporter';
 import type { PlanStatement } from './plan';
@@ -11,15 +8,13 @@ export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-export function cell(v: unknown): string {
-  if (v === null || v === undefined) return '<span class="null">(null)</span>';
-  if (v instanceof Date) return esc(v.toISOString());
-  if (v instanceof Uint8Array) {
-    const hex = Buffer.from(v.subarray(0, 64)).toString('hex').toUpperCase();
-    return esc(`0x${hex}${v.length > 64 ? '…' : ''}`);
-  }
-  if (typeof v === 'object') return esc(JSON.stringify(v));
-  return esc(String(v));
+/** teks sel grid (null = NULL); dikirim ke webview sebagai JSON, webview yang meng-escape */
+export function cellText(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (v instanceof Uint8Array) return `0x${Buffer.from(v.subarray(0, 64)).toString('hex').toUpperCase()}${v.length > 64 ? '…' : ''}`;
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
 }
 
 /** loading.uri = file yang query-nya berjalan (untuk tombol Cancel); cancelling = Cancel sudah diklik */
@@ -90,8 +85,6 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
   const sets = r.resultSets.map((s, i) => {
     // kolom angka rata kanan; tanpa info tipe: tebak dari nilai baris pertama
     const num = s.columns.map((_, c) => (s.types?.[c] ? NUMERIC.test(s.types[c]) : typeof s.rows[0]?.[c] === 'number'));
-    const rows = s.rows
-      .map((row, n) => `<tr><td class="n">${n + 1}</td>${row.map((v, c) => `<td${num[c] ? ' class="num"' : ''}>${cell(v)}</td>`).join('')}</tr>`).join('');
     const more = s.limited ? ` · auto limit ${s.limited}` : s.total > s.rows.length ? ` (showing first ${s.rows.length})` : '';
     const head = s.columns.map((c, k) => {
       const t = s.types?.[k] ?? '';
@@ -99,8 +92,8 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
         + `<span class="hb"><button class="fbtn" data-c="${k}" title="Filter loaded rows">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
     }).join('');
     return `<div class="blk"><h3>Result ${i + 1} <span>${s.total} row(s)${more}</span></h3>
-<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 && !editBlock ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead>${s.rows.length > VIRTUAL_ROWS
-      ? `<tbody></tbody></table><template class="vrows">${rows}</template>` : `<tbody>${rows}</tbody></table>`}</div>
+<div class="grid"><table class="rs" data-set="${i}"${canMore && i === 0 && !editBlock ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody></tbody></table>
+<script type="application/json" class="rows">${pageJson(s.rows.map((row) => row.map(cellText)))}</script></div>
 <div class="foot"><span>Rows: <b class="count" data-total="${s.rows.length}">${s.total}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${canMore && i === 0
       ? editBlock ? `<span class="editbar off" title="Editing is off: ${esc(editBlock)}"><button class="addrow" disabled>Add row</button><button class="delrow" disabled>Delete rows</button></span>`
         : '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && (s.limited || s.total > s.rows.length) && s.rows.length < GRID_MAX_ROWS

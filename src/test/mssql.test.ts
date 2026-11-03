@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { alterScript, backupScript, createTableScript, execScript, fmtType, fnScript, jobScript, killScript, paramDefaults, restoreScript, scriptAs, poolConfig, q, retryableConnectError, retryOnce, splitBatches } from '../mssql';
-import { cell, render } from '../resultsHtml';
+import { cellText, render } from '../resultsHtml';
 import { formatSql, leadingCommas } from '../sqlFormat';
 import { affectedStatements, readOnlyBlocked, txEndStatement, ident, identifierChain, maskSql, parallelSafe, preview, readOnly, splitStatements, statementAt, statementSegments, tableRefs, autoLimitable, missingSemicolons, addWhere, editLiteral, sqlLiteral, updateScript } from '../sqlContext';
 
@@ -18,12 +18,14 @@ test('splitBatches: GO inside a string or a block comment is not a separator; GO
   assert.deepEqual(splitBatches('select 1\nGO 0\n'), ['select 1']);
 });
 
-test('cell formats values and escapes', () => {
-  assert.equal(cell(null), '<span class="null">(null)</span>');
-  assert.equal(cell('<b>'), '&lt;b&gt;');
-  assert.equal(cell(new Date('2026-01-02T03:04:05Z')), '2026-01-02T03:04:05.000Z');
-  assert.equal(cell(Buffer.from([1, 255])), '0x01FF');
-  assert.equal(cell(12.5), '12.5');
+test('cellText turns values into grid text (null stays null)', () => {
+  assert.equal(cellText(null), null);
+  assert.equal(cellText(undefined), null);
+  assert.equal(cellText('<b>'), '<b>');
+  assert.equal(cellText(new Date('2026-01-02T03:04:05Z')), '2026-01-02T03:04:05.000Z');
+  assert.equal(cellText({ a: 1 }), '{"a":1}');
+  assert.equal(cellText(Buffer.from([1, 255])), '0x01FF');
+  assert.equal(cellText(12.5), '12.5');
 });
 
 test('render shows result sets, messages and errors', () => {
@@ -34,7 +36,7 @@ test('render shows result sets, messages and errors', () => {
   assert.ok(html.includes('Result 1 <span>1 row(s)<') && html.includes('Result 2 <span>0 row(s)<'));
   assert.ok(html.includes('Result 3 <span>5000 row(s) (showing first 2)'));
   assert.ok(html.includes('<span class="ty"></span>a&lt;b<span class="hb">') && html.includes('hello') && html.includes('Done in 7 ms'));
-  assert.ok(html.includes('<td class="num">1</td>') && html.includes('Rows: <b class="count" data-total="2">5000</b>') && html.includes('</svg><b>7ms</b>'), 'numbers right-aligned, footer');
+  assert.ok(html.includes('<script type="application/json" class="rows">[["1",null]]</script>') && html.includes('Rows: <b class="count" data-total="2">5000</b>') && html.includes('</svg><b>7ms</b>'), 'numbers right-aligned, footer');
   const typed = render('csp', 't', { result: { resultSets: [{ columns: ['n', 's'], types: ['int', 'nvarchar'], rows: [], total: 0 }], rowsAffected: [], messages: [], durationMs: 1 } });
   assert.ok(typed.includes('<th data-c="0" data-name="n" data-type="int" class="num" title="int"><span class="ty">#</span>n<span class="hb">') && typed.includes('<span class="ty">abc</span>s'), 'type icons');
   assert.ok(render('csp', 'local', { error: 'Login failed <x>' }).includes('Login failed &lt;x&gt;'));

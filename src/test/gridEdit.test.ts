@@ -111,10 +111,8 @@ test('grid edit: rows marked for deletion are red, also while selected', () => {
 test('grid edit: Discard / Generate script work when rows were only marked for deletion (no cell edits yet)', () => {
   const result = { resultSets: [{ columns: ['a'], types: ['int'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 };
   const html = render('csp', 't', { result, source: { uri: 'u', sql: 'select a from t' } });
-  // s.edits baru dibuat saat sel pertama diedit: akses tanpa ?. / ?? membuat Discard berhenti dengan TypeError
-  assert.doesNotMatch(html, /\[\.\.\.s\.edits\]/);
-  assert.doesNotMatch(html, /s\.edits\.clear\(\)/);
-  assert.match(html, /s\.edits\?\.clear\(\)/);
+  // edits / deletes dibuat bersama state grid: Discard / Generate script tidak bertemu map yang belum ada (TypeError)
+  assert.match(html, /edits: new Map\(\), deletes: new Set\(\)/);
 });
 
 test('grid edit: generated columns cannot be set in new rows or edited (clear error before anything runs)', () => {
@@ -143,6 +141,22 @@ test('grid: the clicked cell is the active cell and is blue, also on selected / 
   const rule = /tbody td\.cur, tbody tr\.sel td\.cur, tbody tr\.todelete td\.cur \{([^}]*)\}/.exec(html)?.[1] ?? '';
   assert.match(rule, /outline: 2px solid var\(--vscode-focusBorder/);
   assert.match(rule, /background: [^;]*--vscode-focusBorder[^;]*!important/);
-  assert.ok(html.includes("s.cur?.classList.remove('cur')"));
+  assert.ok(html.includes("querySelector('td.cur')?.classList.remove('cur')"));
   assert.ok(html.includes("td.classList.add('cur')"));
+  assert.ok(html.includes("s.cur === k && 'cur'"), 'active cell survives redraw while scrolling');
+});
+
+test('grid: rows are sent as JSON data and drawn by the webview (no <tr> per row in the page)', () => {
+  const rows = Array.from({ length: 2000 }, (_, i) => [i, `n${i}`]);
+  const result = { resultSets: [{ columns: ['id', 'name'], types: ['int', 'varchar'], rows, total: 2000 }], rowsAffected: [], messages: [], durationMs: 1 };
+  const html = render('csp', 't', { result });
+  assert.doesNotMatch(html, /<td class="n">1<\/td>/);
+  assert.doesNotMatch(html, /<template class="vrows">/);
+  const json = /<script type="application\/json" class="rows">(.*?)<\/script>/.exec(html)?.[1] ?? '';
+  const data = JSON.parse(json);
+  assert.equal(data.length, 2000);
+  assert.deepEqual(data[1999], ['1999', 'n1999']);
+  // '</script>' di data tidak boleh menutup blok JSON
+  const evil = render('csp', 't', { result: { ...result, resultSets: [{ columns: ['x'], rows: [['</script><b>']], total: 1 }] } });
+  assert.ok(evil.includes('[["\\u003c/script>\\u003cb>"]]'));
 });
