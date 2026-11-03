@@ -73,11 +73,17 @@ released "$version" && die "$tag already exists on GitHub; choose a new version.
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null && die "Tag $tag exists locally but not on GitHub; delete it (git tag -d $tag) or push it yourself."
 
 read -r -p "[deploy] Release summary for the tag (optional): " summary
+# pasang juga di VS Code lokal (scripts/install-local.js: di WSL = VS Code Server WSL + profile Windows)
+where_local="your local VS Code"
+[[ -n "${WSL_DISTRO_NAME:-}" ]] && where_local="VS Code in WSL and your Windows profile"
+install_local=
+confirm "Install $version in $where_local too?" && install_local=1
 echo
 say "Plan:"
 [[ -n "$bump" ]] && say "  - package.json / package-lock.json $current -> $version, commit \"$version\", push main"
 say "  - unit tests (npm test)"
 say "  - tag $tag${summary:+ \"$tag: $summary\"}, push tag -> GitHub Actions publishes to Open VSX + creates the GitHub Release"
+[[ -n "$install_local" ]] && say "  - install $version in $where_local (npm run install:local)"
 confirm "Continue?" || die "Cancelled, nothing changed."
 
 say "Running unit tests…"
@@ -93,6 +99,10 @@ fi
 git tag -a "$tag" -m "$tag${summary:+: $summary}"
 git push -q origin "$tag"
 say "Pushed $tag, workflow Release started: https://github.com/$repo/actions/workflows/release.yml"
+if [[ -n "$install_local" ]]; then
+  say "Installing $version in $where_local…"
+  node scripts/install-local.js || say "Local install failed (see above); the release itself keeps running on GitHub."
+fi
 
 # hasil workflow (API publik GitHub, tanpa token); Ctrl+C = berhenti menunggu, rilis tetap berjalan di GitHub
 say "Waiting for the workflow (Ctrl+C stops waiting, the release keeps running)…"
