@@ -56,7 +56,7 @@ test('new table: validation (table name, columns, AI integer + only one, FK targ
 test('new table page: create mode has schema / name inputs, Create button, attribute chips; no Refresh / Revert', () => {
   const h = columnsHtml('csp', { conn: 'local', db: 'shop', table: 'New table' }, false, 'create');
   for (const id of ['tableSchema', 'tableName', 'execute', 'openSql', 'addCol', 'grid', 'preview']) assert.match(h, new RegExp(`id="${id}"`), id);
-  assert.match(h, /const mode = 'create'/);
+  assert.match(h, /"mode":"create"/);
   assert.match(h, />Create</);
   assert.doesNotMatch(h, /id="refresh"/);
   assert.doesNotMatch(h, /id="revert"/);

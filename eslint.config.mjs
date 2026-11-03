@@ -3,7 +3,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['out/**', 'node_modules/**', 'test-extention/**', 'docs/**', '.claude/**', 'graphify-out/**', 'scripts/**', '*.mjs'] },
+  { ignores: ['out/**', 'node_modules/**', 'test-extention/**', 'docs/**', '.claude/**', 'graphify-out/**', 'media/**', 'scripts/**', '*.mjs'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

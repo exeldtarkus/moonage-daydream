@@ -218,5 +218,5 @@ test('columnsHtml: Keys section in New Table and Columns editor, keys sent with 
     assert.match(html, /m\.tableKeys/, mode);
     assert.match(html, /read-only/, mode);
   }
-  assert.match(columnsHtml('csp', { conn: 'l', db: 'shop', table: 'item' }, true), /const readOnly = true/);
+  assert.match(columnsHtml('csp', { conn: 'l', db: 'shop', table: 'item' }, true), /"readOnly":true/);
 });

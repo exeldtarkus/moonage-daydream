@@ -543,7 +543,7 @@ test('columns page: grip, Alt+arrows, and live region are gated by reorder capab
 
 test('columns page: read-only disables chips and grips', () => {
   const h = columnsHtml('csp', { conn: 'l', db: 'shop', table: 'order_item' }, true);
-  assert.ok(h.includes('const readOnly = true'));
+  assert.ok(h.includes('"readOnly":true'));
   assert.ok(!h.includes('id="execute"'));
   assert.ok(h.includes('class="grip"'));
   assert.ok(h.includes('data-chip='));
