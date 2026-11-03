@@ -127,11 +127,11 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       case 'conn': {
         const active = this.conns.active === n.c.name;
         const text = connText(n.c.name, drivers[n.c.type].label, address(n.c), {
-          connected: this.connected(n.c), active, noConfirm: n.c.type !== 'consul' && !confirmAutoCommit(n.c, this.conns.groupSettings()),
+          active, noConfirm: n.c.type !== 'consul' && !confirmAutoCommit(n.c, this.conns.groupSettings()),
         });
         return Object.assign(new vscode.TreeItem(text.label, C), {
           description: text.description,
-          tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
+          tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}${this.connected(n.c) ? '\nconnected' : ''}`,
           // terhubung: titik hijau; selain itu logo jenis database. Warna koneksi lewat ConnDecorations (nama berwarna + ●)
           // titik hijau sebagai gambar: codicon ikut diwarnai dekorasi koneksi (mis. merah Production)
           iconPath: this.connected(n.c) && this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'connected.svg')
@@ -216,7 +216,11 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           else if (!this.connected(c) && this.openConnection) {
             // terputus: loading bar di view; urutan: koneksi terbuka -> label "connected" + titik hijau digambar -> isi tampil
             out = await vscode.window.withProgress({ location: { viewId: 'moonageDaydream.explorer' }, title: `Connecting to ${c.name}` }, async () => {
-              await this.openConnection!(c);
+              try {
+                await this.openConnection!(c);
+              } finally {
+                this.onConnected?.(c); // gagal juga: status digambar ulang (tidak tertinggal "connected" saat masih mencoba)
+              }
               const children = load();
               this.justLoaded.set(c.name, { at: Date.now(), out: children });
               children.catch(() => this.justLoaded.delete(c.name)); // gagal: error ditampilkan getChildren, percobaan berikutnya memuat ulang

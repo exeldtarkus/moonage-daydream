@@ -1595,8 +1595,15 @@ async function openConnection(c: ConnectionInfo): Promise<string> {
     info = `leader ${await new ConsulClient(consulTarget(c), pw).leader()}`;
     consulUp.add(c.name);
   } else {
-    const r = await drivers[c.type].run(c, pw, drivers[c.type].testSql);
-    info = (r.resultSets[0]?.rows[0] ?? []).map(String).join(' / ');
+    try {
+      const r = await drivers[c.type].run(c, pw, drivers[c.type].testSql);
+      info = (r.resultSets[0]?.rows[0] ?? []).map(String).join(' / ');
+    } catch (e) {
+      // gagal connect: pool / client yang sempat dibuat dibuang supaya koneksi tidak tampil "connected"; error diteruskan ke pemanggil
+      log.error(`openConnection ${c.name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      await closePool(c).catch((x: unknown) => log.error(`openConnection closePool ${c.name} - EXCEPTION CAUGHT | ${errMsg(x)} - stack-trace: ${errStack(x)}`));
+      throw e;
+    }
   }
   log.info(`connect ${c.name}: ${info}`);
   return info;
