@@ -49,15 +49,26 @@ export class SqlFiles implements vscode.TreeDataProvider<SqlNode> {
   }
 
   private list(): Promise<vscode.Uri[]> {
+    if (!this.files) {
+      // selama scan: progress bar di view + pesan "Scanning…" (viewsWelcome) menggantikan "No .sql files"
+      void vscode.commands.executeCommand('setContext', 'moonageDaydream.sqlFilesScanning', true);
+      const scan = this.scan();
+      this.files = scan;
+      void vscode.window.withProgress({ location: { viewId: 'moonageDaydream.sqlFiles' } }, () => scan)
+        .then(() => vscode.commands.executeCommand('setContext', 'moonageDaydream.sqlFilesScanning', false));
+    }
+    return this.files;
+  }
+
+  private scan(): Promise<vscode.Uri[]> {
     // exclude undefined = files.exclude user tetap berlaku; node_modules dibuang manual
-    this.files ??= Promise.resolve(vscode.workspace.findFiles('**/*.sql', undefined, MAX_FILES)).then(
+    return Promise.resolve(vscode.workspace.findFiles('**/*.sql', undefined, MAX_FILES)).then(
       (uris) => uris.filter((u) => !u.path.includes('/node_modules/')).sort((a, b) => a.path.localeCompare(b.path)),
       (e: unknown) => {
         this.log.error(`SqlFiles.list - EXCEPTION CAUGHT | ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
         return [];
       },
     );
-    return this.files;
   }
 
   async getChildren(n?: SqlNode): Promise<SqlNode[]> {

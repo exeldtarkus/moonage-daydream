@@ -121,3 +121,14 @@ test('group row: connection count, connected count when any, no-commit-confirm n
   assert.equal(groupText(1, 0, false), '1 connection');
   assert.equal(groupText(2, 1, true), '2 connections · ● 1 connected · no commit confirm');
 });
+
+test('sidebar: every view says it is loading until the extension is ready; empty-state texts only after that', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json dibaca apa adanya
+  const pkg = require('../../package.json') as { contributes: { views: Record<string, { id: string }[]>; viewsWelcome: { view: string; contents: string; when?: string }[] } };
+  const welcome = pkg.contributes.viewsWelcome;
+  for (const { id } of pkg.contributes.views.moonageDaydreamExplorer) {
+    assert.ok(welcome.some((w) => w.view === id && w.when === '!moonageDaydream.ready' && /Loading/.test(w.contents)), `${id}: loading text`);
+    for (const w of welcome.filter((x) => x.view === id && !/Loading/.test(x.contents))) assert.match(w.when ?? '', /^moonageDaydream\.ready\b/, `${id}: "${w.contents}" waits for ready`);
+  }
+  assert.ok(welcome.some((w) => w.view === 'moonageDaydream.sqlFiles' && /Scanning/.test(w.contents) && w.when === 'moonageDaydream.ready && moonageDaydream.sqlFilesScanning'));
+});

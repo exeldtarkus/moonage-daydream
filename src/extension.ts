@@ -403,6 +403,8 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (picked) await results.setLocation(picked.id);
     }),
   );
+  // semua view terdaftar: pesan "Loading Moonage Daydream…" di sidebar diganti isi / pesan kosong (viewsWelcome)
+  void vscode.commands.executeCommand('setContext', 'moonageDaydream.ready', true);
 }
 
 export async function deactivate() {
