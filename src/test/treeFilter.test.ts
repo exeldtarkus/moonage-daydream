@@ -109,3 +109,9 @@ test('connection state: only the connections that changed are redrawn; a disconn
   assert.deepEqual(connStateChange(['a', 'b'], ['b', 'c']), { connected: ['c'], disconnected: ['a'] });
   assert.deepEqual(connStateChange([], []), { connected: [], disconnected: [] });
 });
+
+test('sidebar: default view order is Open, SQL Files, Connections, Running Queries, Query History', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json dibaca apa adanya
+  const pkg = require('../../package.json') as { contributes: { views: Record<string, { name: string }[]> } };
+  assert.deepEqual(pkg.contributes.views.moonageDaydreamExplorer.map((v) => v.name), ['Open', 'SQL Files', 'Connections', 'Running Queries', 'Query History']);
+});

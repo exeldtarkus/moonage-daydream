@@ -1298,16 +1298,16 @@
       ],
       "moonageDaydreamExplorer": [
         {
-          "id": "moonageDaydream.explorer",
-          "name": "Connections"
-        },
-        {
           "id": "moonageDaydream.openSql",
           "name": "Open"
         },
         {
           "id": "moonageDaydream.sqlFiles",
           "name": "SQL Files"
+        },
+        {
+          "id": "moonageDaydream.explorer",
+          "name": "Connections"
         },
         {
           "id": "moonageDaydream.running",
