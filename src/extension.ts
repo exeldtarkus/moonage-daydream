@@ -32,6 +32,7 @@ import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 import { findObject } from './findObject';
+import { syntaxIssues } from './sqlSyntax';
 import { clearCache, dirSize, pruneMeta, refreshMeta, removeMeta, updateSequential } from './metaCache';
 import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
@@ -399,15 +400,41 @@ function sqlWatcher(): vscode.Disposable {
 }
 
 /** linter: statement tanpa `;` (sebelum GO / akhir file) diberi tanda di token terakhirnya; severity dari setting lint.semicolon */
+const lintTimers = new Map<string, NodeJS.Timeout>();
+
+/** cek file SQL (; yang hilang + salah sintaks) 250 ms setelah berhenti mengetik */
 function lintDoc(doc: vscode.TextDocument) {
   if (doc.languageId !== 'sql') return;
-  const level = vscode.workspace.getConfiguration('moonageDaydream.lint', doc).get<string>('semicolon', 'error');
-  if (level === 'off') return lint.delete(doc.uri);
-  const severity = level === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error;
-  lint.set(doc.uri, missingSemicolons(doc.getText(), dialectOf(doc.uri)).map((r) => Object.assign(
-    new vscode.Diagnostic(new vscode.Range(doc.positionAt(r.start), doc.positionAt(r.end)), 'Statement is not terminated with ;', severity),
-    { source: LINT_SOURCE, code: 'missing-semicolon' },
-  )));
+  const key = doc.uri.toString();
+  clearTimeout(lintTimers.get(key));
+  lintTimers.set(key, setTimeout(() => {
+    lintTimers.delete(key);
+    void lintNow(doc);
+  }, 250));
+}
+
+async function lintNow(doc: vscode.TextDocument) {
+  if (doc.isClosed) return;
+  const cfg = vscode.workspace.getConfiguration('moonageDaydream.lint', doc);
+  const semi = cfg.get<string>('semicolon', 'error');
+  const syntax = cfg.get<string>('syntax', 'warning');
+  const severity = (level: string) => (level === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error);
+  const version = doc.version;
+  const text = doc.getText();
+  const dialect = dialectOf(doc.uri);
+  const range = (start: number, end: number) => new vscode.Range(doc.positionAt(start), doc.positionAt(end));
+  const out = semi === 'off' ? [] : missingSemicolons(text, dialect).map((r) => Object.assign(
+    new vscode.Diagnostic(range(r.start, r.end), 'Statement is not terminated with ;', severity(semi)), { source: LINT_SOURCE, code: 'missing-semicolon' }));
+  if (syntax !== 'off') {
+    try {
+      // dialek dari koneksi file; tanpa koneksi tidak dicek
+      out.push(...(await syntaxIssues(text, dialect)).map((i) => Object.assign(new vscode.Diagnostic(range(i.start, i.end), i.message, severity(syntax)), { source: LINT_SOURCE, code: 'syntax-error' })));
+    } catch (e) {
+      log.error(`lintNow syntax - EXCEPTION CAUGHT | ${doc.uri.toString()}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    }
+  }
+  if (doc.isClosed || doc.version !== version) return; // sudah diketik lagi: hasil lama dibuang, timer berikutnya yang menulis
+  lint.set(doc.uri, out);
 }
 
 /** Quick Fix "Add ;" untuk diagnostic missing-semicolon */
@@ -514,6 +541,8 @@ function updateFileStatus() {
   banner?.update(fileConn); // "you are using connection …" + warna koneksi di editor
   sqlFiles?.redraw(); // deskripsi koneksi / database per file di SQL Files
   openSql?.redraw();
+  const ed = vscode.window.activeTextEditor;
+  if (ed) lintDoc(ed.document); // koneksi file berganti = dialek cek sintaks ikut berganti
   const uri = sqlUri();
   const c = fileConn(uri);
   const tx = uri && txs.get(uri.toString());

@@ -1278,6 +1278,16 @@
           "default": "error",
           "description": "Mark SQL statements that are not terminated with ; (before GO / end of file)."
         },
+        "moonageDaydream.lint.syntax": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "off"
+          ],
+          "default": "warning",
+          "description": "Mark SQL syntax errors in SELECT / INSERT / UPDATE / DELETE / WITH statements, checked offline with the dialect of the file's connection (other statements are not checked)."
+        },
         "moonageDaydream.transaction.mode": {
           "type": "string",
           "enum": [
@@ -1323,6 +1333,7 @@
     "mongodb": "^6.21.0",
     "mssql": "^12.7.13",
     "mysql2": "^3.24.6",
+    "node-sql-parser": "^5.4.0",
     "pg": "^8.23.1",
     "sql-formatter": "^15.9.0",
     "sql.js": "^1.15.2"
