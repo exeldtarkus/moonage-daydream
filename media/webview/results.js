@@ -13,6 +13,8 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
    * Search / filter / sort dihitung host (cview), webview hanya menggambar baris di sekitar viewport.
    */
   const PG = 200;
+  /** jumlah baris dengan titik pemisah ribuan (sama dengan fmtCount di resultsHtml.ts) */
+  const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const st = (t) => {
     if (!state.has(t)) {
       const heads = [...t.tHead.rows[0].cells].slice(1);
@@ -99,7 +101,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   function syncPager(t, first) {
     const foot = t.closest('.grid').nextElementSibling, size = +(saved.psize || 500), n = viewLen(st(t));
     const pages = Math.max(1, Math.ceil(n / size)), cur = Math.min(pages, Math.floor(first / size) + 1);
-    foot.querySelector('.pcount').textContent = pages.toLocaleString('en-US');
+    foot.querySelector('.pcount').textContent = fmt(pages);
     const inp = foot.querySelector('.pnum');
     inp.max = pages;
     if (document.activeElement !== inp) inp.value = cur;
@@ -157,10 +159,10 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const count = t.closest('.grid').nextElementSibling.querySelector('.count');
     const n = viewLen(s), total = s.c ? s.c.total : s.data.length;
     const filtered = s.keys.length || Object.keys(s.filters).length;
-    count.textContent = s.c ? n.toLocaleString('en-US') + (filtered ? ' / ' + total.toLocaleString('en-US') + ' (filtered)' : '')
-      : filtered ? n + ' / ' + count.dataset.total + ' (filtered)' : count.dataset.total;
+    count.textContent = s.c ? fmt(n) + (filtered ? ' / ' + fmt(total) + ' (filtered)' : '')
+      : filtered ? fmt(n) + ' / ' + fmt(count.dataset.total) + ' (filtered)' : fmt(count.dataset.total);
     blk.querySelector('.smatch').textContent = filtered
-      ? n.toLocaleString('en-US') + ' of ' + (s.c?.partial ? 'the first ' : '') + total.toLocaleString('en-US') + ' rows' + (s.c ? '' : ' (loaded)') : '';
+      ? fmt(n) + ' of ' + (s.c?.partial ? 'the first ' : '') + fmt(total) + ' rows' + (s.c ? '' : ' (loaded)') : '';
   }
   /** chip Search Output dari s.keys; mode cache saat Load all berjalan: input nonaktif */
   function renderChips(t) {
@@ -349,7 +351,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const t = b.closest('.foot').previousElementSibling.querySelector('table');
       const n = selected(t).length, s = st(t);
       menu.table = t;
-      const fmt = (x) => x.toLocaleString('en-US');
+      
       // mode cache: semua baris cache / hasil filter + sort / seleksi / query ulang ke server tanpa batas cache
       const scopes = s.c ? '<option value="cache">All cached (' + fmt(s.c.total) + ' rows' + (s.c.partial ? ', partial' : '') + ')</option>'
         + '<option value="view"' + (s.keys.length || Object.keys(s.filters).length || s.sort ? '' : ' disabled') + '>Filtered rows (' + fmt(s.c.count) + ')</option>'
@@ -602,7 +604,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       for (const pg of [...s.c.pages.keys()]) if (pg >= last) { s.c.pages.delete(pg); s.c.req.delete(pg); }
       s.c.req.delete(last);
       Object.assign(s.c, { count: m.rows, total: m.rows });
-      t.closest('.blk').querySelector('.rtitle').firstChild.textContent = 'Loading ' + m.rows.toLocaleString('en-US') + ' rows…';
+      t.closest('.blk').querySelector('.rtitle').firstChild.textContent = 'Loading ' + fmt(m.rows) + ' rows…';
       render(t);
       syncCount(t);
     }

@@ -4,7 +4,7 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 import { drivers, type ResultSet } from './db';
 import type { ResultMessage } from './results';
-import { isNumCol, type Outcome, type Source } from './resultsHtml';
+import { fmtCount, isNumCol, type Outcome, type Source } from './resultsHtml';
 import { addWhere } from './sqlContext';
 import { CACHE_DIR, cacheLimits, cacheRoot, chunkBudget, clearResultCaches, loadAll, ResultCache } from './resultCache';
 import { CacheView, type GridCache } from './cacheView';
@@ -80,7 +80,7 @@ export async function startLoadAll(m: ResultMessage, o: Outcome | undefined, pos
     });
     log.info(`load all: ${cache.length} rows in ${Date.now() - started} ms (RAM ${cache.memBytes} B, disk ${cache.diskBytes} B${cache.partial ? ', partial' : ''})`);
     if (cache.partial) {
-      const n = cache.length.toLocaleString('en-US');
+      const n = fmtCount(cache.length);
       void vscode.window.showWarningMessage(`The result cache limit of ${n} rows was reached and the query was stopped. The loaded rows can still be searched and sorted. `
         + 'To see the rest, narrow the query with WHERE, or use Export → All Data from server (no limit).');
     }

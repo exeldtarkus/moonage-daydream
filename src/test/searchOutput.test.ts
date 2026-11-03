@@ -56,3 +56,13 @@ test('cached result: rows come from the host (data-cache state), read-only, cach
     await cache.dispose();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('row counts use dots as thousands separator: 1.000.000 row(s) (showing first 1.000), footer, auto limit, Load more', () => {
+  const rows = Array.from({ length: 1000 }, (_, i) => ['n' + i, 'a']);
+  const html = render('csp', 't', { result: res({ rows, total: 1_000_000 }), source: src });
+  assert.match(html, /<span class="rtitle">1\.000\.000 row\(s\) \(showing first 1\.000\)<\/span>/);
+  assert.match(html, /<b class="count" data-total="1000">1\.000\.000<\/b> \(showing first 1\.000\)/);
+  assert.match(html, />Load more \(\+1\.000\)</);
+  assert.match(render('csp', 't', { result: res({ rows, total: 12_500, limited: 12_500 }), source: src }), /12\.500 row\(s\) · auto limit 12\.500/);
+  assert.match(render('csp', 't', { result: res() }), /<span class="rtitle">2 row\(s\)<\/span>/);
+});
