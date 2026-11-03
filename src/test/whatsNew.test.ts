@@ -47,3 +47,10 @@ test('whats new: notes for 1.0.0 (composite keys, GO n, Mongo hosts, export stre
   for (const word of [/Keys/, /GO n/, /replica set/i, /[Ee]xport/, /Show Log/]) assert.match(text, word);
   assert.ok(RELEASES.find((r) => r.version === '1.1.0'), '1.1.0');
 });
+
+test('whats new: notes for 1.2.0 (Find Object, filter, Open view, syntax check, status bar, connection rows)', () => {
+  const r = RELEASES.find((x) => x.version === '1.2.0');
+  assert.ok(r, '1.2.0');
+  const text = r.items.map((i) => `${i.title} ${i.detail ?? ''}`).join('\n');
+  for (const word of [/Find Object/, /Filter/, /Open view/, /syntax/i, /status bar/i, /Update Metadata/, /Clear Cache/, /connected/i]) assert.match(text, word);
+});
