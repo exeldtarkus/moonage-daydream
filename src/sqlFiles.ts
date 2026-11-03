@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Connections } from './connections';
-import { openSqlItems, parentRel } from './sqlContext';
+import { OpenSqlItem as OpenItem, openSqlItems, parentRel } from './sqlContext';
 
 /** folder: path relatif (pakai '/') di dalam workspace folder; file: uri file .sql */
 export type SqlNode = { kind: 'folder'; root: vscode.WorkspaceFolder; rel: string } | { kind: 'file'; uri: vscode.Uri };
@@ -299,24 +299,62 @@ export function sqlFilesDnd(sqlFiles: SqlFiles, conns: Connections, log: vscode.
   };
 }
 
-type OpenItem = { uri: string; label: string; untitled: boolean };
 
 /** Sidebar "Open": semua tab SQL yang terbuka (file .sql dari folder mana pun + tab yang belum disimpan), urut tab */
 export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
   private changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
 
+  /** view-nya: keterangan "N unsaved" di judul */
+  view?: vscode.TreeView<OpenItem>;
+
   constructor(private conns: Connections) {}
 
   redraw(): void {
     this.changed.fire();
+    if (this.view) {
+      const n = this.items().filter((i) => i.dirty).length;
+      this.view.description = n ? `${n} unsaved` : undefined;
+    }
+  }
+
+  private tabs() {
+    return vscode.window.tabGroups.all.flatMap((g) => g.tabs);
+  }
+
+  items(): OpenItem[] {
+    const tabs = this.tabs().flatMap((t) =>
+      t.input instanceof vscode.TabInputText ? [{ uri: t.input.uri.toString(), path: t.input.uri.path, untitled: t.input.uri.scheme === 'untitled' }] : []);
+    return openSqlItems(tabs, (u) => vscode.workspace.textDocuments.find((d) => d.uri.toString() === u));
   }
 
   getChildren(n?: OpenItem): OpenItem[] {
-    if (n) return [];
-    const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs).flatMap((t) =>
-      t.input instanceof vscode.TabInputText ? [{ uri: t.input.uri.toString(), path: t.input.uri.path, untitled: t.input.uri.scheme === 'untitled' }] : []);
-    return openSqlItems(tabs, (u) => vscode.workspace.textDocuments.find((d) => d.uri.toString() === u));
+    return n ? [] : this.items();
+  }
+
+  /** New File: tab SQL baru (koneksi = koneksi aktif, seperti tab untitled lain) */
+  async newFile(): Promise<void> {
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'sql', content: '' }));
+  }
+
+  /** Save All: file .sql disimpan langsung, tab yang belum punya file dibuka satu per satu dengan dialog Save As */
+  async saveAll(): Promise<void> {
+    for (const i of this.items().filter((x) => x.dirty)) {
+      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === i.uri);
+      if (!doc) continue;
+      if (!i.untitled) await doc.save();
+      else {
+        await vscode.window.showTextDocument(doc);
+        await vscode.commands.executeCommand('workbench.action.files.save');
+      }
+    }
+  }
+
+  /** Close All: hanya tab SQL di daftar Open; tab yang belum disimpan ditanya VS Code seperti biasa */
+  async closeAll(): Promise<void> {
+    const open = new Set(this.items().map((i) => i.uri));
+    const tabs = this.tabs().filter((t) => t.input instanceof vscode.TabInputText && open.has(t.input.uri.toString()));
+    if (tabs.length) await vscode.window.tabGroups.close(tabs);
   }
 
   getTreeItem(n: OpenItem): vscode.TreeItem {
@@ -327,7 +365,7 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
     return Object.assign(n.untitled ? new vscode.TreeItem(n.label) : new vscode.TreeItem(uri), {
       id: n.uri, // label tab untitled berubah saat diketik: id tetap supaya seleksi tidak lompat
       iconPath: n.untitled ? new vscode.ThemeIcon('file') : undefined,
-      description: [dir !== '.' ? dir : '', where].filter(Boolean).join(' · '),
+      description: [n.dirty ? '●' : '', dir !== '.' ? dir : '', where].filter(Boolean).join(' · '),
       tooltip: `${n.untitled ? `${uri.path} (not saved)` : vscode.workspace.asRelativePath(uri)}${where ? `\n${where}` : ''}`,
       contextValue: n.untitled ? 'openSqlUntitled' : 'openSqlFile',
       // file: buka + sorot di SQL Files; untitled: buka saja

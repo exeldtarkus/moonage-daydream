@@ -149,11 +149,23 @@ export function activate(ctx: vscode.ExtensionContext) {
     runningView,
     vscode.window.registerTreeDataProvider('moonageDaydream.running', runningView),
     vscode.window.registerTreeDataProvider('moonageDaydream.history', history),
-    vscode.window.registerTreeDataProvider('moonageDaydream.openSql', (openSql = new OpenSql(conns))),
+    // view "Open" + keterangan "N unsaved" di judulnya (hasil assignment = TreeView, ikut di-dispose)
+    (openSql = new OpenSql(conns)).view = vscode.window.createTreeView('moonageDaydream.openSql', { treeDataProvider: openSql }),
+    vscode.commands.registerCommand('moonageDaydream.openNewFile', () => openSql?.newFile()),
+    vscode.commands.registerCommand('moonageDaydream.openSaveAll', async () => {
+      try {
+        await openSql?.saveAll();
+      } catch (e) {
+        log.error(`openSaveAll - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+        showError(`Save All failed: ${errMsg(e)}`);
+      }
+    }),
+    vscode.commands.registerCommand('moonageDaydream.openCloseAll', () => openSql?.closeAll()),
     // view "Open": tab dibuka / ditutup / dipindah, language tab untitled berubah, judul tab untitled ikut isi (baris pertama)
     vscode.window.tabGroups.onDidChangeTabs(() => openSql?.redraw()),
     vscode.workspace.onDidOpenTextDocument(() => openSql?.redraw()),
-    vscode.workspace.onDidChangeTextDocument((e) => e.document.isUntitled && e.document.languageId === 'sql' && openSql?.redraw()),
+    vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'sql' && openSql?.redraw()), // judul untitled + status unsaved
+    vscode.workspace.onDidSaveTextDocument((d) => d.languageId === 'sql' && openSql?.redraw()),
     (sqlFilesView = vscode.window.createTreeView('moonageDaydream.sqlFiles', { treeDataProvider: sqlFiles, dragAndDropController: sqlFilesDnd(sqlFiles, conns, log), canSelectMany: true })),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesFlat', () => sqlFiles.setFlat(true)),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesTree', () => sqlFiles.setFlat(false)),
