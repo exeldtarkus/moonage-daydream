@@ -1,80 +1,82 @@
-// Find Object: Quick Pick berisi database + tabel / view / procedure satu koneksi, terisi bertahap
+// Find Object (Ctrl+Alt+O): Quick Pick berisi semua koneksi + database + tabel / view / procedure dari cache metadata
 import * as vscode from 'vscode';
-import { ConnectionInfo, DbObject, ListKind, drivers } from './db';
+import { ConnectionInfo, drivers } from './db';
 import type { Connections } from './connections';
 import type { Node } from './explorer';
-import { loadObjects } from './treeFilter';
+import { MetaKind, readMeta } from './metaCache';
 import { showError } from './gridEdit';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const errStack = (e: unknown) => (e instanceof Error ? e.stack ?? e.message : String(e));
 
-const KINDS: ListKind[] = ['table', 'view', 'procedure'];
-const ICON: Record<ListKind | 'db', string> = { db: 'database', table: 'table', view: 'eye', procedure: 'symbol-method' };
+const ICON: Record<MetaKind, string> = { db: 'database', table: 'table', view: 'eye', procedure: 'symbol-method' };
 type Pick = vscode.QuickPickItem & { node: Node };
 
-/** pilih tabel / view = Select Top 100, procedure = Show Definition (bila driver punya), database = New Query di database itu */
-/** reveal: sorot node terpilih di view Connections (folder induk dibuka) */
-export async function findObject(conns: Connections, log: vscode.LogOutputChannel, reveal: (n: Node) => Thenable<void>, n?: Node): Promise<void> {
-  let c: ConnectionInfo | undefined = n?.kind === 'conn' || n?.kind === 'db' ? n.c : undefined;
-  if (!c) {
-    const list = conns.list().filter((x) => x.type !== 'consul');
-    c = list.length === 1 ? list[0] : (await vscode.window.showQuickPick(list.map((x) => ({ label: x.name, description: drivers[x.type].label, c: x })),
-      { title: 'Find Object', placeHolder: 'Search in which connection?' }))?.c;
-  }
-  if (!c || c.type === 'consul') return;
-  const conn = c;
-  const d = drivers[conn.type];
+export interface FindDeps {
+  conns: Connections;
+  log: vscode.LogOutputChannel;
+  /** folder cache metadata (lihat metaCache.ts) */
+  dir: string;
+  /** baca ulang metadata satu koneksi ke cache */
+  refresh(c: ConnectionInfo): Promise<void>;
+  /** sorot node terpilih di view Connections */
+  reveal(n: Node): Thenable<void>;
+}
+
+/**
+ * tanpa node: semua koneksi dari cache (tanpa memilih koneksi, tanpa menghubungi server); dari node koneksi / database: hanya itu,
+ * dan koneksi yang belum pernah di-cache dibaca dulu. Pilih koneksi = sorot, database = New Query, tabel / view = Select Top 100,
+ * procedure = Show Definition; semuanya juga disorot di Connections.
+ */
+export async function findObject(deps: FindDeps, n?: Node): Promise<void> {
+  const { conns, log } = deps;
+  const scope = n?.kind === 'conn' || n?.kind === 'db' ? n : undefined;
   const qp = vscode.window.createQuickPick<Pick>();
-  qp.title = `Find Object · ${conn.name}${n?.kind === 'db' ? ` / ${n.db}` : ''}`;
-  qp.placeholder = 'Type part of a database, table, view or procedure name';
+  qp.title = scope ? `Find Object · ${scope.c.name}${scope.kind === 'db' ? ` / ${scope.db}` : ''}` : 'Find Object';
+  qp.placeholder = 'Type part of a connection, database, table, view or procedure name';
   qp.matchOnDescription = true;
   qp.busy = true;
-  let closed = false;
-  const items: Pick[] = [];
-  // Quick Pick diperbarui paling sering tiap 300 ms (ribuan objek)
-  let timer: NodeJS.Timeout | undefined;
-  const flush = () => { timer ??= setTimeout(() => { timer = undefined; qp.items = items; }, 300); };
-  const failed: string[] = [];
-  qp.onDidHide(() => { closed = true; qp.dispose(); });
+  qp.onDidHide(() => qp.dispose());
   qp.onDidAccept(() => {
     const node = qp.selectedItems[0]?.node;
     qp.hide();
     if (!node) return;
     if (node.kind === 'db') void vscode.commands.executeCommand('moonageDaydream.newQueryForDb', node);
     else if (node.kind === 'obj' && node.objKind !== 'procedure') void vscode.commands.executeCommand('moonageDaydream.selectTop', node);
-    else if (node.kind === 'obj' && d.definition) void vscode.commands.executeCommand('moonageDaydream.showDefinition', node);
-    Promise.resolve(reveal(node)).catch((e: unknown) => {
+    else if (node.kind === 'obj' && drivers[node.c.type].definition) void vscode.commands.executeCommand('moonageDaydream.showDefinition', node);
+    Promise.resolve(deps.reveal(node)).catch((e: unknown) => {
       // objek tetap dibuka; sorot gagal mis. karena tersembunyi oleh filter
-      log.error(`findObject reveal ${conn.name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+      log.error(`findObject reveal - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     });
   });
   qp.show();
   try {
-    const pw = await conns.password(conn.name);
-    // dari node database: hanya database itu; dari koneksi: semua database
-    const dbs = n?.kind === 'db' ? [n.db] : await d.databases(conn, pw);
-    for (const db of dbs) items.push({ label: `$(${ICON.db}) ${db}`, description: 'database', node: { kind: 'db', c: conn, db } });
-    flush();
-    // shortcut: semua objek semua database dimuat ke Quick Pick (bisa lambat / besar di server dengan ratusan database), batasi per database bila perlu
-    await loadObjects(dbs, KINDS, (db, kind) => d.objects(conn, pw, db, kind), (db, kind, objs: DbObject[]) => {
-      for (const obj of objs) {
-        items.push({ label: `$(${ICON[kind]}) ${obj.schema ? `${obj.schema}.${obj.name}` : obj.name}`, description: `${db} · ${kind}`, node: { kind: 'obj', c: conn, db, objKind: kind, obj } });
-      }
-      flush();
-    }, (db, e) => {
-      log.error(`findObject ${conn.name} / ${db} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
-      if (!failed.includes(db)) failed.push(db);
-    }, () => closed);
+    let recs = await readMeta(deps.dir, scope?.c.name);
+    if (scope && !recs.length) {
+      qp.placeholder = `Reading the databases of ${scope.c.name}…`;
+      await deps.refresh(scope.c);
+      recs = await readMeta(deps.dir, scope.c.name);
+    }
+    const list = conns.list().filter((c) => c.type !== 'consul' && (!scope || c.name === scope.c.name));
+    const byName = new Map(list.map((c) => [c.name, c]));
+    const cached = new Set(recs.map((r) => r.conn));
+    const items: Pick[] = scope?.kind === 'db' ? [] : list.map((c) => ({
+      label: `$(server) ${c.name}`, description: `${drivers[c.type].label}${cached.has(c.name) ? '' : ' · not cached yet (connect to load its objects)'}`, node: { kind: 'conn', c },
+    }));
+    for (const r of recs) {
+      const c = byName.get(r.conn); // koneksi sudah dihapus: record lama dilewati
+      if (!c || (scope?.kind === 'db' && r.db !== scope.db)) continue;
+      items.push(r.kind === 'db'
+        ? { label: `$(${ICON.db}) ${r.db}`, description: `${c.name} · database`, node: { kind: 'db', c, db: r.db } }
+        : { label: `$(${ICON[r.kind]}) ${r.schema ? `${r.schema}.${r.name}` : r.name}`, description: `${c.name} / ${r.db} · ${r.kind}`, node: { kind: 'obj', c, db: r.db, objKind: r.kind, obj: { schema: r.schema, name: r.name } } });
+    }
+    qp.items = items;
+    qp.placeholder = 'Type part of a connection, database, table, view or procedure name';
   } catch (e) {
-    log.error(`findObject ${conn.name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    log.error(`findObject - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     qp.hide();
     showError(`Find Object failed: ${errMsg(e)}`);
     return;
   }
-  if (closed) return;
-  clearTimeout(timer);
-  qp.items = items;
   qp.busy = false;
-  if (failed.length) qp.placeholder = `Type to search · could not read: ${failed.join(', ')} (see log)`;
 }

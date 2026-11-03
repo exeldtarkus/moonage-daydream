@@ -32,6 +32,7 @@ import { addDataHtml } from './addDataHtml';
 import { insertScript, type DataEntry } from './addData';
 import { createSqliteFile, deleteSqliteFile, uniqueConnName } from './sqlite';
 import { findObject } from './findObject';
+import { pruneMeta, refreshMeta, removeMeta } from './metaCache';
 import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
 import { columnsEditor, newTable } from './tablePanels';
@@ -77,6 +78,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   status.command = 'moonageDaydream.selectConnection';
   explorer = new Explorer(conns, log, ctx.extensionUri);
   explorer.connected = isConnected;
+  metaDir = vscode.Uri.joinPath(ctx.globalStorageUri, 'moonage-cache', 'metadata').fsPath;
+  pruneMeta(metaDir, conns.list().map((c) => c.name)).catch((e: unknown) => log.error(`pruneMeta - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
   ctx.subscriptions.push(conns.used.event(touchConn), idleWatcher());
   connDecorations = new ConnDecorations(conns);
   updateFormatterContext(ctx);
@@ -233,6 +236,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (ok !== 'Delete') return;
       await closePool(c);
       await conns.remove(c.name);
+      forgetMetadata(c.name);
       updateStatus();
     }),
     vscode.commands.registerCommand('moonageDaydream.selectConnection', async (n?: Node) => {
@@ -318,7 +322,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       explorer.clearFilters();
       void vscode.commands.executeCommand('setContext', 'moonageDaydream.explorerFiltered', false);
     }),
-    vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject(conns, log, (x) => explorerView.reveal(x, { select: true, focus: false, expand: false }), n)),
+    vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject({ conns, log, dir: metaDir, refresh: refreshMetadata, reveal: (x) => explorerView.reveal(x, { select: true, focus: false, expand: false }) }, n)),
     vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
       if (n?.kind !== 'db') return;
       // tab SQL baru yang langsung terikat ke koneksi + database ini (CodeLens: conn | db)
@@ -657,6 +661,8 @@ export async function renameConnection(n?: Node, input?: string): Promise<void> 
     await closePool(c); // pool di-cache per nama koneksi
     await conns.save({ ...c, name: name.trim() }, pw, c.name);
     updateStatus();
+    forgetMetadata(c.name);
+    void refreshMetadata({ ...c, name: name.trim() });
   } catch (e) {
     log.error(`renameConnection - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     showError(`Rename connection failed: ${errMsg(e)}`);
@@ -1051,7 +1057,10 @@ async function dropSqliteFile(c: ConnectionInfo) {
   await closePool(c);
   await deleteSqliteFile(file);
   log.info(`dropDatabase sqlite: ${c.name} / ${file}`);
-  if (pick === 'Delete File and Connection') await conns.remove(c.name);
+  if (pick === 'Delete File and Connection') {
+    await conns.remove(c.name);
+    forgetMetadata(c.name);
+  }
   explorer.refresh();
   updateStatus();
   vscode.window.showInformationMessage(`Database file ${path.basename(file)} deleted.`);
@@ -1206,6 +1215,8 @@ async function saveConnection(c: ConnectionInfo, password: string, old?: Connect
   await conns.save(c, password, old?.name);
   if (!old || !conns.active) await conns.setActive(c.name);
   updateStatus();
+  if (old && old.name !== c.name) forgetMetadata(old.name);
+  void refreshMetadata(c); // koneksi baru / diubah: cache Find Object dibaca ulang di belakang
 }
 
 /** buka SQL dari history di editor baru, terikat ke koneksi + database yang sama */
@@ -1395,6 +1406,45 @@ function refreshConnState(delay = 1500) {
 function touchConn(name: string) {
   lastUsed.set(name, Date.now());
   refreshConnState();
+  // pertama kali dipakai sejak VS Code dibuka / sejak Disconnect: cache Find Object dibaca ulang
+  const c = !metaFresh.has(name) ? conns.get(name) : undefined;
+  if (c) void refreshMetadata(c);
+}
+
+/** folder cache metadata Find Object (globalStorage extension) */
+let metaDir = '';
+/** koneksi yang cache metadata-nya sudah dibaca ulang di sesi ini (dikosongkan saat Disconnect) */
+const metaFresh = new Set<string>();
+const metaRunning = new Map<string, Promise<void>>();
+
+/** baca ulang database + tabel / view / procedure satu koneksi ke cache (di belakang, satu proses per koneksi) */
+function refreshMetadata(c: ConnectionInfo): Promise<void> {
+  if (c.type === 'consul' || !metaDir) return Promise.resolve();
+  metaFresh.add(c.name);
+  let p = metaRunning.get(c.name);
+  if (!p) {
+    const d = drivers[c.type];
+    const t = Date.now();
+    p = (async () => {
+      const pw = await conns.password(c.name);
+      await refreshMeta(metaDir, c.name, { databases: () => d.databases(c, pw), objects: (db, kind) => d.objects(c, pw, db, kind) },
+        (db, e) => log.error(`refreshMetadata ${c.name} / ${db} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
+      // koneksi dihapus selama refresh berjalan: hasilnya ikut dibuang
+      if (!conns.get(c.name)) await removeMeta(metaDir, c.name);
+      else log.info(`metadata cache ${c.name}: refreshed in ${Date.now() - t} ms`);
+    })().catch((e: unknown) => {
+      metaFresh.delete(c.name); // gagal (mis. server mati): dicoba lagi pada pemakaian berikutnya
+      log.error(`refreshMetadata ${c.name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    }).finally(() => metaRunning.delete(c.name));
+    metaRunning.set(c.name, p);
+  }
+  return p;
+}
+
+/** koneksi dihapus / di-rename: cache lamanya dibuang */
+function forgetMetadata(name: string): void {
+  metaFresh.delete(name);
+  if (metaDir) removeMeta(metaDir, name).catch((e: unknown) => log.error(`forgetMetadata ${name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
 }
 
 /** Connect: buka koneksi (pool tetap terbuka) + cek login; Consul = leader */
@@ -1412,6 +1462,7 @@ async function connectCommand(c: ConnectionInfo) {
     }
     log.info(`connect ${c.name}: ${info}`);
     refreshConnState(0);
+    if (c.type !== 'consul') void refreshMetadata(c); // Connect: cache Find Object dibaca ulang
     vscode.window.showInformationMessage(`Connected to ${c.name}${info ? ` (${info})` : ''} in ${Date.now() - t} ms`);
   } catch (e) {
     log.error(`connect - EXCEPTION CAUGHT | ${c.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
@@ -1443,6 +1494,7 @@ async function disconnect(c: ConnectionInfo, quiet = false): Promise<boolean> {
   await closePool(c);
   consulUp.delete(c.name);
   lastUsed.delete(c.name);
+  metaFresh.delete(c.name); // dipakai lagi setelah ini = cache Find Object dibaca ulang
   log.info(`disconnect ${c.name}${quiet ? ' (idle)' : ''}${open.length ? ` (${how} ${open.length} transaction(s))` : ''}`);
   updateFileStatus();
   explorer.collapse(c.name);

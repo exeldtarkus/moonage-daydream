@@ -1,5 +1,4 @@
 // filter di view Connections (per node) + pemuat objek untuk Find Object; tanpa vscode supaya bisa di-unit test
-import type { DbObject, ListKind } from './db';
 import type { Node } from './explorer';
 import { MS_DB, MS_SERVER, MS_TREE } from './mssqlTree';
 
@@ -37,26 +36,6 @@ export function applyFilters(parent: Node, children: Node[], get: (key: string) 
     const up = x.kind === 'db' ? get(filterKey({ kind: 'conn', c: x.c })!) : x.kind === 'obj' ? get(filterKey({ kind: 'db', c: x.c, db: x.db })!) : undefined;
     return matchFilter(name, own) && matchFilter(name, up);
   });
-}
-
-/**
- * Find Object: objek semua database x jenis, paralel maksimal `limit` sekaligus; hasil dikirim per batch (Quick Pick terisi bertahap),
- * database yang gagal (mis. tanpa izin) dilaporkan lalu dilewati; berhenti begitu cancelled() (Quick Pick ditutup).
- */
-export async function loadObjects(dbs: string[], kinds: ListKind[], fetch: (db: string, kind: ListKind) => Promise<DbObject[]>,
-  onBatch: (db: string, kind: ListKind, objs: DbObject[]) => void, onError: (db: string, e: unknown) => void, cancelled: () => boolean, limit = 4): Promise<void> {
-  const jobs = dbs.flatMap((db) => kinds.map((kind) => [db, kind] as const));
-  const worker = async () => {
-    for (let job = jobs.shift(); job && !cancelled(); job = jobs.shift()) {
-      const [db, kind] = job;
-      try {
-        onBatch(db, kind, await fetch(db, kind));
-      } catch (e) {
-        onError(db, e); // pemanggil yang mencatat log ERROR (modul ini tanpa logger)
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
 }
 
 /**
