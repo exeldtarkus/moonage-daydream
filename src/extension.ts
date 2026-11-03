@@ -56,6 +56,7 @@ let openSql: OpenSql | undefined;
 export let banner: ConnBanner;
 let connDecorations: ConnDecorations;
 let sqlFilesView: vscode.TreeView<SqlNode>;
+let explorerView: vscode.TreeView<Node>;
 export let completion: SqlCompletion;
 /** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
 export let ownFormatter = false;
@@ -289,7 +290,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     // garis warna mengikuti jumlah baris; label ikut akhir baris pertama
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'sql' && banner.update(fileConn)),
     vscode.window.registerWebviewViewProvider(VIEW_ID, results),
-    vscode.window.registerTreeDataProvider('moonageDaydream.explorer', explorer),
+    (explorerView = vscode.window.createTreeView('moonageDaydream.explorer', { treeDataProvider: explorer })),
     vscode.commands.registerCommand('moonageDaydream.renameConnection', (n?: Node, name?: string) => renameConnection(n, name)),
     vscode.commands.registerCommand('moonageDaydream.changeConnectionColor', (n?: Node, color?: string) => changeConnectionColor(n, color)),
     vscode.commands.registerCommand('moonageDaydream.moveConnectionToGroup', (n?: Node, pick?: string) => moveToGroup(n, pick)),
@@ -313,7 +314,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       explorer.clearFilters();
       void vscode.commands.executeCommand('setContext', 'moonageDaydream.explorerFiltered', false);
     }),
-    vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject(conns, log, n)),
+    vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject(conns, log, (x) => explorerView.reveal(x, { select: true, focus: false, expand: false }), n)),
     vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
       if (n?.kind !== 'db') return;
       // tab SQL baru yang langsung terikat ke koneksi + database ini (CodeLens: conn | db)

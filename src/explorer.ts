@@ -6,7 +6,7 @@ import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './
 import { folderContext, objectTemplates } from './objTemplates';
 import { monitorKit } from './monitorKits';
 import { ConsulClient, consulTarget, kvChildren } from './consul';
-import { applyFilters, filterKey } from './treeFilter';
+import { applyFilters, filterKey, treeParent } from './treeFilter';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -50,6 +50,11 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
 
   refresh(node?: Node): void {
     this.changed.fire(node);
+  }
+
+  /** induk node: TreeView.reveal (Find Object menyorot objek di tree) */
+  getParent(n: Node): Node | undefined {
+    return treeParent(n);
   }
 
   /** filter per node (koneksi / database / folder), hanya di memori; kunci dari filterKey */

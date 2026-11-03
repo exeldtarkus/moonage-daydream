@@ -1,6 +1,7 @@
 // filter di view Connections (per node) + pemuat objek untuk Find Object; tanpa vscode supaya bisa di-unit test
 import type { DbObject, ListKind } from './db';
 import type { Node } from './explorer';
+import { MS_DB, MS_SERVER, MS_TREE } from './mssqlTree';
 
 /** teks filter cocok: mengandung, tidak peka huruf besar / kecil; kosong = semua */
 export const matchFilter = (name: string, f?: string) => !f?.trim() || name.toLowerCase().includes(f.trim().toLowerCase());
@@ -56,4 +57,29 @@ export async function loadObjects(dbs: string[], kinds: ListKind[], fetch: (db: 
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
+}
+
+/**
+ * induk node untuk TreeView.reveal (Find Object -> sorot objek di Connections): objek -> folder -> database -> koneksi -> group.
+ * SQL Server lewat folder Object Explorer (Databases, Tables, Views, Programmability > Stored Procedures).
+ */
+export function treeParent(n: Node): Node | undefined {
+  switch (n.kind) {
+    case 'conn': return n.c.group ? { kind: 'group', group: n.c.group } : undefined;
+    case 'db': return n.c.type === 'mssql' ? { kind: 'mfolder', c: n.c, folder: 'databases' } : { kind: 'conn', c: n.c };
+    case 'folder': return { kind: 'db', c: n.c, db: n.db };
+    case 'obj': {
+      if (n.c.type !== 'mssql') return n.objKind === 'table' || n.objKind === 'view' || n.objKind === 'procedure' ? { kind: 'folder', c: n.c, db: n.db, objKind: n.objKind } : undefined;
+      const folder = n.objKind === 'table' ? 'tables' : n.objKind === 'view' ? 'views' : n.objKind === 'procedure' ? 'procedures' : undefined;
+      return folder ? { kind: 'mfolder', c: n.c, folder, db: n.db } : undefined;
+    }
+    case 'mfolder': {
+      if (n.obj) return undefined; // folder di bawah tabel / view (Columns, Keys, ...): tidak dipakai reveal
+      if (MS_SERVER.includes(n.folder)) return { kind: 'conn', c: n.c };
+      if (n.db !== undefined && MS_DB.includes(n.folder)) return { kind: 'db', c: n.c, db: n.db };
+      const up = Object.keys(MS_TREE).find((k) => MS_TREE[k].folders?.includes(n.folder));
+      return up ? { kind: 'mfolder', c: n.c, folder: up, db: n.db } : undefined;
+    }
+    default: return undefined;
+  }
 }
