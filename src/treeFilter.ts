@@ -83,3 +83,8 @@ export function connTooltip(o: { name: string; type: string; addr: string; user:
 export function connStateChange(before: string[], now: string[]): { connected: string[]; disconnected: string[] } {
   return { connected: now.filter((x) => !before.includes(x)), disconnected: before.filter((x) => !now.includes(x)) };
 }
+
+/** deskripsi group di Connections: jumlah koneksi, jumlah yang terhubung (bila ada), catatan konfirmasi commit */
+export function groupText(count: number, connected: number, noConfirm: boolean): string {
+  return `${count} connection${count === 1 ? '' : 's'}${connected ? ` · ● ${connected} connected` : ''}${noConfirm ? ' · no commit confirm' : ''}`;
+}

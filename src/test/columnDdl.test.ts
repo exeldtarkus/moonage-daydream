@@ -522,3 +522,22 @@ test('columns editor: MongoDB validation (convertible type, field name, Not null
   rows[1] = { ...rows[1], type: 'string', nullable: false };
   assert.deepEqual(e(rows), ['tag: Not null needs a default (value for documents without the field)']);
 });
+
+test('SQLite connected state: open after the file was read once, closed again by Disconnect, a missing file is never open', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'moonage-open-'));
+  try {
+    const file = join(dir, 'lab.db');
+    writeFileSync(file, '');
+    const c = { name: 'lite-open', type: 'sqlite' as const, host: '', port: 0, user: '', database: '', trustServerCertificate: false, file };
+    assert.equal(sqliteDriver.isOpen?.(c.name), false);
+    await sqliteDriver.run(c, '', sqliteDriver.testSql);
+    assert.equal(sqliteDriver.isOpen?.(c.name), true);
+    await sqliteDriver.close(c.name);
+    assert.equal(sqliteDriver.isOpen?.(c.name), false);
+    const gone = { ...c, name: 'lite-missing', file: join(dir, 'missing', 'x.db') };
+    await assert.rejects(sqliteDriver.run(gone, '', sqliteDriver.testSql));
+    assert.equal(sqliteDriver.isOpen?.(gone.name), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

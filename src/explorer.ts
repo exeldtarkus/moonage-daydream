@@ -6,7 +6,7 @@ import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './
 import { folderContext, objectTemplates } from './objTemplates';
 import { monitorKit } from './monitorKits';
 import { ConsulClient, consulTarget, kvChildren } from './consul';
-import { applyFilters, connText, connTooltip, filterKey, treeParent } from './treeFilter';
+import { applyFilters, connText, connTooltip, filterKey, groupText, treeParent } from './treeFilter';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -68,9 +68,24 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
 
   /** node koneksi yang terakhir diberikan ke tree (per nama): untuk refresh satu baris saja */
   private connNodes = new Map<string, Node>();
+  private groupNodes = new Map<string, Node>();
   private remember(nodes: Node[]): Node[] {
-    for (const x of nodes) if (x.kind === 'conn') this.connNodes.set(x.c.name, x);
+    for (const x of nodes) {
+      if (x.kind === 'conn') this.connNodes.set(x.c.name, x);
+      if (x.kind === 'group') this.groupNodes.set(x.group, x);
+    }
     return nodes;
+  }
+  /** koneksi yang isinya sedang dimuat (expand) dan group yang refresh-nya ditunda sampai muatan itu selesai */
+  private loading = new Set<string>();
+  private pendingGroups = new Set<string>();
+  /** gambar ulang group (jumlah connected); ditunda selama ada koneksi di group itu yang masih memuat, karena refresh group menunggu muatan itu */
+  private refreshGroup(group: string): void {
+    const busy = this.conns.list().some((c) => c.group === group && this.loading.has(c.name));
+    if (busy) { this.pendingGroups.add(group); return; }
+    this.pendingGroups.delete(group);
+    const g = this.groupNodes.get(group);
+    if (g) this.changed.fire(g);
   }
 
   /**
@@ -81,6 +96,8 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
     for (const name of names) {
       const n = this.connNodes.get(name);
       if (n) this.changed.fire(n);
+      const group = this.conns.get(name)?.group;
+      if (group) this.refreshGroup(group); // jumlah "N connected" di group
     }
   }
 
@@ -118,9 +135,10 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
     const C = vscode.TreeItemCollapsibleState.Collapsed;
     switch (n.kind) {
       case 'group': {
-        const count = this.conns.list().filter((c) => c.group === n.group).length;
+        const members = this.conns.list().filter((c) => c.group === n.group);
         return Object.assign(new vscode.TreeItem(n.group, C), {
-          id: `group:${n.group}#${SESSION}`, description: `- ${count} connection${count === 1 ? '' : 's'}${this.conns.groupSettings()[n.group]?.confirmAutoCommit === false ? ' · no commit confirm' : ''}`,
+          id: `group:${n.group}#${SESSION}`,
+          description: groupText(members.length, members.filter((c) => this.connected(c)).length, this.conns.groupSettings()[n.group]?.confirmAutoCommit === false),
           iconPath: groupIcon(groupEnv(n.group, this.conns.groupSettings())), contextValue: 'group',
         });
       }
@@ -211,6 +229,7 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
           break;
         case 'conn': {
           const c = n.c;
+          this.loading.add(c.name);
           const load = async (): Promise<Node[]> => (c.type === 'consul' ? [{ kind: 'consulDash', c }, ...(await this.kvChildren(c, pw, ''))]
             : isMs(c) ? MS_SERVER.map((folder): Node => ({ kind: 'mfolder', c, folder }))
             : (await d.databases(c, pw)).map((db): Node => ({ kind: 'db', c, db })));
@@ -270,6 +289,10 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
     } catch (e) {
       this.log.error(`Explorer.getChildren - EXCEPTION CAUGHT | ${n.c.name}: ${e instanceof Error ? e.message : e} - stack-trace: ${e instanceof Error ? e.stack : e}`);
       return [{ kind: 'msg', label: e instanceof Error ? e.message : String(e), error: true }];
+    } finally {
+      // koneksi selesai dimuat (berhasil / gagal): refresh group yang tadi ditunda
+      const g = n.kind === 'conn' && this.loading.delete(n.c.name) ? n.c.group : undefined;
+      if (g && this.pendingGroups.has(g)) setTimeout(() => this.refreshGroup(g), 0);
     }
   }
 
