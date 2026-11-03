@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Connections } from './connections';
-import { openSqlItems } from './sqlContext';
+import { openSqlItems, parentRel } from './sqlContext';
 
 /** folder: path relatif (pakai '/') di dalam workspace folder; file: uri file .sql */
 export type SqlNode = { kind: 'folder'; root: vscode.WorkspaceFolder; rel: string } | { kind: 'file'; uri: vscode.Uri };
@@ -82,10 +82,28 @@ export class SqlFiles implements vscode.TreeDataProvider<SqlNode> {
     return [...folders, ...out];
   }
 
+  /** induk node (dipakai TreeView.reveal): folder file / folder induk; level atas = undefined */
+  getParent(n: SqlNode): SqlNode | undefined {
+    if (this.flat) return undefined;
+    const root = n.kind === 'folder' ? n.root : vscode.workspace.getWorkspaceFolder(n.uri);
+    if (!root) return undefined;
+    const up = parentRel(n.kind === 'folder' ? n.rel : path.posix.relative(root.uri.path, n.uri.path));
+    if (up === undefined) return undefined;
+    // root workspace hanya jadi node di multi-root
+    return up || (vscode.workspace.workspaceFolders?.length ?? 0) > 1 ? { kind: 'folder', root, rel: up } : undefined;
+  }
+
+  /** sorot file di SQL Files (folder induknya dibuka); file di luar daftar (bukan .sql / di luar workspace) diabaikan */
+  async reveal(view: vscode.TreeView<SqlNode>, uri: vscode.Uri): Promise<void> {
+    if (!(await this.list()).some((u) => u.toString() === uri.toString())) return;
+    await view.reveal({ kind: 'file', uri }, { select: true, focus: false, expand: true });
+  }
+
   getTreeItem(n: SqlNode): vscode.TreeItem {
     if (n.kind === 'folder') {
       const uri = n.rel ? vscode.Uri.joinPath(n.root.uri, n.rel) : n.root.uri;
       return Object.assign(new vscode.TreeItem(uri, vscode.TreeItemCollapsibleState.Collapsed), {
+        id: `folder:${uri.toString()}`, // id tetap: reveal mencocokkan node lewat id
         label: n.rel ? path.posix.basename(n.rel) : n.root.name,
         contextValue: n.rel ? 'sqlFolder' : 'sqlFolderRoot', // root workspace tidak bisa di-rename / dihapus dari sini
       });
@@ -94,6 +112,7 @@ export class SqlFiles implements vscode.TreeDataProvider<SqlNode> {
     const dir = path.posix.dirname(vscode.workspace.asRelativePath(n.uri, (vscode.workspace.workspaceFolders?.length ?? 0) > 1));
     const where = b ? `${b.conn}${b.db ? ` / ${b.db}` : ''}` : '';
     return Object.assign(new vscode.TreeItem(n.uri), {
+      id: `file:${n.uri.toString()}`,
       description: [this.flat && dir !== '.' ? dir : '', where].filter(Boolean).join(' · '),
       tooltip: `${vscode.workspace.asRelativePath(n.uri)}${where ? `\n${where}` : ''}`,
       contextValue: 'sqlFile',
@@ -311,7 +330,8 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
       description: [dir !== '.' ? dir : '', where].filter(Boolean).join(' · '),
       tooltip: `${n.untitled ? `${uri.path} (not saved)` : vscode.workspace.asRelativePath(uri)}${where ? `\n${where}` : ''}`,
       contextValue: n.untitled ? 'openSqlUntitled' : 'openSqlFile',
-      command: { command: 'vscode.open', title: 'Open', arguments: [uri] },
+      // file: buka + sorot di SQL Files; untitled: buka saja
+      command: n.untitled ? { command: 'vscode.open', title: 'Open', arguments: [uri] } : { command: 'moonageDaydream.openSqlAndReveal', title: 'Open', arguments: [uri] },
     });
   }
 }

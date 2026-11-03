@@ -457,3 +457,10 @@ export function openSqlItems(tabs: { uri: string; path: string; untitled: boolea
   }
   return out;
 }
+
+/** folder induk path relatif workspace ('' = root workspace); root sendiri tidak punya induk (undefined) */
+export function parentRel(rel: string): string | undefined {
+  if (!rel) return undefined;
+  const i = rel.lastIndexOf('/');
+  return i < 0 ? '' : rel.slice(0, i);
+}

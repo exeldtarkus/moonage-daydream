@@ -365,6 +365,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "moonageDaydream.openSqlAndReveal",
+        "title": "Open and Reveal in SQL Files",
+        "category": "Moonage Daydream"
+      },
+      {
         "command": "moonageDaydream.newSqlFile",
         "title": "New SQL File",
         "category": "Moonage Daydream",
@@ -1121,6 +1126,10 @@
         },
         {
           "command": "moonageDaydream.filterNode",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.openSqlAndReveal",
           "when": "false"
         }
       ],

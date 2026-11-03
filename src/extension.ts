@@ -152,6 +152,15 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.sqlFilesFlat', () => sqlFiles.setFlat(true)),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesTree', () => sqlFiles.setFlat(false)),
     vscode.commands.registerCommand('moonageDaydream.refreshSqlFiles', () => sqlFiles.refresh()),
+    // klik file di view Open: buka file lalu sorot di SQL Files (folder induk dibuka)
+    vscode.commands.registerCommand('moonageDaydream.openSqlAndReveal', async (uri: vscode.Uri) => {
+      await vscode.window.showTextDocument(uri);
+      try {
+        await sqlFiles.reveal(sqlFilesView, uri);
+      } catch (e) {
+        log.error(`openSqlAndReveal ${uri.toString()} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`); // file tetap terbuka, sorot saja yang gagal
+      }
+    }),
     vscode.commands.registerCommand('moonageDaydream.newSqlFile', async (n?: SqlNode, name?: string) => {
       try {
         return await newSqlFile(sqlFiles, n, name);

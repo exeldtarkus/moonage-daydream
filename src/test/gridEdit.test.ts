@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { changeStatements, openSqlItems, reusableSelectTop } from '../sqlContext';
+import { changeStatements, openSqlItems, parentRel, reusableSelectTop } from '../sqlContext';
 import { render } from '../resultsHtml';
 import { mongoChanges, mongoFindCollection } from '../mongo';
 
@@ -191,4 +191,11 @@ test('open sql: every open SQL tab once (saved .sql files and unsaved SQL tabs),
     { uri: 'untitled:Untitled-3', label: 'Untitled-3', untitled: true },
     { uri: 'file:///w/B.SQL', label: 'B.SQL', untitled: false },
   ]);
+});
+
+test('sql files reveal: parent folder of a workspace-relative path ("" = workspace root)', () => {
+  assert.equal(parentRel('big/sub/a.sql'), 'big/sub');
+  assert.equal(parentRel('big/sub'), 'big');
+  assert.equal(parentRel('a.sql'), '');
+  assert.equal(parentRel(''), undefined);
 });
