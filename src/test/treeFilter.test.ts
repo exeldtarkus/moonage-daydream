@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { applyFilters, filterKey, matchFilter, treeParent } from '../treeFilter';
+import { applyFilters, connText, filterKey, matchFilter, treeParent } from '../treeFilter';
 import type { Node } from '../explorer';
 import { groupEnv, type ConnectionInfo } from '../db';
 
@@ -83,4 +83,11 @@ test('group environment: guessed from the group name, an explicit choice wins (n
   assert.equal(guess('customers'), undefined);
   assert.equal(groupEnv('customers', { customers: { env: 'production' } }), 'production');
   assert.equal(groupEnv('Production', { Production: { env: 'none' } }), undefined);
+});
+
+test('connection row text: "connected · name" while connected, details after " - "', () => {
+  assert.deepEqual(connText('test-db', 'SQL Server', '10.1.40.129\\UAT02', { connected: true, active: true }),
+    { label: 'connected · test-db', description: '- SQL Server · 10.1.40.129\\UAT02 · active' });
+  assert.deepEqual(connText('local-mysql (docker)', 'MySQL', '127.0.0.1:23306', { noConfirm: true }),
+    { label: 'local-mysql (docker)', description: '- MySQL · 127.0.0.1:23306 · no commit confirm' });
 });

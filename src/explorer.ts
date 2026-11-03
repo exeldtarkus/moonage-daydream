@@ -6,7 +6,7 @@ import { MS_DB, MS_SERVER, MS_TABLE, MS_TREE, MS_VIEW, permissionHint } from './
 import { folderContext, objectTemplates } from './objTemplates';
 import { monitorKit } from './monitorKits';
 import { ConsulClient, consulTarget, kvChildren } from './consul';
-import { applyFilters, filterKey, treeParent } from './treeFilter';
+import { applyFilters, connText, filterKey, treeParent } from './treeFilter';
 
 export type Node =
   | { kind: 'group'; group: string }
@@ -101,8 +101,11 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
       }
       case 'conn': {
         const active = this.conns.active === n.c.name;
-        return Object.assign(new vscode.TreeItem(n.c.name, C), {
-          description: `${this.connected(n.c) ? '● connected · ' : ''}${drivers[n.c.type].label} · ${address(n.c)}${active ? ' · active' : ''}${n.c.type === 'consul' || confirmAutoCommit(n.c, this.conns.groupSettings()) ? '' : ' · no commit confirm'}`,
+        const text = connText(n.c.name, drivers[n.c.type].label, address(n.c), {
+          connected: this.connected(n.c), active, noConfirm: n.c.type !== 'consul' && !confirmAutoCommit(n.c, this.conns.groupSettings()),
+        });
+        return Object.assign(new vscode.TreeItem(text.label, C), {
+          description: text.description,
           tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
           // logo jenis database; warna koneksi lewat ConnDecorations (nama berwarna + ●)
           iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
@@ -264,7 +267,8 @@ export class ConnDecorations implements vscode.FileDecorationProvider {
   private changed = new vscode.EventEmitter<undefined>();
   readonly onDidChangeFileDecorations = this.changed.event;
 
-  constructor(private conns: Connections) {}
+  /** connected: status terhubung (diisi extension) -> badge ● hijau */
+  constructor(private conns: Connections, private connected: (c: ConnectionInfo) => boolean = () => false) {}
 
   refresh(): void {
     this.changed.fire(undefined);
@@ -273,7 +277,10 @@ export class ConnDecorations implements vscode.FileDecorationProvider {
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (uri.scheme !== CONN_SCHEME) return undefined;
     const c = this.conns.get(decodeURIComponent(uri.path.slice(1)));
-    if (!c?.color) return undefined;
+    if (!c) return undefined;
+    // satu dekorasi per baris: VS Code memakai warnanya untuk badge DAN nama, jadi selama terhubung keduanya hijau
+    if (this.connected(c)) return { badge: '●', color: new vscode.ThemeColor('charts.green'), tooltip: `connected${c.color ? ` · ${c.color} connection` : ''}` };
+    if (!c.color) return undefined;
     return { badge: '●', color: new vscode.ThemeColor(CONN_COLORS[c.color]), tooltip: `${c.color} connection` };
   }
 }
