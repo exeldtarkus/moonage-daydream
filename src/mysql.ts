@@ -8,6 +8,8 @@ import type { Link, Raw } from './sqlDriver';
 
 /** pool per koneksi + database (database bisa beda per file .sql) */
 const pools = new Map<string, mysql.Pool>();
+/** pool yang sudah pernah berhasil connect (status connected di Connections; pool dibuat lazy, gagal connect tidak dihitung) */
+const readyPools = new Set<string>();
 
 /** quote identifier MySQL: `nama`` aneh` */
 export const quoteMy = (s: string) => `\`${s.replace(/`/g, '``')}\``;
@@ -25,6 +27,7 @@ function pool(conn: ConnectionInfo, password: string, db?: string): mysql.Pool {
   let p = pools.get(key);
   if (!p) {
     p = mysql.createPool({ ...mysqlConfig(conn, password, db), connectionLimit: 5 });
+    p.on('connection', () => readyPools.add(key));
     pools.set(key, p);
   }
   return p;
@@ -480,10 +483,10 @@ function make(label: string, formatter: 'mysql' | 'mariadb', analyze: (s: string
       const [type, ps] = await Promise.all([routineType(conn, password, db, obj.name), mysqlLike.parameters!(conn, password, db, obj)]);
       return { sql: myRunScript(db, obj.name, type, ps), params: ps.length };
     },
-    isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`)),
+    isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`) && readyPools.has(k)),
     async close(name) {
       const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
-      for (const [k] of mine) pools.delete(k);
+      for (const [k] of mine) { pools.delete(k); readyPools.delete(k); }
       await Promise.all(mine.map(([, p]) => p.end()));
     },
   });
