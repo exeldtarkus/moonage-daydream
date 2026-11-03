@@ -1323,57 +1323,57 @@
       {
         "view": "moonageDaydream.openSql",
         "contents": "Loading Moonage Daydream…",
-        "when": "!moonageDaydream.ready"
+        "when": "!moonageDaydream.loaded.openSql"
       },
       {
         "view": "moonageDaydream.sqlFiles",
         "contents": "Loading Moonage Daydream…",
-        "when": "!moonageDaydream.ready"
+        "when": "!moonageDaydream.loaded.sqlFiles"
       },
       {
         "view": "moonageDaydream.explorer",
         "contents": "Loading Moonage Daydream…",
-        "when": "!moonageDaydream.ready"
+        "when": "!moonageDaydream.loaded.explorer"
       },
       {
         "view": "moonageDaydream.running",
         "contents": "Loading Moonage Daydream…",
-        "when": "!moonageDaydream.ready"
+        "when": "!moonageDaydream.loaded.running"
       },
       {
         "view": "moonageDaydream.history",
         "contents": "Loading Moonage Daydream…",
-        "when": "!moonageDaydream.ready"
+        "when": "!moonageDaydream.loaded.history"
       },
       {
         "view": "moonageDaydream.explorer",
         "contents": "No connection yet.\n[Add Connection](command:moonageDaydream.addConnection)",
-        "when": "moonageDaydream.ready"
+        "when": "moonageDaydream.loaded.explorer"
       },
       {
         "view": "moonageDaydream.running",
         "contents": "No query is running.",
-        "when": "moonageDaydream.ready"
+        "when": "moonageDaydream.loaded.running"
       },
       {
         "view": "moonageDaydream.history",
         "contents": "No query yet. Run a query (Ctrl+Alt+Enter) and it shows up here.",
-        "when": "moonageDaydream.ready"
+        "when": "moonageDaydream.loaded.history"
       },
       {
         "view": "moonageDaydream.sqlFiles",
         "contents": "Scanning the workspace for .sql files…",
-        "when": "moonageDaydream.ready && moonageDaydream.sqlFilesScanning"
+        "when": "moonageDaydream.loaded.sqlFiles && moonageDaydream.sqlFilesScanning"
       },
       {
         "view": "moonageDaydream.sqlFiles",
         "contents": "No .sql files in this workspace.\n[New SQL File](command:moonageDaydream.newSqlFile)",
-        "when": "moonageDaydream.ready && !moonageDaydream.sqlFilesScanning"
+        "when": "moonageDaydream.loaded.sqlFiles && !moonageDaydream.sqlFilesScanning"
       },
       {
         "view": "moonageDaydream.openSql",
         "contents": "No SQL tab is open.\n[New SQL File](command:moonageDaydream.openNewFile)",
-        "when": "moonageDaydream.ready"
+        "when": "moonageDaydream.loaded.openSql"
       }
     ],
     "configuration": {
