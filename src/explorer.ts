@@ -107,8 +107,9 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         return Object.assign(new vscode.TreeItem(text.label, C), {
           description: text.description,
           tooltip: `${n.c.user}@${address(n.c)}/${n.c.database}`,
-          // logo jenis database; warna koneksi lewat ConnDecorations (nama berwarna + ●)
-          iconPath: this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
+          // terhubung: titik hijau; selain itu logo jenis database. Warna koneksi lewat ConnDecorations (nama berwarna + ●)
+          iconPath: this.connected(n.c) ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
+            : this.extensionUri ? vscode.Uri.joinPath(this.extensionUri, 'media', 'db', `${n.c.type}.svg`)
             : new vscode.ThemeIcon(active ? 'vm-active' : 'server', n.c.color ? new vscode.ThemeColor(CONN_COLORS[n.c.color]) : undefined),
           resourceUri: connUri(n.c.name),
           id: `conn:${n.c.name}#${SESSION}.${this.generation.get(n.c.name) ?? 0}`,
@@ -267,8 +268,7 @@ export class ConnDecorations implements vscode.FileDecorationProvider {
   private changed = new vscode.EventEmitter<undefined>();
   readonly onDidChangeFileDecorations = this.changed.event;
 
-  /** connected: status terhubung (diisi extension) -> badge ● hijau */
-  constructor(private conns: Connections, private connected: (c: ConnectionInfo) => boolean = () => false) {}
+  constructor(private conns: Connections) {}
 
   refresh(): void {
     this.changed.fire(undefined);
@@ -278,8 +278,6 @@ export class ConnDecorations implements vscode.FileDecorationProvider {
     if (uri.scheme !== CONN_SCHEME) return undefined;
     const c = this.conns.get(decodeURIComponent(uri.path.slice(1)));
     if (!c) return undefined;
-    // satu dekorasi per baris: VS Code memakai warnanya untuk badge DAN nama, jadi selama terhubung keduanya hijau
-    if (this.connected(c)) return { badge: '●', color: new vscode.ThemeColor('charts.green'), tooltip: `connected${c.color ? ` · ${c.color} connection` : ''}` };
     if (!c.color) return undefined;
     return { badge: '●', color: new vscode.ThemeColor(CONN_COLORS[c.color]), tooltip: `${c.color} connection` };
   }
