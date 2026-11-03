@@ -528,6 +528,17 @@
         "key": "delete",
         "mac": "cmd+backspace",
         "when": "focusedView == moonageDaydream.sqlFiles"
+      },
+      {
+        "command": "moonageDaydream.filterNode",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f",
+        "when": "focusedView == moonageDaydream.explorer"
+      },
+      {
+        "command": "moonageDaydream.findObject",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o"
       }
     ],
     "menus": {

@@ -75,3 +75,11 @@ test('reveal: parent chain of an object up to its connection (and group)', () =>
   assert.deepEqual(chain({ kind: 'obj', c: ms, db: 'B', objKind: 'procedure', obj: { schema: 'dbo', name: 'p' } }), ['obj:p', 'ms:procedures', 'ms:programmability', 'db:B', 'ms:databases', 'conn:ms']);
   assert.deepEqual(chain({ kind: 'obj', c: ms, db: 'B', objKind: 'view', obj: { schema: 'dbo', name: 'v' } }), ['obj:v', 'ms:views', 'db:B', 'ms:databases', 'conn:ms']);
 });
+
+test('keyboard: Ctrl+Alt+F filters the selected Connections node, Ctrl+Alt+O opens Find Object anywhere', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json dibaca apa adanya
+  const pkg = require('../../package.json') as { contributes: { keybindings: { command: string; key: string; mac?: string; when?: string }[] } };
+  const kb = (cmd: string) => pkg.contributes.keybindings.find((k) => k.command === cmd);
+  assert.deepEqual(kb('moonageDaydream.filterNode'), { command: 'moonageDaydream.filterNode', key: 'ctrl+alt+f', mac: 'cmd+alt+f', when: 'focusedView == moonageDaydream.explorer' });
+  assert.deepEqual(kb('moonageDaydream.findObject'), { command: 'moonageDaydream.findObject', key: 'ctrl+alt+o', mac: 'cmd+alt+o' });
+});

@@ -301,7 +301,11 @@ export function activate(ctx: vscode.ExtensionContext) {
       explorer.refresh(n);
     }),
     vscode.commands.registerCommand('moonageDaydream.filterNode', async (n?: Node, text?: string) => {
-      if (!n || filterKey(n) === undefined) return;
+      n ??= explorerView.selection[0]; // shortcut keyboard (Ctrl+Alt+F): node yang sedang dipilih
+      if (!n || filterKey(n) === undefined) {
+        void vscode.window.showInformationMessage('Select a connection, database or folder in Connections to filter it.');
+        return;
+      }
       text ??= await vscode.window.showInputBox({
         title: 'Filter', value: explorer.filterOf(n) ?? '',
         prompt: n.kind === 'conn' ? 'Show databases whose name contains… (empty = clear)' : n.kind === 'db' ? 'Show tables, views and procedures whose name contains… (empty = clear)' : 'Show items whose name contains… (empty = clear)',
