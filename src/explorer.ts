@@ -49,9 +49,16 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
 
   /** status "connected" koneksi (diisi extension: pool / transaksi / panel terbuka) */
   connected: (c: ConnectionInfo) => boolean = () => false;
+  /** buka koneksi + cek login seperti Connect (diisi extension); dipakai saat koneksi yang terputus di-expand */
+  openConnection?: (c: ConnectionInfo) => Promise<void>;
+  /** koneksi baru terbuka dari expand: status digambar ulang segera (ikon titik hijau) */
+  onConnected?: (c: ConnectionInfo) => void;
+  /** isi koneksi yang baru dimuat saat connect: dipakai sekali oleh refresh berikutnya (ganti ikon) supaya tidak query ulang */
+  private justLoaded = new Map<string, Node[]>();
   /** id koneksi berganti setelah Disconnect -> VS Code menganggapnya item baru (collapsed), anak tidak dimuat ulang (pool tidak dibuka lagi) */
   private generation = new Map<string, number>();
   collapse(name: string) {
+    this.justLoaded.delete(name);
     this.generation.set(name, (this.generation.get(name) ?? 0) + 1);
   }
 
@@ -178,14 +185,25 @@ export class Explorer implements vscode.TreeDataProvider<Node> {
         case 'kv':
           out = await this.kvChildren(n.c, pw, n.key);
           break;
-        case 'conn':
-          if (n.c.type === 'consul') {
-            out = [{ kind: 'consulDash', c: n.c }, ...(await this.kvChildren(n.c, pw, ''))];
-            break;
-          }
-          out = isMs(n.c) ? MS_SERVER.map((folder) => ({ kind: 'mfolder', c: n.c, folder }))
-            : (await d.databases(n.c, pw)).map((db) => ({ kind: 'db', c: n.c, db }));
+        case 'conn': {
+          const c = n.c;
+          const load = async (): Promise<Node[]> => (c.type === 'consul' ? [{ kind: 'consulDash', c }, ...(await this.kvChildren(c, pw, ''))]
+            : isMs(c) ? MS_SERVER.map((folder): Node => ({ kind: 'mfolder', c, folder }))
+            : (await d.databases(c, pw)).map((db): Node => ({ kind: 'db', c, db })));
+          const hit = this.justLoaded.get(c.name);
+          this.justLoaded.delete(c.name);
+          if (hit && this.connected(c)) out = hit; // hanya selama masih terhubung (Disconnect = muat ulang + connect lagi)
+          else if (!this.connected(c) && this.openConnection) {
+            // terputus: loading bar di view sampai koneksi terbuka dan isinya termuat, lalu ikon langsung jadi titik hijau
+            out = await vscode.window.withProgress({ location: { viewId: 'moonageDaydream.explorer' }, title: `Connecting to ${c.name}` }, async () => {
+              await this.openConnection!(c);
+              return load();
+            });
+            this.justLoaded.set(c.name, out);
+            this.onConnected?.(c);
+          } else out = await load();
           break;
+        }
         case 'db':
           out = isMs(n.c) ? MS_DB.map((folder) => ({ kind: 'mfolder', c: n.c, folder, db: n.db }))
             : FOLDERS.map((f) => ({ kind: 'folder', c: n.c, db: n.db, objKind: f.objKind }));

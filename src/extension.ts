@@ -79,6 +79,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   status.command = 'moonageDaydream.selectConnection';
   explorer = new Explorer(conns, log, ctx.extensionUri);
   explorer.connected = isConnected;
+  explorer.openConnection = async (c) => { await openConnection(c); };
+  explorer.onConnected = () => refreshConnState(0);
   cacheDir = vscode.Uri.joinPath(ctx.globalStorageUri, 'moonage-cache').fsPath;
   metaDir = path.join(cacheDir, 'metadata');
   pruneMeta(metaDir, conns.list().map((c) => c.name)).catch((e: unknown) => log.error(`pruneMeta - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
@@ -1580,20 +1582,26 @@ function forgetMetadata(name: string): void {
   if (metaDir) removeMeta(metaDir, name).catch((e: unknown) => log.error(`forgetMetadata ${name} - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
 }
 
-/** Connect: buka koneksi (pool tetap terbuka) + cek login; Consul = leader */
+/** buka koneksi (pool tetap terbuka) + cek login; Consul = leader. Hasil: info server untuk log / notifikasi */
+async function openConnection(c: ConnectionInfo): Promise<string> {
+  const pw = await conns.password(c.name);
+  let info: string;
+  if (c.type === 'consul') {
+    info = `leader ${await new ConsulClient(consulTarget(c), pw).leader()}`;
+    consulUp.add(c.name);
+  } else {
+    const r = await drivers[c.type].run(c, pw, drivers[c.type].testSql);
+    info = (r.resultSets[0]?.rows[0] ?? []).map(String).join(' / ');
+  }
+  log.info(`connect ${c.name}: ${info}`);
+  return info;
+}
+
+/** Connect: buka koneksi + notifikasi */
 async function connectCommand(c: ConnectionInfo) {
   try {
-    const pw = await conns.password(c.name);
     const t = Date.now();
-    let info: string;
-    if (c.type === 'consul') {
-      info = `leader ${await new ConsulClient(consulTarget(c), pw).leader()}`;
-      consulUp.add(c.name);
-    } else {
-      const r = await drivers[c.type].run(c, pw, drivers[c.type].testSql);
-      info = (r.resultSets[0]?.rows[0] ?? []).map(String).join(' / ');
-    }
-    log.info(`connect ${c.name}: ${info}`);
+    const info = await openConnection(c);
     refreshConnState(0);
     if (c.type !== 'consul') void refreshMetadata(c); // Connect: cache Find Object dibaca ulang
     vscode.window.showInformationMessage(`Connected to ${c.name}${info ? ` (${info})` : ''} in ${Date.now() - t} ms`);
