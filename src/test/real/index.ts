@@ -826,18 +826,16 @@ async function cancelTest(m: typeof import('../../extension')) {
   say(`PASS re-run cancelled previous run in ${Date.now() - t} ms`);
 
   await sleep(1000);
-  const items = m.runningView.getChildren();
-  assert.equal(items.length, 1, 'running view lists the query');
-  const item = m.runningView.getTreeItem(items[0]);
-  say(`running view: "${item.label}" ${item.description}`);
+  const items = m.runningView.list();
+  assert.equal(items.length, 1, 'running status bar lists the query');
+  say(`running: "${items[0].sql.slice(0, 40)}" on ${items[0].conn}`);
   t = Date.now();
-  await vscode.commands.executeCommand('moonageDaydream.cancelRunning', items[0]); // tombol cancel di Running Queries
-  const cancelling = m.runningView.getTreeItem(items[0]);
-  assert.ok(String(cancelling.description).startsWith('Cancelling…') && cancelling.contextValue === 'cancelling', `cancelling state: ${cancelling.description}`);
-  say(`cancelling shown: "${cancelling.description}"`);
+  await vscode.commands.executeCommand('moonageDaydream.cancelRunning', items[0]); // pilih query di Quick Pick Running Queries
+  assert.ok(items[0].cancelling, 'cancelling state');
+  say('cancelling shown');
   assert.ok(resultHtml(m).includes('Cancelling query') && !resultHtml(m).includes('href="command:'), 'results: Cancelling query, button disabled');
   await second;
-  assert.equal(m.runningView.getChildren().length, 0, 'running view empty after cancel');
+  assert.equal(m.runningView.list().length, 0, 'no running query after cancel');
   const took = Date.now() - t;
   assert.ok(took < 5000, `cancel returns quickly (${took} ms)`);
   const html = resultHtml(m);
@@ -896,7 +894,7 @@ async function historyAndFormTest(m: typeof import('../../extension'), since: nu
   const mine = m.history.list().filter((e) => e.at >= since);
   const statuses = new Set(mine.map((e) => e.status));
   assert.ok(statuses.has('ok') && statuses.has('cancelled'), `history statuses: ${[...statuses]}`);
-  say(`PASS history: ${mine.length} entries (${[...statuses].join(', ')}), newest "${m.history.getTreeItem(mine[0]).label}"`);
+  say(`PASS history: ${mine.length} entries (${[...statuses].join(', ')}), newest "${mine[0].sql.split('\n')[0]}"`);
 
   const ok = mine.find((e) => e.status === 'ok' && e.sql.includes('DB_NAME()'))!;
   await vscode.commands.executeCommand('moonageDaydream.runHistory', ok);

@@ -329,6 +329,18 @@
         "icon": "$(stop-circle)"
       },
       {
+        "command": "moonageDaydream.showRunning",
+        "title": "Running Queries",
+        "category": "Moonage Daydream",
+        "icon": "$(loading~spin)"
+      },
+      {
+        "command": "moonageDaydream.showHistory",
+        "title": "Query History",
+        "category": "Moonage Daydream",
+        "icon": "$(history)"
+      },
+      {
         "command": "moonageDaydream.openHistory",
         "title": "Open in Editor",
         "category": "Moonage Daydream",
@@ -640,16 +652,6 @@
           "group": "navigation@2"
         },
         {
-          "command": "moonageDaydream.cancelAllQueries",
-          "when": "view == moonageDaydream.running",
-          "group": "navigation"
-        },
-        {
-          "command": "moonageDaydream.clearHistory",
-          "when": "view == moonageDaydream.history",
-          "group": "navigation"
-        },
-        {
           "command": "moonageDaydream.newSqlFile",
           "when": "view == moonageDaydream.sqlFiles",
           "group": "navigation@0"
@@ -795,46 +797,6 @@
           "command": "moonageDaydream.refreshExplorer",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn(\\.\\w+)?\\.(on|off)|db(\\.\\w+)?)$/",
           "group": "2_refresh"
-        },
-        {
-          "command": "moonageDaydream.cancelRunning",
-          "when": "view == moonageDaydream.running && viewItem == running",
-          "group": "inline"
-        },
-        {
-          "command": "moonageDaydream.cancelRunning",
-          "when": "view == moonageDaydream.running && viewItem == running",
-          "group": "1"
-        },
-        {
-          "command": "moonageDaydream.runHistory",
-          "when": "view == moonageDaydream.history && viewItem == history",
-          "group": "inline@1"
-        },
-        {
-          "command": "moonageDaydream.copyHistory",
-          "when": "view == moonageDaydream.history && viewItem == history",
-          "group": "inline@2"
-        },
-        {
-          "command": "moonageDaydream.openHistory",
-          "when": "view == moonageDaydream.history && viewItem == history",
-          "group": "1@1"
-        },
-        {
-          "command": "moonageDaydream.runHistory",
-          "when": "view == moonageDaydream.history && viewItem == history",
-          "group": "1@2"
-        },
-        {
-          "command": "moonageDaydream.copyHistory",
-          "when": "view == moonageDaydream.history && viewItem == history",
-          "group": "1@3"
-        },
-        {
-          "command": "moonageDaydream.removeHistory",
-          "when": "view == moonageDaydream.history && viewItem == history",
-          "group": "2"
         },
         {
           "command": "moonageDaydream.newSqlFile",
@@ -1308,14 +1270,6 @@
         {
           "id": "moonageDaydream.explorer",
           "name": "Connections"
-        },
-        {
-          "id": "moonageDaydream.running",
-          "name": "Running Queries"
-        },
-        {
-          "id": "moonageDaydream.history",
-          "name": "Query History"
         }
       ]
     },
@@ -1336,29 +1290,9 @@
         "when": "!moonageDaydream.loaded.explorer"
       },
       {
-        "view": "moonageDaydream.running",
-        "contents": "Loading Moonage Daydream…",
-        "when": "!moonageDaydream.loaded.running"
-      },
-      {
-        "view": "moonageDaydream.history",
-        "contents": "Loading Moonage Daydream…",
-        "when": "!moonageDaydream.loaded.history"
-      },
-      {
         "view": "moonageDaydream.explorer",
         "contents": "No connection yet.\n[Add Connection](command:moonageDaydream.addConnection)",
         "when": "moonageDaydream.loaded.explorer"
-      },
-      {
-        "view": "moonageDaydream.running",
-        "contents": "No query is running.",
-        "when": "moonageDaydream.loaded.running"
-      },
-      {
-        "view": "moonageDaydream.history",
-        "contents": "No query yet. Run a query (Ctrl+Alt+Enter) and it shows up here.",
-        "when": "moonageDaydream.loaded.history"
       },
       {
         "view": "moonageDaydream.sqlFiles",

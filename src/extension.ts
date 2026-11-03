@@ -4,7 +4,7 @@ import * as path from 'path';
 import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
-import { firstLine } from './runningStatus';
+import { firstLine, historyPick } from './runningStatus';
 import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, GroupEnv, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
@@ -153,8 +153,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     log,
     status,
     runningView,
-    vscode.window.registerTreeDataProvider('moonageDaydream.running', loadedOnce('running', runningView)),
-    vscode.window.registerTreeDataProvider('moonageDaydream.history', loadedOnce('history', history)),
+    history,
     // view "Open" + keterangan "N unsaved" di judulnya (hasil assignment = TreeView, ikut di-dispose)
     (openSql = new OpenSql(conns, ctx.workspaceState)).view = vscode.window.createTreeView('moonageDaydream.openSql', { treeDataProvider: loadedOnce('openSql', openSql), dragAndDropController: openSql, canSelectMany: true }),
     vscode.commands.registerCommand('moonageDaydream.openNewFile', () => openSql?.newFile()),
@@ -218,6 +217,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     sqlWatcher(),
     vscode.commands.registerCommand('moonageDaydream.cancelRunning', (q?: RunningQuery) => q && cancel(q)),
     vscode.commands.registerCommand('moonageDaydream.cancelAllQueries', () => running.forEach(cancel)),
+    vscode.commands.registerCommand('moonageDaydream.showRunning', showRunning),
+    vscode.commands.registerCommand('moonageDaydream.showHistory', showHistory),
     vscode.commands.registerCommand('moonageDaydream.openHistory', (e?: HistoryEntry) => e && openHistory(e)),
     vscode.commands.registerCommand('moonageDaydream.runHistory', async (e?: HistoryEntry) => {
       if (e && (await openHistory(e))) await runQuery({ all: true });
@@ -1045,6 +1046,55 @@ async function newSqliteDatabase(conn: ConnectionInfo) {
     log.error(`newSqliteDatabase - EXCEPTION CAUGHT | ${file}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     showError(`New Database failed: ${errMsg(e)}`);
   }
+}
+
+/** status bar "⟳ N running": Quick Pick query berjalan, pilih = cancel (Cancel all bila lebih dari satu) */
+async function showRunning(): Promise<void> {
+  const qs = runningView.list();
+  if (!qs.length) { void vscode.window.showInformationMessage('No query is running.'); return; }
+  type Item = vscode.QuickPickItem & { q?: RunningQuery };
+  const items: Item[] = qs.map((q) => ({
+    label: `$(loading~spin) ${firstLine(q.sql)}`,
+    description: `${q.db ? `${q.conn} / ${q.db}` : q.conn} · ${Math.floor((Date.now() - q.start) / 1000)}s${q.cancelling ? ' · cancelling…' : ''}`, q,
+  }));
+  if (qs.length > 1) items.unshift({ label: `$(debug-stop) Cancel all (${qs.length})` });
+  const pick = await vscode.window.showQuickPick(items, { title: 'Running Queries', placeHolder: 'Select a query to cancel it' });
+  if (!pick) return;
+  if (pick.q) cancel(pick.q); else running.forEach(cancel);
+}
+
+/** status bar "🕘 History": Quick Pick riwayat query; pilih = buka di tab preview, tombol per item = Run again / Copy / Remove, judul = Clear */
+async function showHistory(): Promise<void> {
+  type Item = vscode.QuickPickItem & { e: HistoryEntry };
+  const RUN = { iconPath: new vscode.ThemeIcon('play'), tooltip: 'Run again' };
+  const COPY = { iconPath: new vscode.ThemeIcon('copy'), tooltip: 'Copy SQL' };
+  const REMOVE = { iconPath: new vscode.ThemeIcon('trash'), tooltip: 'Remove from history' };
+  const CLEAR = { iconPath: new vscode.ThemeIcon('clear-all'), tooltip: 'Clear all history' };
+  const qp = vscode.window.createQuickPick<Item>();
+  const fill = () => {
+    qp.items = history.list().map((e) => ({ ...historyPick(e, Date.now()), e, buttons: [RUN, COPY, REMOVE] }));
+    qp.placeholder = qp.items.length ? 'Select a query to open it (it does not run)' : 'No query yet. Run a query (Ctrl+Alt+Enter) and it shows up here.';
+  };
+  qp.title = 'Query History';
+  qp.matchOnDescription = true;
+  qp.buttons = [CLEAR];
+  fill();
+  qp.onDidAccept(() => {
+    const e = qp.selectedItems[0]?.e;
+    qp.hide();
+    if (e) void openHistory(e);
+  });
+  qp.onDidTriggerItemButton(async ({ item, button }) => {
+    if (button === RUN) { qp.hide(); await vscode.commands.executeCommand('moonageDaydream.runHistory', item.e); }
+    if (button === COPY) await vscode.env.clipboard.writeText(item.e.sql);
+    if (button === REMOVE) { await history.remove(item.e); fill(); }
+  });
+  qp.onDidTriggerButton(async () => {
+    qp.hide();
+    await vscode.commands.executeCommand('moonageDaydream.clearHistory');
+  });
+  qp.onDidHide(() => qp.dispose());
+  qp.show();
 }
 
 /** tab preview (klik tabel / Query History) + SQL yang terakhir ditulis ke sana */
