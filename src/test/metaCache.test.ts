@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { clearCache, dirSize, pruneMeta, readMeta, refreshMeta, removeMeta } from '../metaCache';
+import { clearCache, dirSize, pruneMeta, readMeta, refreshMeta, removeMeta, updateSequential } from '../metaCache';
 import type { DbObject, ListKind } from '../db';
 
 const objects: Record<string, Partial<Record<ListKind, DbObject[]>>> = {
@@ -79,4 +79,25 @@ test('clear cache: reports the size, then deletes the whole cache folder (missin
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('update metadata: one connection at a time, progress per step, failures collected, cancel stops before the next one', async () => {
+  const order: string[] = [];
+  let active = 0;
+  const run = async (c: string) => {
+    active++;
+    assert.equal(active, 1, 'never two at once');
+    order.push(c);
+    await new Promise((r) => setTimeout(r, 5));
+    active--;
+    return c === 'b' ? 'login failed' : undefined;
+  };
+  const steps: string[] = [];
+  const r = await updateSequential(['a', 'b', 'c'], run, (c, i) => steps.push(`${i}:${c}`), () => false);
+  assert.deepEqual(order, ['a', 'b', 'c']);
+  assert.deepEqual(steps, ['0:a', '1:b', '2:c']);
+  assert.deepEqual(r, { ok: ['a', 'c'], failed: [['b', 'login failed']], skipped: [] });
+  let stop = false;
+  const r2 = await updateSequential(['a', 'b', 'c'], async (c: string) => { if (c === 'a') stop = true; return undefined; }, () => undefined, () => stop);
+  assert.deepEqual(r2, { ok: ['a'], failed: [], skipped: ['b', 'c'] });
 });
