@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { ConnectionInfo, GroupSettings } from './db';
+import type { ConnectionInfo, GroupEnv, GroupSettings } from './db';
 
 const LIST = 'connections';
 const ACTIVE = 'activeConnection';
@@ -101,9 +101,28 @@ export class Connections {
 
   /** konfirmasi Auto-commit per group; undefined = default (aktif) */
   setGroupConfirm(group: string, on: boolean | undefined): Promise<void> {
+    return this.setGroupSetting(group, { confirmAutoCommit: on });
+  }
+
+  /** lingkungan group (ikon); undefined = tebak dari nama */
+  setGroupEnv(group: string, env: GroupEnv | 'none' | undefined): Promise<void> {
+    return this.setGroupSetting(group, { env });
+  }
+
+  /** ubah sebagian pengaturan group (nilai undefined = dihapus); group tanpa pengaturan tersisa dibuang */
+  private setGroupSetting(group: string, patch: GroupSettings[string]): Promise<void> {
     return this.serial(() => {
-      const { [group]: _old, ...rest } = this.groupSettings();
-      return this.write(GROUPS, on === undefined ? rest : { ...rest, [group]: { confirmAutoCommit: on } });
+      const { [group]: old, ...rest } = this.groupSettings();
+      const next = Object.fromEntries(Object.entries({ ...old, ...patch }).filter(([, v]) => v !== undefined));
+      return this.write(GROUPS, Object.keys(next).length ? { ...rest, [group]: next } : rest);
+    });
+  }
+
+  /** rename group: pengaturannya (konfirmasi commit, lingkungan) ikut pindah ke nama baru */
+  moveGroupSettings(from: string, to: string): Promise<void> {
+    return this.serial(() => {
+      const { [from]: old, ...rest } = this.groupSettings();
+      return this.write(GROUPS, old ? { ...rest, [to]: old } : rest);
     });
   }
 

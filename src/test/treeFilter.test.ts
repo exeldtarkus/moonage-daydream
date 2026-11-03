@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { applyFilters, filterKey, matchFilter, treeParent } from '../treeFilter';
 import type { Node } from '../explorer';
-import type { ConnectionInfo } from '../db';
+import { groupEnv, type ConnectionInfo } from '../db';
 
 const c = { name: 'lab', type: 'mysql' } as ConnectionInfo;
 const ms = { name: 'ms', type: 'mssql' } as ConnectionInfo;
@@ -68,4 +68,19 @@ test('keyboard: Ctrl+Alt+F filters the selected Connections node, Ctrl+Alt+O ope
   const kb = (cmd: string) => pkg.contributes.keybindings.find((k) => k.command === cmd);
   assert.deepEqual(kb('moonageDaydream.filterNode'), { command: 'moonageDaydream.filterNode', key: 'ctrl+alt+f', mac: 'cmd+alt+f', when: 'focusedView == moonageDaydream.explorer' });
   assert.deepEqual(kb('moonageDaydream.findObject'), { command: 'moonageDaydream.findObject', key: 'ctrl+alt+o', mac: 'cmd+alt+o' });
+});
+
+test('group environment: guessed from the group name, an explicit choice wins (none = plain folder)', () => {
+  const guess = (name: string) => groupEnv(name, {});
+  assert.equal(guess('Production'), 'production');
+  assert.equal(guess('prod-jkt'), 'production');
+  assert.equal(guess('UAT'), 'uat');
+  assert.equal(guess('Pre-Prod'), 'uat', 'pre-production is not production');
+  assert.equal(guess('staging'), 'uat');
+  assert.equal(guess('local docker'), 'local');
+  assert.equal(guess('Development'), 'development');
+  assert.equal(guess('dev team'), 'development');
+  assert.equal(guess('customers'), undefined);
+  assert.equal(groupEnv('customers', { customers: { env: 'production' } }), 'production');
+  assert.equal(groupEnv('Production', { Production: { env: 'none' } }), undefined);
 });

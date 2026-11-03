@@ -5,7 +5,7 @@ import { Connections } from './connections';
 import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
+import { ConnectionInfo, GroupEnv, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { OpenSql, SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -316,6 +316,23 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.changeConnectionColor', (n?: Node, color?: string) => changeConnectionColor(n, color)),
     vscode.commands.registerCommand('moonageDaydream.moveConnectionToGroup', (n?: Node, pick?: string) => moveToGroup(n, pick)),
     vscode.commands.registerCommand('moonageDaydream.renameGroup', (n?: Node, name?: string) => renameGroup(n, name)),
+    vscode.commands.registerCommand('moonageDaydream.setGroupEnv', async (n?: Node, pick?: GroupEnv | 'none' | 'auto') => {
+      if (n?.kind !== 'group') return;
+      const now = conns.groupSettings()[n.group]?.env;
+      const items: (vscode.QuickPickItem & { value: GroupEnv | 'none' | 'auto' })[] = [
+        { label: '$(sparkle) Auto', description: `from the group name${now ? '' : ' (current)'}`, value: 'auto' },
+        { label: '$(flame) Production', value: 'production' },
+        { label: '$(beaker) UAT', value: 'uat' },
+        { label: '$(tools) Development', value: 'development' },
+        { label: '$(home) Local Development', value: 'local' },
+        { label: '$(folder-library) None', description: 'plain group icon', value: 'none' },
+      ];
+      for (const i of items) if (i.value === now) i.description = 'current';
+      pick ??= (await vscode.window.showQuickPick(items, { title: `Environment of ${n.group}`, placeHolder: 'Icon and color of the group in Connections' }))?.value;
+      if (!pick) return;
+      await conns.setGroupEnv(n.group, pick === 'auto' ? undefined : pick);
+      explorer.refresh();
+    }),
     vscode.commands.registerCommand('moonageDaydream.refreshExplorer', (n?: Node) => {
       completion.clear(); // tabel baru juga muncul di autocomplete
       gridMeta.clear();
@@ -767,6 +784,7 @@ export async function renameGroup(n?: Node, name?: string): Promise<void> {
     const to = name ?? (await vscode.window.showInputBox({ title: `Rename group ${n.group}`, value: n.group, validateInput: (v) => (v.trim() ? undefined : 'Name is required') }));
     if (to === undefined || to.trim() === n.group) return;
     await conns.setGroup(conns.list().filter((c) => c.group === n.group).map((c) => c.name), to);
+    await conns.moveGroupSettings(n.group, to.trim());
     explorer.refresh();
   } catch (e) {
     log.error(`renameGroup - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
