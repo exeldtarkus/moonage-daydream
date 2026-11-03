@@ -14,8 +14,10 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
   - **SQLite** (sql.js, WebAssembly): file database dibaca setiap query dan ditulis balik setelah statement yang mengubah data.
   - **MongoDB**: query gaya mongosh seperti `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` dan `db.runCommand(...)`. Dokumen ditampilkan sebagai kolom grid. Host boleh berupa connection string `mongodb://` atau `mongodb+srv://`.
   - **Consul** (HTTP API): telusuri dan edit key KV (JSON / YAML / teks) dengan backup sebelum setiap perubahan, dan dashboard untuk leader, node, service dan health check. ACL token disimpan di SecretStorage VS Code.
-- **View Connections**: koneksi → database → Tables / Views / Procedures → kolom, dengan logo per jenis database. **Select Top 100** pada table atau view, **New SQL File** pada database. Password disimpan di SecretStorage VS Code.
-- **Connect / Disconnect** per koneksi, dengan status `● connected` di **Connections**; Disconnect menanyakan commit atau rollback transaksi manual yang masih terbuka dulu. Opsional auto disconnect koneksi yang idle.
+- **View Connections**: koneksi → database → Tables / Views / Procedures → kolom, dengan logo per jenis database. **Select Top 100** pada table atau view (klik kiri atau ikon play), **New SQL File** pada database. Password disimpan di SecretStorage VS Code.
+- **Connect / Disconnect** per koneksi: titik hijau berdenyut di logo database selama terhubung; expand koneksi yang belum terhubung akan menghubungkannya dulu. Disconnect menanyakan commit atau rollback transaksi manual yang masih terbuka dulu. Opsional auto disconnect koneksi yang idle.
+- **Find Object** (Ctrl+Alt+O): satu quick pick untuk koneksi, database, table, view dan procedure dari semua koneksi, dibaca dari cache metadata lokal.
+- **Filter** (Ctrl+Alt+F di **Connections**): ikon corong pada koneksi, database atau folder hanya menampilkan nama yang mengandung teks yang diketik.
 - **View, procedure dan function** (SQL Server, MySQL / MariaDB, PostgreSQL): klik kanan untuk **Show Definition**, **Edit** (script `CREATE OR ALTER` / `CREATE OR REPLACE`) dan **Run Procedure…** (script EXEC / CALL / SELECT dengan semua argumen); procedure dan function bisa di-expand ke parameternya.
 - **SQL Server Object Explorer** seperti ekstensi mssql: Databases / System Databases, Security, Server Objects, SQL Server Agent (job dengan **Start Job** / **Stop Job**); per database Tables, Views, Synonyms, Programmability dan Security; per table Columns, Keys, Constraints, Triggers, Indexes dan Statistics. **Script as…** CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE, **Activity Monitor**, **Kill Session…**, **Server Info**, **Database Info**, **Backup / Restore Database (script)…**.
 - **Live Monitor (charts)** untuk SQL Server, MySQL / MariaDB dan PostgreSQL: grafik live untuk seluruh server atau satu database, dengan tab Running queries, Sessions / Blocking, waits dan Expensive queries, serta **Kill** dengan konfirmasi.
@@ -27,13 +29,36 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
 - **Auto limit** untuk satu SELECT, lalu **Load more (+1000)** sampai 50.000 baris di grid.
 - **Mode transaksi manual** per file dengan lens **Commit** / **Rollback**; di SQL Server, MySQL / MariaDB dan PostgreSQL statusnya dibaca dari server dan `COMMIT` / `ROLLBACK` boleh ada di dalam script.
 - **Konfirmasi Auto-commit**: statement yang mengubah data di mode Auto-commit minta konfirmasi dulu (aktif secara default; bisa dimatikan per group atau koneksi).
-- **Grid hasil**: tag tipe kolom, toolbar WHERE yang menjalankan ulang query di server, filter / sort / hide per kolom pada baris yang sudah dimuat, urutan kolom bisa diubah, panel samping **Columns** / **Inspector**, pilih baris lalu Ctrl+C (tersalin sebagai TSV), virtual scroll untuk hasil besar. Hasil UPDATE / INSERT / DELETE menampilkan `n row(s) affected` di bawah judul **Statement n**, juga di samping hasil SELECT.
+- **Grid hasil**: tag tipe kolom, toolbar WHERE yang menjalankan ulang query di server, filter / sort / hide per kolom pada baris yang sudah dimuat, urutan kolom bisa diubah, panel samping **Columns** / **Inspector**, pilih baris lalu Ctrl+C (tersalin sebagai TSV); hanya baris di sekitar area tampil yang digambar, jadi hasil besar tetap cepat. Hasil UPDATE / INSERT / DELETE menampilkan `n row(s) affected` di bawah judul **Statement n**, juga di samping hasil SELECT.
 - **Export** semua data atau baris terpilih ke CSV, TSV, JSON, JSON (pretty), Markdown, HTML atau Excel (.xlsx), atau salin ke clipboard.
 - **Pin results** supaya hasil tetap di tab sendiri, berdampingan.
 - **Edit cell**: perubahan menghasilkan script UPDATE berdasarkan primary key di tab baru. Script tidak pernah dijalankan otomatis.
 - **Execution plan**: plan grafis dengan bar cost untuk SQL Server; output `EXPLAIN` sebagai grid untuk database lain.
-- **Dukungan editor**: autocomplete (database, schema, table, kolom termasuk alias dan tabel target UPDATE / INSERT / DELETE, keyword dan function; untuk MongoDB collection, method, nama field dan operator `$`), formatter (dialect mengikuti koneksi), lint untuk statement tanpa `;` dengan Quick Fix.
-- **View samping**: **SQL Files** (folder atau daftar rata, dengan rename, duplicate, delete dan drag & drop), **Running Queries**, **Query History**.
+- **Dukungan editor**: autocomplete (database, schema, table, kolom termasuk alias dan tabel target UPDATE / INSERT / DELETE, keyword dan function; untuk MongoDB collection, method, nama field dan operator `$`), formatter (dialect mengikuti koneksi), lint untuk statement tanpa `;` dengan Quick Fix, dan cek sintaks offline untuk SELECT / INSERT / UPDATE / DELETE / WITH dengan dialect koneksi file.
+- **View samping**: **Open** (semua tab SQL yang terbuka, tersimpan maupun belum, dengan pin dan urutan drag & drop), **SQL Files** (folder atau daftar rata, dengan rename, duplicate, delete dan drag & drop) dan **Connections**.
+- **Status bar**: query yang sedang berjalan (cancel satu atau semua) dan **History** (buka lagi, jalankan lagi, salin, hapus), keduanya lewat quick pick. Popup menampilkan query yang berjalan dengan **Cancel** dan tertutup saat query selesai.
+
+## Yang Baru
+
+**1.2.0**
+
+- Baru:
+  - **Find Object** (Ctrl+Alt+O): cari koneksi, database, table, view dan procedure dari semua koneksi lewat cache metadata lokal; **Update Metadata** dan **Clear Cache** di Command Palette.
+  - **Filter in Connections** (Ctrl+Alt+F): ikon corong pada koneksi, database atau folder hanya menampilkan nama yang cocok.
+  - **Open view**: semua tab SQL yang terbuka, tersimpan maupun belum, dengan Save All, Close All, pin dan urutan drag & drop.
+  - **SQL syntax check**: SELECT / INSERT / UPDATE / DELETE / WITH dicek offline dengan dialect koneksi (`moonageDaydream.lint.syntax`).
+  - **Running queries and history in the status bar**: quick pick untuk cancel, buka lagi, jalankan lagi atau salin; popup dengan Cancel selama query berjalan.
+  - **Group environment icons**: Production, UAT, Development dan Local Development, ditebak dari nama atau diatur lewat klik kanan.
+- Ditingkatkan:
+  - **Connection rows**: logo dengan titik berdenyut saat terhubung, jumlah koneksi terhubung per group, tooltip lebih lengkap, loading bar saat expand koneksi yang belum terhubung.
+  - **One preview tab**: klik tabel dan entri history memakai ulang satu tab SQL sampai tab itu diedit.
+  - **Faster large results**: grid hanya menggambar baris di sekitar area tampil.
+- Diperbaiki:
+  - **Slow or failed connections**: tidak lagi membekukan isi Connections lainnya atau tampil sebagai terhubung.
+
+Sebelumnya: **1.1.0** notifikasi setelah Add Data / simpan grid; **1.0.0** UNIQUE / FOREIGN KEY multi-kolom, koneksi MongoDB replica set, Show Log pada error, export streaming, perbaikan `GO`.
+
+Catatan lengkap: Command Palette **Moonage Daydream: What's New** di VS Code, atau halaman [GitHub Releases](https://github.com/exeldtarkus/moonage-daydream/releases).
 
 ## Instalasi
 
@@ -93,7 +118,9 @@ Untuk **Consul** form berisi host dan port (default 8500), **Enable SSL / TLS** 
 
 **Import Connections from DBCode…** (menu **⋯** view **Connections**) membaca koneksi extension DBCode dari setting `dbcode.connections` dan menampilkannya di quick pick multi-pilih: nama, tipe, host, port, instance, user, database, group, SSL, connection timeout dan read only ikut disalin. Koneksi yang namanya sudah dipakai, atau tipenya tidak didukung, dilewati (pesannya menyebutkan daftarnya). Password tidak ikut diimport: password ditanya sekali saat koneksi pertama kali dipakai, lalu disimpan di Secret Storage VS Code.
 
-**Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan folder group untuk **Rename Group…** dan **Auto-commit Confirmation…** (lihat [Transaksi](#7-transaksi)). Di quick pick koneksi, group ditampilkan sebagai `[group]`.
+**Group** menaruh koneksi di sebuah folder di **Connections**: pilih *No group*, group yang sudah ada, atau *New group…* untuk mengetik nama baru. Setiap folder group menampilkan jumlah koneksi di dalamnya; **+** (**Add Connection**) pada folder group langsung memilih group itu. Klik kanan folder group untuk **Rename Group…**, **Set Group Environment…** dan **Auto-commit Confirmation…** (lihat [Transaksi](#7-transaksi)). Di quick pick koneksi, group ditampilkan sebagai `[group]`.
+
+Ikon group menunjukkan lingkungannya: **Production** (api merah), **UAT** (gelas kimia kuning), **Development** (perkakas biru) atau **Local Development** (rumah hijau). Lingkungan ditebak dari nama group (`uat`, `staging`, `pre-prod`, `qa` → UAT; `prod`, `live` → Production; `local`, `docker` → Local Development; `dev` → Development); **Set Group Environment…** menetapkannya, atau mematikannya. Group menampilkan `N connections · ● M connected`. Group dan koneksi selalu mulai tertutup di setiap sesi.
 
 **Color** (swatch: None atau salah satu dari 15 warna: Red, Coral, Orange, Yellow, Gold, Lime, Green, Teal, Cyan, Sky, Blue, Purple, Magenta, Pink, Gray) menandai koneksi. Warnanya diambil dari tema VS Code (`charts.*` dan `terminal.ansi*`), jadi mengikuti tema terang maupun gelap:
 
@@ -106,7 +133,7 @@ Klik kanan koneksi di **Connections** untuk:
 
 - **Select Connection**: jadikan koneksi aktif;
 - **Connect** / **Disconnect**: lihat di bawah;
-- **Edit Connection…** (juga tombol pensil di baris koneksi): buka form;
+- **Edit Connection…**: buka form;
 - **Rename…**: nama baru yang unik; password tersimpan dan file `.sql` yang terikat ke koneksi ikut pindah ke nama baru;
 - **Change Color…**: quick pick dengan bulatan berwarna, atau *No color*;
 - **Move to Group…**;
@@ -121,9 +148,16 @@ Klik kanan koneksi di **Connections** untuk:
 - panel Live Monitor dan Consul Dashboard-nya ditutup;
 - connection pool ditutup.
 
-Selama pool, transaksi atau panel monitor terbuka, koneksi menampilkan `● connected` di **Connections**. Dengan `moonageDaydream.connection.idleDisconnectMinutes` (default `0` = mati) koneksi yang tidak dipakai selama sekian menit di-disconnect otomatis, tidak pernah saat query berjalan, transaksi terbuka atau monitor tampil.
+Baris koneksi menampilkan `[ nama ]`, lalu jenis dan host (`★` menandai koneksi aktif, `no commit confirm` konfirmasi auto-commit yang dimatikan). Selama pool, transaksi atau panel monitor terbuka, titik hijau berdenyut di logo database (diam bila OS meminta gerakan dikurangi). Tooltip berisi status, jenis, host, user, database, group / lingkungan dan konfirmasi commit. Tombol saat hover di baris: **Connect** / **Disconnect**, **Find Object** dan **Filter**. Koneksi yang lambat atau gagal tidak menghambat isi view lainnya, dan tidak pernah tampil sebagai terhubung (SQLite dianggap terhubung setelah filenya terbaca). Dengan `moonageDaydream.connection.idleDisconnectMinutes` (default `0` = mati) koneksi yang tidak dipakai selama sekian menit di-disconnect otomatis, tidak pernah saat query berjalan, transaksi terbuka atau monitor tampil.
 
-Expand koneksi untuk melihat database, table, view, procedure dan kolom (koneksi SQL Server menampilkan Object Explorer lengkap, lihat [SQL Server Object Explorer](#11-sql-server-object-explorer)). Pakai ikon play pada table atau view untuk **Select Top 100**, atau ikon file baru pada database untuk **New SQL File** yang langsung terikat ke database itu.
+Expand koneksi untuk melihat database, table, view, procedure dan kolom (koneksi SQL Server menampilkan Object Explorer lengkap, lihat [SQL Server Object Explorer](#11-sql-server-object-explorer)); koneksi yang belum terhubung menampilkan loading bar selama menghubungkan. Klik kiri table atau view (atau ikon play-nya) untuk **Select Top 100**, atau ikon file baru pada database untuk **New SQL File** yang langsung terikat ke database itu. **Select Top 100** dibuka di satu tab SQL preview, dipakai bersama Query History, yang dipakai ulang sampai tab itu diedit atau ditutup.
+
+**Find Object** (Ctrl+Alt+O, ikon kaca pembesar di judul **Connections**, atau di baris koneksi untuk mencari di koneksi itu saja) menampilkan koneksi, database, table, view dan procedure dari semua koneksi. Memilih table atau view menjalankan **Select Top 100**, procedure membuka definisinya, database membuka **New SQL File**; item itu juga ditampilkan (reveal) di **Connections**. Daftarnya dibaca dari cache metadata di global storage VS Code (satu file per koneksi dan database, hanya bisa dibaca oleh user sendiri). Cache diperbarui saat koneksi ditambah atau diedit, saat **Connect**, dan saat pertama dipakai setelah VS Code dibuka atau setelah **Disconnect**; menghapus koneksi ikut menghapus cache-nya. Dari Command Palette:
+
+- **Moonage Daydream: Update Metadata** membaca ulang koneksi yang dipilih, satu per satu (dibuka lalu ditutup lagi bila sebelumnya belum terhubung), dengan progress, **Cancel** dan ringkasan;
+- **Moonage Daydream: Clear Cache** menghapus cache (menampilkan ukurannya dan bertanya dulu); cache dibangun lagi saat dipakai.
+
+**Filter** (ikon corong pada koneksi, database atau folder, atau Ctrl+Alt+F pada item terpilih saat **Connections** fokus) hanya menampilkan nama yang mengandung teks itu: pada koneksi daftar database, pada database table, view dan procedure di dalamnya, pada folder isinya. **Clear All Filters** di judul view menghapus semuanya; filter tidak disimpan.
 
 ### 2. Menjalankan query
 
@@ -131,7 +165,7 @@ Buka atau buat file `.sql`. CodeLens di atas setiap statement menampilkan **Exec
 
 - **Ctrl+Alt+Enter** menjalankan selection, atau statement di posisi kursor. **Ctrl+Enter** melakukan hal yang sama bila extension DBCode tidak terpasang.
 - **Execute** pada lens menjalankan statement itu.
-- Saat query berjalan, muncul lens **Cancel**; query di-cancel di server.
+- Saat query berjalan, muncul lens **Cancel**; query di-cancel di server. Query yang berjalan lebih dari 0,3 detik juga memunculkan popup berisi query, detik berjalan dan **Cancel**; popup tertutup saat query selesai.
 
 ```sql
 SELECT order_id, customer, city, status, total
@@ -201,6 +235,8 @@ Kolom disarankan untuk tabel di statement pada posisi kursor: setelah `FROM` / `
 
 **Format SQL** (Ctrl+Alt+F, atau Format Document) memakai dialect SQL dari koneksi file tersebut. Huruf keyword, koma di depan dan titik koma di baris sendiri bisa diatur. Statement tanpa `;` penutup ditandai, dengan Quick Fix untuk menambahkannya.
 
+Statement SELECT, INSERT, UPDATE, DELETE dan WITH juga dicek kesalahan sintaksnya secara offline, dengan dialect koneksi file; statement lain tidak dicek. Kesalahan ditandai sebagai warning secara default (`moonageDaydream.lint.syntax`: `error`, `warning` atau `off`).
+
 Untuk koneksi MongoDB autocomplete mengikuti sintaks shell:
 
 - setelah `db.`: nama collection dan method db (`getCollection`, `runCommand`, `stats`, …);
@@ -211,9 +247,12 @@ Untuk koneksi MongoDB autocomplete mengikuti sintaks shell:
 
 ### 9. View
 
+- **Open**: semua tab SQL yang terbuka, file tersimpan maupun tab yang belum disimpan. Judulnya punya **New SQL File**, **Save All** dan **Close All** (tab yang di-pin tetap terbuka) dan menampilkan `N unsaved`. Per item: **×** menutupnya, pin menaruhnya di atas; drag item untuk mengubah urutan (urutan dan pin disimpan per workspace). Klik file untuk membukanya dan menampilkannya di **SQL Files**.
 - **SQL Files**: semua file `.sql` di workspace, sebagai folder (default) atau daftar rata; pilihannya diingat. **New SQL File** pada folder. Klik kanan file atau folder untuk **Rename…** (F2), **Duplicate…**, **Delete** (tombol Delete), **Copy Path**, **Copy Relative Path**, **Open to the Side** dan **Reveal in Explorer View**. **Delete** memindahkan item ke Recycle Bin / Trash; di jendela remote (WSL, SSH) tidak ada Trash, jadi diminta konfirmasi untuk hapus permanen. Drag file atau folder ke sebuah folder untuk memindahkannya; drag file ke editor untuk membukanya (drop di tepi editor untuk membukanya di split). Koneksi dan database yang terikat ke file ikut pindah saat rename atau move, dan ikut disalin oleh **Duplicate**.
-- **Running Queries**: query yang sedang berjalan beserta lama berjalannya, cancel satu atau semua.
-- **Query History**: jalankan lagi, salin SQL, buka di editor, hapus, kosongkan.
+- **Query berjalan** (status bar, kanan bawah): `N running · Ns` selama query berjalan; klik untuk quick pick cancel satu atau semua.
+- **History** (status bar): klik untuk riwayat query; memilih entri membukanya di tab preview (tanpa dijalankan), tombolnya menjalankan lagi, menyalin atau menghapus, dan tombol di judul mengosongkan riwayat.
+
+View menampilkan *Loading Moonage Daydream…* sampai datanya pertama kali dimuat.
 
 **Move Results To…** (judul view Results) memindahkan hasil ke panel bawah, atau ke kanan atau kiri editor.
 
@@ -288,6 +327,7 @@ Koneksi read-only tidak bisa menyimpan atau menghapus key. Bila ACL token tidak 
 | `moonageDaydream.format.leadingComma` | `true` | Koma di awal baris (`    , column`) |
 | `moonageDaydream.format.semicolonNewline` | `true` | Titik koma penutup statement di baris sendiri |
 | `moonageDaydream.lint.semicolon` | `error` | Tandai statement tanpa `;`: `error`, `warning`, `off` |
+| `moonageDaydream.lint.syntax` | `warning` | Tandai kesalahan sintaks di SELECT / INSERT / UPDATE / DELETE / WITH (offline, dialect koneksi): `error`, `warning`, `off` |
 | `moonageDaydream.connection.idleDisconnectMinutes` | `0` | Disconnect koneksi yang tidak dipakai selama sekian menit (tanpa query berjalan, transaksi terbuka atau monitor). `0` = tidak pernah |
 
 Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
@@ -298,7 +338,8 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | --- | --- |
 | Ctrl+Alt+Enter (Cmd+Alt+Enter) | Run Query (selection atau statement di posisi kursor) |
 | Ctrl+Enter (Cmd+Enter) | Run Query, hanya bila extension DBCode tidak terpasang |
-| Ctrl+Alt+F (Cmd+Alt+F) | Format SQL |
+| Ctrl+Alt+F (Cmd+Alt+F) | Format SQL; Filter… pada item terpilih saat **Connections** fokus |
+| Ctrl+Alt+O (Cmd+Alt+O) | Find Object… |
 | Shift+Alt+F | Format SQL, bila Moonage Daydream adalah formatter SQL |
 | F2 (Enter) | Rename… di view SQL Files |
 | Delete (Cmd+Backspace) | Delete di view SQL Files |
@@ -314,7 +355,10 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | `Moonage Daydream: Connect` / `Disconnect` | Buka atau tutup koneksi (view Connections) |
 | `Moonage Daydream: Open Key` / `New Key…` / `Delete Key…` | Key KV Consul (view Connections) |
 | `Moonage Daydream: Consul Dashboard` | Leader, node, service dan health check koneksi Consul |
-| `Moonage Daydream: Move to Group…` / `Rename Group…` | Group koneksi (view Connections) |
+| `Moonage Daydream: Move to Group…` / `Rename Group…` / `Set Group Environment…` | Group koneksi (view Connections) |
+| `Moonage Daydream: Find Object…` | Cari koneksi, database, table, view dan procedure dari cache metadata |
+| `Moonage Daydream: Update Metadata` / `Clear Cache` | Baca ulang metadata koneksi / hapus cache |
+| `Moonage Daydream: Filter…` / `Clear All Filters` | Filter koneksi, database atau folder di Connections |
 | `Moonage Daydream: Auto-commit Confirmation…` | Tanya sebelum perubahan data di mode Auto-commit: On / Off per group, On / Off / Same as group per koneksi |
 | `Moonage Daydream: Show Definition` / `Edit (CREATE OR ALTER script)` / `Run Procedure…` | View, procedure, function (dan trigger SQL Server) di Connections |
 | `Moonage Daydream: Script as…` | SQL Server: script CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE |
@@ -336,6 +380,8 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 | `Moonage Daydream: Rename…` / `Duplicate…` / `Delete` | Kelola file atau folder (view SQL Files) |
 | `Moonage Daydream: Copy Path` / `Copy Relative Path` / `Open to the Side` / `Reveal in Explorer View` | View SQL Files |
 | `Moonage Daydream: Show SQL Files as List` / `Show SQL Files as Folders` | Tampilan view SQL Files |
+| `Moonage Daydream: Save All SQL Files` / `Close All SQL Files` | View Open |
+| `Moonage Daydream: Running Queries` / `Query History` | Quick pick di status bar |
 | `Moonage Daydream: Clear History` | Kosongkan query history |
 
 ## Batasan
@@ -350,6 +396,8 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 - Konfirmasi Auto-commit: EXEC / CALL selalu ditanya, karena body procedure tidak diperiksa.
 - Consul lewat HTTPS dengan sertifikat self-signed belum didukung (Trust server certificate tidak berlaku).
 - Consul: value YAML tidak divalidasi sebelum disimpan (JSON divalidasi).
+- Cek sintaks: hanya SELECT / INSERT / UPDATE / DELETE / WITH; statement lain dan ekstensi dialect yang tidak dikenal parser offline tidak dicek.
+- Find Object menampilkan isi cache saat refresh terakhir; pakai **Update Metadata** setelah ada perubahan dari luar extension. Koneksi Consul tidak termasuk, dan filter hilang saat VS Code dibuka ulang.
 
 ## Development
 

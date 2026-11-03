@@ -14,8 +14,10 @@ A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite an
   - **SQLite** (sql.js, WebAssembly): the database file is read for each query and written back after statements that change data.
   - **MongoDB**: mongosh-style queries such as `db.users.find({ age: { $gt: 30 } }).sort({ name: 1 }).limit(10);`, plus `aggregate`, `countDocuments`, `distinct`, insert / update / delete, `db.getCollection(...)` and `db.runCommand(...)`. Documents are shown as grid columns. The host may be a `mongodb://` or `mongodb+srv://` connection string.
   - **Consul** (HTTP API): browse and edit KV keys (JSON / YAML / text) with a backup before every change, and a dashboard for leader, nodes, services and health checks. The ACL token is stored in VS Code SecretStorage.
-- **Connections view**: connection → database → Tables / Views / Procedures → columns, with a logo per database type. **Select Top 100** on a table or view, **New SQL File** on a database. Passwords are stored in VS Code SecretStorage.
-- **Connect / Disconnect** per connection, with a `● connected` status in **Connections**; Disconnect asks to commit or roll back open manual transactions first. Optional auto disconnect of idle connections.
+- **Connections view**: connection → database → Tables / Views / Procedures → columns, with a logo per database type. **Select Top 100** on a table or view (left-click or the play icon), **New SQL File** on a database. Passwords are stored in VS Code SecretStorage.
+- **Connect / Disconnect** per connection: a pulsing green dot on the database logo while connected; expanding a disconnected connection connects it first. Disconnect asks to commit or roll back open manual transactions first. Optional auto disconnect of idle connections.
+- **Find Object** (Ctrl+Alt+O): one quick pick over the connections, databases, tables, views and procedures of every connection, read from a local metadata cache.
+- **Filter** (Ctrl+Alt+F in **Connections**): the funnel on a connection, database or folder shows only the names that contain your text.
 - **Views, procedures and functions** (SQL Server, MySQL / MariaDB, PostgreSQL): right-click for **Show Definition**, **Edit** (a `CREATE OR ALTER` / `CREATE OR REPLACE` script) and **Run Procedure…** (an EXEC / CALL / SELECT script with every argument); procedures and functions expand to their parameters.
 - **SQL Server Object Explorer** like the mssql extension: Databases / System Databases, Security, Server Objects, SQL Server Agent (jobs with **Start Job** / **Stop Job**); per database Tables, Views, Synonyms, Programmability and Security; per table Columns, Keys, Constraints, Triggers, Indexes and Statistics. **Script as…** CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE, **Activity Monitor**, **Kill Session…**, **Server Info**, **Database Info**, **Backup / Restore Database (script)…**.
 - **Live Monitor (charts)** for SQL Server, MySQL / MariaDB and PostgreSQL: live charts for a whole server or one database, with Running queries, Sessions / Blocking, waits and Expensive queries tabs, and **Kill** with confirmation.
@@ -27,13 +29,36 @@ A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite an
 - **Auto limit** for a single SELECT, then **Load more (+1000)** up to 50,000 rows in the grid.
 - **Manual transaction mode** per file with **Commit** / **Rollback** lenses; on SQL Server, MySQL / MariaDB and PostgreSQL the state is read from the server and `COMMIT` / `ROLLBACK` may be part of the script.
 - **Auto-commit confirmation**: statements that change data in Auto-commit mode ask first (on by default; can be turned off per group or connection).
-- **Results grid**: column type tags, a WHERE toolbar that re-runs the query on the server, per-column filter / sort / hide on the loaded rows, column reorder, **Columns** / **Inspector** side panels, row selection with Ctrl+C (copied as TSV), virtual scrolling for large results. UPDATE / INSERT / DELETE results show their `n row(s) affected` under a **Statement n** title, also next to SELECT results.
+- **Results grid**: column type tags, a WHERE toolbar that re-runs the query on the server, per-column filter / sort / hide on the loaded rows, column reorder, **Columns** / **Inspector** side panels, row selection with Ctrl+C (copied as TSV); only the rows near the viewport are drawn, so large results stay fast. UPDATE / INSERT / DELETE results show their `n row(s) affected` under a **Statement n** title, also next to SELECT results.
 - **Export** all data or the selected rows to CSV, TSV, JSON, JSON (pretty), Markdown, HTML or Excel (.xlsx), or copy to the clipboard.
 - **Pin results** to keep them in their own tab, side by side.
 - **Edit cells**: edits generate an UPDATE script by primary key in a new tab. The script is never executed automatically.
 - **Execution plans**: graphical plan with cost bars for SQL Server; the `EXPLAIN` output as a grid for the other databases.
-- **Editor support**: autocomplete (databases, schemas, tables, columns including aliases and the target table of UPDATE / INSERT / DELETE, keywords and functions; for MongoDB collections, methods, field names and `$` operators), a formatter (dialect follows the connection), a lint for statements without `;` with a Quick Fix.
-- **Side views**: **SQL Files** (folders or a flat list, with rename, duplicate, delete and drag & drop), **Running Queries**, **Query History**.
+- **Editor support**: autocomplete (databases, schemas, tables, columns including aliases and the target table of UPDATE / INSERT / DELETE, keywords and functions; for MongoDB collections, methods, field names and `$` operators), a formatter (dialect follows the connection), a lint for statements without `;` with a Quick Fix, and an offline syntax check for SELECT / INSERT / UPDATE / DELETE / WITH in the dialect of the file's connection.
+- **Side views**: **Open** (every open SQL tab, saved or not, with pin and drag & drop order), **SQL Files** (folders or a flat list, with rename, duplicate, delete and drag & drop) and **Connections**.
+- **Status bar**: running queries (cancel one or all) and **History** (reopen, run again, copy, remove), both as quick picks. A popup shows a running query with **Cancel** and closes when it finishes.
+
+## What's New
+
+**1.2.0**
+
+- New:
+  - **Find Object** (Ctrl+Alt+O): search connections, databases, tables, views and procedures of every connection from a local metadata cache; **Update Metadata** and **Clear Cache** in the Command Palette.
+  - **Filter in Connections** (Ctrl+Alt+F): the funnel on a connection, database or folder shows only matching names.
+  - **Open view**: every open SQL tab, saved or not, with Save All, Close All, pin and drag & drop order.
+  - **SQL syntax check**: SELECT / INSERT / UPDATE / DELETE / WITH checked offline with the connection's dialect (`moonageDaydream.lint.syntax`).
+  - **Running queries and history in the status bar**: quick picks to cancel, reopen, run again or copy; a popup with Cancel while a query runs.
+  - **Group environment icons**: Production, UAT, Development and Local Development, guessed from the name or set by right-click.
+- Improved:
+  - **Connection rows**: logo with a pulsing dot while connected, connected count per group, richer tooltip, loading bar when expanding a disconnected connection.
+  - **One preview tab**: table clicks and history entries reuse one SQL tab until you edit it.
+  - **Faster large results**: the grid draws only the rows near the viewport.
+- Fixed:
+  - **Slow or failed connections**: no longer freeze the rest of Connections or show as connected.
+
+Earlier: **1.1.0** confirmation after Add Data / grid save; **1.0.0** multi-column UNIQUE / FOREIGN KEY, MongoDB replica set connections, Show Log on errors, streaming export, `GO` fixes.
+
+Full notes: Command Palette **Moonage Daydream: What's New** in VS Code, or the [GitHub Releases](https://github.com/exeldtarkus/moonage-daydream/releases) page.
 
 ## Installation
 
@@ -93,7 +118,9 @@ For **Consul** the form has host and port (default 8500), **Enable SSL / TLS** f
 
 **Import Connections from DBCode…** (the **⋯** menu of the **Connections** view) reads the connections of the DBCode extension from the setting `dbcode.connections` and shows them in a multi-select quick pick: name, type, host, port, instance, user, database, group, SSL, connection timeout and read only are copied. Connections whose name is already used, or whose type is not supported, are skipped (the message lists them). Passwords are not imported: the password is asked once when the connection is first used, then saved in VS Code Secret Storage.
 
-**Group** puts the connection in a folder in **Connections**: choose *No group*, an existing group, or *New group…* to type a new name. Each group folder shows the number of connections in it; **+** (**Add Connection**) on a group folder preselects that group. Right-click a group folder for **Rename Group…** and **Auto-commit Confirmation…** (see [Transactions](#7-transactions)). In the connection quick pick the group is shown as `[group]`.
+**Group** puts the connection in a folder in **Connections**: choose *No group*, an existing group, or *New group…* to type a new name. Each group folder shows the number of connections in it; **+** (**Add Connection**) on a group folder preselects that group. Right-click a group folder for **Rename Group…**, **Set Group Environment…** and **Auto-commit Confirmation…** (see [Transactions](#7-transactions)). In the connection quick pick the group is shown as `[group]`.
+
+The group icon shows its environment: **Production** (red flame), **UAT** (yellow beaker), **Development** (blue tools) or **Local Development** (green home). It is guessed from the group name (`uat`, `staging`, `pre-prod`, `qa` → UAT; `prod`, `live` → Production; `local`, `docker` → Local Development; `dev` → Development); **Set Group Environment…** sets it, or turns it off. A group shows `N connections · ● M connected`. Groups and connections start collapsed in every session.
 
 **Color** (a swatch: None or one of 15 colors: Red, Coral, Orange, Yellow, Gold, Lime, Green, Teal, Cyan, Sky, Blue, Purple, Magenta, Pink, Gray) marks the connection. The colors come from the VS Code theme (`charts.*` and `terminal.ansi*`), so they follow light and dark themes:
 
@@ -106,7 +133,7 @@ Right-click a connection in **Connections** for:
 
 - **Select Connection**: make it the active connection;
 - **Connect** / **Disconnect**: see below;
-- **Edit Connection…** (also the pencil button on the connection row): open the form;
+- **Edit Connection…**: open the form;
 - **Rename…**: a new, unique name; the saved password and the `.sql` files bound to the connection follow the new name;
 - **Change Color…**: a quick pick with colored circles, or *No color*;
 - **Move to Group…**;
@@ -121,9 +148,16 @@ Right-click a connection in **Connections** for:
 - its Live Monitor and Consul Dashboard panels are closed;
 - the connection pool is closed.
 
-While a pool, a transaction or a monitor panel is open, the connection shows `● connected` in **Connections**. With `moonageDaydream.connection.idleDisconnectMinutes` (default `0` = off) a connection that has not been used for that many minutes is disconnected automatically, never while a query runs, a transaction is open or a monitor is shown.
+A connection row shows `[ name ]`, then the type and host (`★` marks the active connection, `no commit confirm` an auto-commit confirmation that is off). While a pool, a transaction or a monitor panel is open, a green dot pulses on the database logo (it stays still when the OS asks for reduced motion). The tooltip lists the status, type, host, user, database, group / environment and the commit confirmation. Hover buttons on the row: **Connect** / **Disconnect**, **Find Object** and **Filter**. A connection that is slow or fails does not block the rest of the view, and is never shown as connected (SQLite counts as connected once its file was read). With `moonageDaydream.connection.idleDisconnectMinutes` (default `0` = off) a connection that has not been used for that many minutes is disconnected automatically, never while a query runs, a transaction is open or a monitor is shown.
 
-Expand a connection to browse databases, tables, views, procedures and columns (SQL Server connections show a full Object Explorer, see [SQL Server Object Explorer](#11-sql-server-object-explorer)). Use the play icon on a table or view for **Select Top 100**, or the new-file icon on a database for **New SQL File** bound to that database.
+Expand a connection to browse databases, tables, views, procedures and columns (SQL Server connections show a full Object Explorer, see [SQL Server Object Explorer](#11-sql-server-object-explorer)); a disconnected connection shows a loading bar while it connects. Left-click a table or view (or use its play icon) for **Select Top 100**, or the new-file icon on a database for **New SQL File** bound to that database. **Select Top 100** opens in one preview SQL tab, shared with Query History, that is reused until you edit or close it.
+
+**Find Object** (Ctrl+Alt+O, the magnifier in the **Connections** title, or on a connection row to search only that connection) lists the connections, databases, tables, views and procedures of every connection. Picking a table or view runs **Select Top 100**, a procedure opens its definition, a database opens **New SQL File**; the item is also revealed in **Connections**. The list is read from a metadata cache in the VS Code global storage (one file per connection and database, readable only by you). It is refreshed when a connection is added or edited, on **Connect**, and on first use after VS Code starts or after **Disconnect**; deleting a connection deletes its cache. From the Command Palette:
+
+- **Moonage Daydream: Update Metadata** reads the chosen connections again, one at a time (opened and closed again if they were not connected), with progress, **Cancel** and a summary;
+- **Moonage Daydream: Clear Cache** removes the cache (it shows its size and asks first); it is built again when used.
+
+**Filter** (the funnel on a connection, database or folder, or Ctrl+Alt+F on the selected item while **Connections** has focus) shows only names that contain the text: on a connection the databases, on a database the tables, views and procedures inside, on a folder its items. **Clear All Filters** in the view title removes them; filters are not saved.
 
 ### 2. Run queries
 
@@ -131,7 +165,7 @@ Open or create a `.sql` file. The CodeLens above every statement shows **Execute
 
 - **Ctrl+Alt+Enter** runs the selection, or the statement under the cursor. **Ctrl+Enter** does the same when the DBCode extension is not installed.
 - **Execute** on a lens runs that statement.
-- While a query runs, a **Cancel** lens appears; the query is cancelled on the server.
+- While a query runs, a **Cancel** lens appears; the query is cancelled on the server. A query that takes longer than 0.3 s also shows a popup with the query, the elapsed seconds and **Cancel**; it closes when the query finishes.
 
 ```sql
 SELECT order_id, customer, city, status, total
@@ -201,6 +235,8 @@ Columns are suggested for the tables of the statement under the cursor: after `F
 
 **Format SQL** (Ctrl+Alt+F, or Format Document) uses the SQL dialect of the file's connection. Keyword case, leading commas and the semicolon on its own line are configurable. Statements without a terminating `;` are marked, with a Quick Fix to add it.
 
+SELECT, INSERT, UPDATE, DELETE and WITH statements are also checked for syntax errors offline, with the dialect of the file's connection; other statements are not checked. Errors are warnings by default (`moonageDaydream.lint.syntax`: `error`, `warning` or `off`).
+
 For MongoDB connections autocomplete follows the shell syntax:
 
 - after `db.`: collection names and db methods (`getCollection`, `runCommand`, `stats`, …);
@@ -211,9 +247,12 @@ For MongoDB connections autocomplete follows the shell syntax:
 
 ### 9. Views
 
+- **Open**: every open SQL tab, saved files and unsaved tabs. The title has **New SQL File**, **Save All** and **Close All** (pinned tabs stay open) and shows `N unsaved`. Per item: **×** closes it, the pin keeps it on top; drag items to reorder them (the order and pins are saved per workspace). Clicking a file opens it and reveals it in **SQL Files**.
 - **SQL Files**: all `.sql` files in the workspace, as folders (default) or a flat list; the choice is remembered. **New SQL File** on a folder. Right-click a file or folder for **Rename…** (F2), **Duplicate…**, **Delete** (Delete key), **Copy Path**, **Copy Relative Path**, **Open to the Side** and **Reveal in Explorer View**. **Delete** moves the item to the Recycle Bin / Trash; in a remote window (WSL, SSH) there is no Trash, so it asks to confirm a permanent delete. Drag files or folders onto a folder to move them; drag a file to the editor to open it (drop on an editor edge to open it in a split). The connection and database bound to a file follow a rename or move, and are copied by **Duplicate**.
-- **Running Queries**: running queries with elapsed time, cancel one or all.
-- **Query History**: run again, copy the SQL, open in an editor, remove, clear.
+- **Running queries** (status bar, bottom right): `N running · Ns` while queries run; click it for a quick pick to cancel one or all.
+- **History** (status bar): click it for the query history; selecting an entry opens it in the preview tab (without running it), the buttons run it again, copy or remove it, and the title button clears the history.
+
+The views show *Loading Moonage Daydream…* until their first data is loaded.
 
 **Move Results To…** (Results view title) puts the results in the bottom panel, or to the right or left of the editor.
 
@@ -288,6 +327,7 @@ Read-only connections cannot save or delete keys. When the ACL token lacks a per
 | `moonageDaydream.format.leadingComma` | `true` | Put commas at the start of the line (`    , column`) |
 | `moonageDaydream.format.semicolonNewline` | `true` | Put the semicolon that ends a statement on its own line |
 | `moonageDaydream.lint.semicolon` | `error` | Mark statements not terminated with `;`: `error`, `warning`, `off` |
+| `moonageDaydream.lint.syntax` | `warning` | Mark syntax errors in SELECT / INSERT / UPDATE / DELETE / WITH (offline, dialect of the connection): `error`, `warning`, `off` |
 | `moonageDaydream.connection.idleDisconnectMinutes` | `0` | Disconnect a connection after it has not been used for this many minutes (no running query, open transaction or monitor). `0` = never |
 
 The extension also sets itself as the default formatter for `[sql]`.
@@ -298,7 +338,8 @@ The extension also sets itself as the default formatter for `[sql]`.
 | --- | --- |
 | Ctrl+Alt+Enter (Cmd+Alt+Enter) | Run Query (selection or statement under the cursor) |
 | Ctrl+Enter (Cmd+Enter) | Run Query, only when the DBCode extension is not installed |
-| Ctrl+Alt+F (Cmd+Alt+F) | Format SQL |
+| Ctrl+Alt+F (Cmd+Alt+F) | Format SQL; Filter… on the selected item when **Connections** has focus |
+| Ctrl+Alt+O (Cmd+Alt+O) | Find Object… |
 | Shift+Alt+F | Format SQL, when Moonage Daydream is the SQL formatter |
 | F2 (Enter) | Rename… in the SQL Files view |
 | Delete (Cmd+Backspace) | Delete in the SQL Files view |
@@ -314,7 +355,10 @@ The extension also sets itself as the default formatter for `[sql]`.
 | `Moonage Daydream: Connect` / `Disconnect` | Open or close a connection (Connections view) |
 | `Moonage Daydream: Open Key` / `New Key…` / `Delete Key…` | Consul KV keys (Connections view) |
 | `Moonage Daydream: Consul Dashboard` | Leader, nodes, services and health checks of a Consul connection |
-| `Moonage Daydream: Move to Group…` / `Rename Group…` | Connection groups (Connections view) |
+| `Moonage Daydream: Move to Group…` / `Rename Group…` / `Set Group Environment…` | Connection groups (Connections view) |
+| `Moonage Daydream: Find Object…` | Search connections, databases, tables, views and procedures from the metadata cache |
+| `Moonage Daydream: Update Metadata` / `Clear Cache` | Read the metadata of connections again / remove the cache |
+| `Moonage Daydream: Filter…` / `Clear All Filters` | Filter a connection, database or folder in Connections |
 | `Moonage Daydream: Auto-commit Confirmation…` | Ask before data changes in Auto-commit mode: On / Off per group, On / Off / Same as group per connection |
 | `Moonage Daydream: Show Definition` / `Edit (CREATE OR ALTER script)` / `Run Procedure…` | View, procedure, function (and SQL Server trigger) in Connections |
 | `Moonage Daydream: Script as…` | SQL Server: CREATE / ALTER / DROP / SELECT / INSERT / UPDATE / DELETE script |
@@ -336,6 +380,8 @@ The extension also sets itself as the default formatter for `[sql]`.
 | `Moonage Daydream: Rename…` / `Duplicate…` / `Delete` | Manage a file or folder (SQL Files view) |
 | `Moonage Daydream: Copy Path` / `Copy Relative Path` / `Open to the Side` / `Reveal in Explorer View` | SQL Files view |
 | `Moonage Daydream: Show SQL Files as List` / `Show SQL Files as Folders` | SQL Files view layout |
+| `Moonage Daydream: Save All SQL Files` / `Close All SQL Files` | Open view |
+| `Moonage Daydream: Running Queries` / `Query History` | The status bar quick picks |
 | `Moonage Daydream: Clear History` | Clear the query history |
 
 ## Limitations
@@ -350,6 +396,8 @@ The extension also sets itself as the default formatter for `[sql]`.
 - Auto-commit confirmation: EXEC / CALL always asks, since the procedure body is not inspected.
 - Consul over HTTPS with a self-signed certificate is not supported yet (Trust server certificate does not apply).
 - Consul: YAML values are not validated before saving (JSON is).
+- Syntax check: only SELECT / INSERT / UPDATE / DELETE / WITH; other statements and dialect extensions the offline parser does not know are not checked.
+- Find Object shows what was cached at the last refresh; use **Update Metadata** after changes made outside the extension. Consul connections are not included, and filters are lost when VS Code restarts.
 
 ## Development
 
