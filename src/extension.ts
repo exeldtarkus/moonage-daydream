@@ -161,6 +161,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand('moonageDaydream.openCloseAll', () => openSql?.closeAll()),
+    vscode.commands.registerCommand('moonageDaydream.openClose', (i?: { uri: string }) => i && openSql?.close(i.uri)),
     // view "Open": tab dibuka / ditutup / dipindah, language tab untitled berubah, judul tab untitled ikut isi (baris pertama)
     vscode.window.tabGroups.onDidChangeTabs(() => openSql?.redraw()),
     vscode.workspace.onDidOpenTextDocument(() => openSql?.redraw()),
