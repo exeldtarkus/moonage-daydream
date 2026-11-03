@@ -36,6 +36,7 @@ import { findObject } from './findObject';
 import { syntaxIssues } from './sqlSyntax';
 import { connStateChange } from './treeFilter';
 import { clearCache, dirSize, pruneMeta, refreshMeta, removeMeta, updateSequential } from './metaCache';
+import { CACHE_DIR, clearResultCaches, pruneStale } from './resultCache';
 import { filterKey } from './treeFilter';
 import { editScript, gridMeta, loadMore, markEditable, saveGrid, showError } from './gridEdit';
 import { columnsEditor, newTable } from './tablePanels';
@@ -88,6 +89,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   cacheDir = vscode.Uri.joinPath(ctx.globalStorageUri, 'moonage-cache').fsPath;
   metaDir = path.join(cacheDir, 'metadata');
   pruneMeta(metaDir, conns.list().map((c) => c.name)).catch((e: unknown) => log.error(`pruneMeta - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
+  resultFallback = vscode.Uri.joinPath(ctx.globalStorageUri, 'result-cache').fsPath;
+  for (const r of resultRoots()) pruneStale(r).catch((e: unknown) => log.error(`pruneStale - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
   ctx.subscriptions.push(conns.used.event(touchConn), idleWatcher());
   connDecorations = new ConnDecorations(conns);
   updateFormatterContext(ctx);
@@ -380,6 +383,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.updateMetadata', (names?: string[]) => updateMetadataCommand(names)),
     vscode.commands.registerCommand('moonageDaydream.clearCache', (confirmed?: boolean) => clearCacheCommand(confirmed === true)),
+    vscode.commands.registerCommand('moonageDaydream.clearResultCache', (confirmed?: boolean) => clearResultCacheCommand(confirmed === true)),
     vscode.commands.registerCommand('moonageDaydream.findObject', (n?: Node) => findObject({ conns, log, dir: metaDir, refresh: refreshMetadata, reveal: (x) => explorerView.reveal(x, { select: true, focus: false, expand: false }) }, n)),
     vscode.commands.registerCommand('moonageDaydream.newQueryForDb', async (n?: Node) => {
       if (n?.kind !== 'db') return;
@@ -1606,6 +1610,34 @@ async function clearCacheCommand(confirmed = false): Promise<boolean> {
   } catch (e) {
     log.error(`clearCache - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     showError(`Clear Cache failed: ${errMsg(e)}`);
+    return false;
+  }
+}
+/** fallback result cache bila tidak ada workspace folder (globalStorage) */
+let resultFallback = '';
+/** folder result cache "Load all": .moonage-cache di tiap workspace folder + fallback globalStorage */
+const resultRoots = () => [...(vscode.workspace.workspaceFolders ?? []).map((f) => path.join(f.uri.fsPath, CACHE_DIR)), resultFallback];
+
+/** Command Palette "Clear Result Cache": hapus semua cache hasil Load all (semua workspace folder + fallback) */
+async function clearResultCacheCommand(confirmed = false): Promise<boolean> {
+  try {
+    const roots = resultRoots();
+    let bytes = 0;
+    for (const r of roots) bytes += await dirSize(r);
+    const mb = (bytes / 1024 / 1024).toFixed(1);
+    if (!confirmed) {
+      const ok = await vscode.window.showWarningMessage(`Clear the Moonage Daydream result cache (${mb} MB)?`, {
+        modal: true, detail: 'Removes the rows kept by Load all in .moonage-cache of every open workspace folder. Run the query again to load them.',
+      }, 'Clear Result Cache');
+      if (ok !== 'Clear Result Cache') return false;
+    }
+    await clearResultCaches(roots);
+    log.info(`clear result cache: ${mb} MB removed (${roots.join(', ')})`);
+    void vscode.window.showInformationMessage(`Moonage Daydream result cache cleared (${mb} MB).`);
+    return true;
+  } catch (e) {
+    log.error(`clearResultCache - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    showError(`Clear Result Cache failed: ${errMsg(e)}`);
     return false;
   }
 }

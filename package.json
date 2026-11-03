@@ -164,6 +164,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "moonageDaydream.clearResultCache",
+        "title": "Clear Result Cache",
+        "category": "Moonage Daydream",
+        "icon": "$(trash)"
+      },
+      {
         "command": "moonageDaydream.setCopyFormat",
         "title": "Set Grid Copy Format (Ctrl+C)…",
         "category": "Moonage Daydream",
@@ -1398,6 +1404,20 @@
           ],
           "default": "jsonPretty",
           "description": "Format of the selected rows copied with Ctrl+C / Cmd+C in the result grid."
+        },
+        "moonageDaydream.grid.maxCachedRows": {
+          "type": "number",
+          "default": 5000000,
+          "minimum": 1,
+          "maximum": 5000000,
+          "description": "Load all: maximum rows kept in the result cache per result (at most 5,000,000). When reached, the query is cancelled on the server and the result is marked partial."
+        },
+        "moonageDaydream.grid.cacheMemoryMB": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Load all: RAM used by the result cache per result in MB (at most 100). Rows beyond it are written to .moonage-cache in the workspace folder (ignored by git)."
         }
       }
     },
