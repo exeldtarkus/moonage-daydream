@@ -1,1 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="#3fb950"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <style>
+    .wave { transform-origin: 8px 8px; animation: wave 1.8s ease-out infinite; }
+    @keyframes wave { from { transform: scale(1); opacity: .7; } to { transform: scale(2.4); opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .wave { animation: none; opacity: 0; } }
+  </style>
+  <circle class="wave" cx="8" cy="8" r="3" fill="none" stroke="#3fb950" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+  <circle cx="8" cy="8" r="3" fill="#3fb950"/>
+</svg>
