@@ -439,3 +439,8 @@ export function updateScript(table: string, columns: string[], types: string[], 
 export function reusableSelectTop(prev: { doc: { isClosed: boolean; getText(): string }; sql: string } | undefined): boolean {
   return !!prev && !prev.doc.isClosed && prev.doc.getText() === prev.sql;
 }
+
+/** tab SQL yang belum disimpan (untitled, masih terbuka) untuk grup "Unsaved" di SQL Files; label = baris ringkas isinya */
+export function untitledSqlDocs<D extends { uri: { path: string }; isUntitled: boolean; languageId: string; isClosed: boolean; getText(): string }>(docs: readonly D[]): { doc: D; label: string }[] {
+  return docs.filter((d) => d.isUntitled && d.languageId === 'sql' && !d.isClosed).map((doc) => ({ doc, label: preview(doc.getText()) || doc.uri.path }));
+}
