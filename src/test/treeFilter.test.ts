@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { applyFilters, connStateChange, connText, connTooltip, filterKey, groupText, matchFilter, treeParent } from '../treeFilter';
+import { applyFilters, connStateChange, connText, connTooltip, filterKey, groupText, matchFilter, matchWords, treeParent } from '../treeFilter';
 import type { Node } from '../explorer';
 import { groupEnv, type ConnectionInfo } from '../db';
 
@@ -131,4 +131,14 @@ test('sidebar: every view says it is loading until its own data was loaded once;
     assert.ok(welcome.some((w) => w.view === id && w.when === `!${key}` && /Loading/.test(w.contents)), `${id}: loading text`);
     for (const w of welcome.filter((x) => x.view === id && !/Loading/.test(x.contents))) assert.ok((w.when ?? '').startsWith(key), `${id}: "${w.contents}" waits for ${key}`);
   }
+});
+
+test('find object search: every word must appear (any order, any case) in name, database or connection; icons ignored', () => {
+  const item = { label: '$(table) dbo.TBL_POLICY', description: 'test-db / BIMA_HERITAGE · table' };
+  assert.equal(matchWords('tbl_policy BIMA_HERITAGE', item), true);
+  assert.equal(matchWords('bima_heritage   tbl_pol', item), true);
+  assert.equal(matchWords('test-db policy table', item), true);
+  assert.equal(matchWords('tbl_policy shop', item), false);
+  assert.equal(matchWords('', item), true);
+  assert.equal(matchWords('table', { label: '$(eye) v_orders', description: 'lab / shop · view' }), false, '$(table) icon text is not matched');
 });

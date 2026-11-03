@@ -88,3 +88,9 @@ export function connStateChange(before: string[], now: string[]): { connected: s
 export function groupText(count: number, connected: number, noConfirm: boolean): string {
   return `${count} connection${count === 1 ? '' : 's'}${connected ? ` · ● ${connected} connected` : ''}${noConfirm ? ' · no commit confirm' : ''}`;
 }
+
+/** Find Object: semua kata di query (dipisah spasi) harus ada di label atau deskripsi item, urutan bebas; ikon $(…) di label tidak ikut dicocokkan */
+export function matchWords(query: string, item: { label: string; description?: string }): boolean {
+  const text = `${item.label.replace(/\$\([\w~-]+\)/g, '')} ${item.description ?? ''}`.toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every((w) => text.includes(w));
+}
