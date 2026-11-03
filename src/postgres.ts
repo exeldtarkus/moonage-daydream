@@ -9,6 +9,8 @@ import type { Link, Raw } from './sqlDriver';
 
 /** pool per koneksi + database: PostgreSQL tidak bisa query lintas database dalam satu koneksi */
 const pools = new Map<string, Pool>();
+/** pool yang sudah pernah berhasil connect (status connected di Connections; pool dibuat lazy, gagal connect tidak dihitung) */
+const readyPools = new Set<string>();
 
 /** quote identifier PostgreSQL: "nama"" aneh" */
 export const quotePg = (s: string) => `"${s.replace(/"/g, '""')}"`;
@@ -33,10 +35,12 @@ function pool(conn: ConnectionInfo, password: string, db?: string): Pool {
   let p = pools.get(key);
   if (!p) {
     p = new Pool({ ...pgConfig(conn, password, db), max: 5 });
+    p.on('connect', () => readyPools.add(key));
     p.on('error', (e) => {
       // koneksi idle putus: pool dibuat ulang di query berikutnya
       driverLog.error(`postgres pool - EXCEPTION CAUGHT | ${conn.name}: ${e.message} - stack-trace: ${e.stack}`);
       pools.delete(key);
+      readyPools.delete(key);
     });
     pools.set(key, p);
   }
@@ -476,10 +480,10 @@ export const postgresDriver = sqlDriver({
     return { sql: (rs.length > 1 ? `-- ${rs.length} overloads: run the one you need\n` : '') + scripts.join('\n\n'),
       params: rs.length > 1 ? rs.length : pgArgs(rs[0].args).length };
   },
-  isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`)),
+  isOpen: (name) => [...pools.keys()].some((k) => k.startsWith(`${name}\n`) && readyPools.has(k)),
   async close(name) {
     const mine = [...pools.entries()].filter(([k]) => k.startsWith(`${name}\n`));
-    for (const [k] of mine) pools.delete(k);
+    for (const [k] of mine) { pools.delete(k); readyPools.delete(k); }
     await Promise.all(mine.map(([, p]) => p.end()));
   },
 });
