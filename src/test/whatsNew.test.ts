@@ -39,3 +39,11 @@ test('whats new: command is contributed', () => {
   const cmds = pkg.contributes.commands.map((c: { command: string }) => c.command);
   assert.ok(cmds.includes('moonageDaydream.whatsNew'));
 });
+
+test('whats new: notes for 1.0.0 (composite keys, GO n, Mongo hosts, export streaming, Show Log) and 1.1.0', () => {
+  const r1 = RELEASES.find((r) => r.version === '1.0.0');
+  assert.ok(r1, '1.0.0');
+  const text = r1.items.map((i) => `${i.title} ${i.detail ?? ''}`).join('\n');
+  for (const word of [/Keys/, /GO n/, /replica set/i, /[Ee]xport/, /Show Log/]) assert.match(text, word);
+  assert.ok(RELEASES.find((r) => r.version === '1.1.0'), '1.1.0');
+});

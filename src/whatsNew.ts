@@ -7,6 +7,22 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '1.1.0', date: '2026-11-02', items: [
+      { kind: 'improved', title: 'Feedback after saving data', detail: 'A notification confirms an Add Data insert or a grid save; Add Data clears its form for the next row.' },
+      { kind: 'fixed', title: 'Results panel and forms', detail: 'Opening a form (Columns, New Table, Add Data, ...) closes the Results panel so the form gets the space.' },
+    ],
+  },
+  {
+    version: '1.0.0', date: '2026-11-02', items: [
+      { kind: 'new', title: 'Multi-column UNIQUE and FOREIGN KEY', detail: 'A Keys table under New Table and the Columns editor adds, changes and drops keys over several columns, with the target table, columns and ON DELETE / ON UPDATE for foreign keys.' },
+      { kind: 'new', title: 'MongoDB replica set connections', detail: 'Connection strings with several hosts (mongodb://h1,h2/...) are accepted.' },
+      { kind: 'improved', title: 'Errors with Show Log', detail: 'Every error notification has a Show Log button; the "Moonage Daydream" output logs the context and stack trace.' },
+      { kind: 'improved', title: 'Faster, lighter export', detail: 'Export streams rows straight to the file on MySQL / MariaDB, PostgreSQL and SQLite instead of loading the whole result first.' },
+      { kind: 'improved', title: 'Faster result grid', detail: 'Table metadata used to decide whether rows can be edited is reused for 60 seconds.' },
+      { kind: 'fixed', title: 'GO in SQL Server scripts', detail: 'GO inside a string or comment no longer splits a batch, and GO n runs the batch n times.' },
+    ],
+  },
+  {
     version: '0.7.0', date: '2026-11-02', items: [
       { kind: 'new', title: 'Columns editor for every database', detail: 'MySQL / MariaDB, PostgreSQL, SQLite and MongoDB join SQL Server: add, rename, change and drop columns, toggle PK / AI / UQ / FK chips, and reorder columns on MySQL / MariaDB.' },
       { kind: 'new', title: 'New Database and New Table', detail: 'Right-click a connection or the Tables folder: a form with a live script for every database (MongoDB creates a collection, SQLite a new file).' },
