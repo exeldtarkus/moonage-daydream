@@ -218,6 +218,21 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.cancelRunning', (q?: RunningQuery) => q && cancel(q)),
     vscode.commands.registerCommand('moonageDaydream.cancelAllQueries', () => running.forEach(cancel)),
     vscode.commands.registerCommand('moonageDaydream.showRunning', showRunning),
+    // Command Palette: pilih format Ctrl+C di grid hasil (setting moonageDaydream.grid.copyFormat, user / global)
+    vscode.commands.registerCommand('moonageDaydream.setCopyFormat', async () => {
+      const cfg = vscode.workspace.getConfiguration('moonageDaydream.grid');
+      const now = cfg.get<string>('copyFormat', 'jsonPretty');
+      const pick = await vscode.window.showQuickPick([
+        { label: 'jsonPretty', detail: 'JSON array of objects, indented' },
+        { label: 'json', detail: 'JSON array of objects on one line' },
+        { label: 'tsv', detail: 'Tab separated rows without header (paste into a spreadsheet)' },
+        { label: 'csv', detail: 'CSV with header' },
+        { label: 'markdown', detail: 'Markdown table' },
+      ].map((x) => ({ ...x, description: x.label === now ? 'current' : undefined })), { title: 'Copy format of Ctrl+C in the result grid' });
+      if (!pick) return;
+      await cfg.update('copyFormat', pick.label, vscode.ConfigurationTarget.Global);
+      void vscode.window.showInformationMessage(`Ctrl+C in the result grid now copies ${pick.label}.`);
+    }),
     vscode.commands.registerCommand('moonageDaydream.showHistory', showHistory),
     vscode.commands.registerCommand('moonageDaydream.openHistory', (e?: HistoryEntry) => e && openHistory(e)),
     vscode.commands.registerCommand('moonageDaydream.runHistory', async (e?: HistoryEntry) => {
