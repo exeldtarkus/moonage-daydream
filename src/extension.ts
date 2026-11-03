@@ -8,7 +8,7 @@ import { openConnectionForm } from './connectionForm';
 import { ConnectionInfo, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
-import { SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
+import { SqlFiles, SqlNode, SqlTreeNode, isSqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
 import { SqlCompletion } from './completion';
 import { driverLog } from './log';
 import { ConnBanner } from './connBanner';
@@ -52,7 +52,7 @@ export let history: History;
 export let sqlFiles: SqlFiles;
 export let banner: ConnBanner;
 let connDecorations: ConnDecorations;
-let sqlFilesView: vscode.TreeView<SqlNode>;
+let sqlFilesView: vscode.TreeView<SqlTreeNode>;
 export let completion: SqlCompletion;
 /** Shift+Alt+F memakai formatter Moonage (default formatter [sql] kosong / Moonage / extension-nya tidak ada di jendela ini) */
 export let ownFormatter = false;
@@ -144,6 +144,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.sqlFilesFlat', () => sqlFiles.setFlat(true)),
     vscode.commands.registerCommand('moonageDaydream.sqlFilesTree', () => sqlFiles.setFlat(false)),
     vscode.commands.registerCommand('moonageDaydream.refreshSqlFiles', () => sqlFiles.refresh()),
+    // grup "Unsaved" di SQL Files: tab SQL untitled dibuka / ditutup / diganti isinya (judul = baris pertama)
+    ...[vscode.workspace.onDidOpenTextDocument, vscode.workspace.onDidCloseTextDocument].map((ev) => ev((d) => d.isUntitled && sqlFiles.redraw())),
+    vscode.workspace.onDidChangeTextDocument((e) => e.document.isUntitled && e.document.languageId === 'sql' && sqlFiles.redraw()),
     vscode.commands.registerCommand('moonageDaydream.newSqlFile', async (n?: SqlNode, name?: string) => {
       try {
         return await newSqlFile(sqlFiles, n, name);
@@ -161,9 +164,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       ['copySqlFileRelativePath', 'Copy relative path', (n: SqlNode) => vscode.env.clipboard.writeText(vscode.workspace.asRelativePath(nodeUri(n)))],
       ['openSqlFileToSide', 'Open to the side', (n: SqlNode) => vscode.window.showTextDocument(nodeUri(n), { viewColumn: vscode.ViewColumn.Beside })],
       ['revealSqlFile', 'Reveal in Explorer', (n: SqlNode) => vscode.commands.executeCommand('revealInExplorer', nodeUri(n))],
-    ] as [string, string, (n: SqlNode) => Thenable<unknown>][]).map(([id, what, f]) => vscode.commands.registerCommand(`moonageDaydream.${id}`, async (n?: SqlNode) => {
+    ] as [string, string, (n: SqlNode) => Thenable<unknown>][]).map(([id, what, f]) => vscode.commands.registerCommand(`moonageDaydream.${id}`, async (n?: SqlTreeNode) => {
       const node = n ?? sqlFilesView.selection[0];
-      if (!node) return;
+      if (!isSqlNode(node)) return; // grup / tab Unsaved: bukan file
       try {
         return await f(node);
       } catch (e) {

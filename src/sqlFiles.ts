@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Connections } from './connections';
+import { untitledSqlDocs } from './sqlContext';
 
-/** folder: path relatif (pakai '/') di dalam workspace folder; file: uri file .sql */
+/** folder: path relatif (pakai '/') di dalam workspace folder; file: uri file .sql; unsaved: grup + tab SQL yang belum disimpan */
 export type SqlNode = { kind: 'folder'; root: vscode.WorkspaceFolder; rel: string } | { kind: 'file'; uri: vscode.Uri };
+/** node tree SQL Files: file / folder + grup "Unsaved" berisi tab SQL yang belum disimpan (tidak bisa rename / delete / pindah) */
+export type SqlTreeNode = SqlNode | { kind: 'unsaved' } | { kind: 'untitled'; doc: vscode.TextDocument; label: string };
+export const isSqlNode = (n: SqlTreeNode | undefined): n is SqlNode => n?.kind === 'file' || n?.kind === 'folder';
 
 const FLAT = 'sqlFilesFlat';
 const CONTEXT = 'moonageDaydream.sqlFilesFlat';
@@ -11,7 +15,7 @@ const CONTEXT = 'moonageDaydream.sqlFilesFlat';
 const MAX_FILES = 5000;
 
 /** Sidebar "SQL Files": semua .sql di workspace, tampilan folder (tree) atau daftar file saja (flat). */
-export class SqlFiles implements vscode.TreeDataProvider<SqlNode> {
+export class SqlFiles implements vscode.TreeDataProvider<SqlTreeNode> {
   private changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   private files: Promise<vscode.Uri[]> | undefined;
@@ -53,8 +57,16 @@ export class SqlFiles implements vscode.TreeDataProvider<SqlNode> {
     return this.files;
   }
 
-  async getChildren(n?: SqlNode): Promise<SqlNode[]> {
-    if (n?.kind === 'file') return [];
+  async getChildren(n?: SqlTreeNode): Promise<SqlTreeNode[]> {
+    if (n?.kind === 'file' || n?.kind === 'untitled') return [];
+    const unsaved = untitledSqlDocs(vscode.workspace.textDocuments);
+    if (n?.kind === 'unsaved') return unsaved.map(({ doc, label }) => ({ kind: 'untitled', doc, label }));
+    // grup "Unsaved" di paling atas, hanya bila ada tab SQL yang belum disimpan
+    const top: SqlTreeNode[] = !n && unsaved.length ? [{ kind: 'unsaved' }] : [];
+    return [...top, ...(await this.saved(n as Extract<SqlNode, { kind: 'folder' }> | undefined))];
+  }
+
+  private async saved(n?: Extract<SqlNode, { kind: 'folder' }>): Promise<SqlNode[]> {
     const files = await this.list();
     if (this.flat) return n ? [] : files.map((uri) => ({ kind: 'file', uri }));
 
@@ -81,7 +93,24 @@ export class SqlFiles implements vscode.TreeDataProvider<SqlNode> {
     return [...folders, ...out];
   }
 
-  getTreeItem(n: SqlNode): vscode.TreeItem {
+  getTreeItem(n: SqlTreeNode): vscode.TreeItem {
+    if (n.kind === 'unsaved') {
+      return Object.assign(new vscode.TreeItem('Unsaved', vscode.TreeItemCollapsibleState.Expanded), {
+        iconPath: new vscode.ThemeIcon('circle-filled'), contextValue: 'unsavedGroup', tooltip: 'SQL tabs that are not saved to a file yet',
+      });
+    }
+    if (n.kind === 'untitled') {
+      const b = this.conns.binding(n.doc.uri.toString());
+      const where = b ? `${b.conn}${b.db ? ` / ${b.db}` : ''}` : '';
+      return Object.assign(new vscode.TreeItem(n.label), {
+        id: `untitled:${n.doc.uri.toString()}`, // label berubah saat isi diketik: id tetap supaya seleksi tidak lompat
+        iconPath: new vscode.ThemeIcon('file'),
+        description: where,
+        tooltip: `${n.doc.uri.path} (not saved)${where ? `\n${where}` : ''}`,
+        contextValue: 'untitledSql', // bukan sql*: Rename / Delete / Duplicate / Reveal tidak berlaku
+        command: { command: 'vscode.open', title: 'Open', arguments: [n.doc.uri] },
+      });
+    }
     if (n.kind === 'folder') {
       const uri = n.rel ? vscode.Uri.joinPath(n.root.uri, n.rel) : n.root.uri;
       return Object.assign(new vscode.TreeItem(uri, vscode.TreeItemCollapsibleState.Collapsed), {
@@ -258,15 +287,17 @@ export async function moveSqlNodes(sqlFiles: SqlFiles, conns: Connections, nodes
 const TREE_MIME = 'application/vnd.code.tree.moonagedaydream.sqlfiles';
 
 /** drag ke folder lain = pindah; drag ke editor = buka (tepi editor = split) lewat text/uri-list */
-export function sqlFilesDnd(sqlFiles: SqlFiles, conns: Connections, log: vscode.LogOutputChannel): vscode.TreeDragAndDropController<SqlNode> {
+export function sqlFilesDnd(sqlFiles: SqlFiles, conns: Connections, log: vscode.LogOutputChannel): vscode.TreeDragAndDropController<SqlTreeNode> {
   return {
     dropMimeTypes: [TREE_MIME],
     dragMimeTypes: ['text/uri-list'],
-    handleDrag(nodes, data) {
+    handleDrag(all, data) {
+      const nodes = all.filter(isSqlNode); // tab yang belum disimpan tidak ikut dipindah
       data.set(TREE_MIME, new vscode.DataTransferItem(nodes));
       data.set('text/uri-list', new vscode.DataTransferItem(nodes.filter((n) => n.kind === 'file').map((n) => nodeUri(n).toString()).join('\r\n')));
     },
-    async handleDrop(target, data) {
+    async handleDrop(drop, data) {
+      const target = isSqlNode(drop) ? drop : undefined;
       const nodes = data.get(TREE_MIME)?.value as SqlNode[] | undefined;
       if (!nodes?.length) return;
       try {

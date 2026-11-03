@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { changeStatements, reusableSelectTop } from '../sqlContext';
+import { changeStatements, reusableSelectTop, untitledSqlDocs } from '../sqlContext';
 import { render } from '../resultsHtml';
 import { mongoChanges, mongoFindCollection } from '../mongo';
 
@@ -168,4 +168,12 @@ test('select top (left-click a table): one preview tab is reused unless it was c
   assert.equal(reusableSelectTop({ doc: doc(sql), sql }), true);
   assert.equal(reusableSelectTop({ doc: doc(sql, true), sql }), false);
   assert.equal(reusableSelectTop({ doc: doc(sql + '\nWHERE id = 1'), sql }), false, 'edited by the user: keep it');
+});
+
+test('sql files: unsaved (untitled) SQL tabs are listed with a one-line label, saved / other languages / closed are not', () => {
+  const d = (path: string, text: string, o: { isUntitled?: boolean; languageId?: string; isClosed?: boolean } = {}) =>
+    ({ uri: { path }, isUntitled: o.isUntitled ?? true, languageId: o.languageId ?? 'sql', isClosed: o.isClosed ?? false, getText: () => text });
+  const docs = [d('Untitled-1', 'SELECT *\n  FROM `shop`.`a` LIMIT 100;'), d('Untitled-2', '  \n'), d('/w/a.sql', 'x', { isUntitled: false }),
+    d('Untitled-3', 'x', { languageId: 'plaintext' }), d('Untitled-4', 'x', { isClosed: true })];
+  assert.deepEqual(untitledSqlDocs(docs).map((x) => [x.label, x.doc.uri.path]), [['SELECT * FROM `shop`.`a` LIMIT 100;', 'Untitled-1'], ['Untitled-2', 'Untitled-2']]);
 });
