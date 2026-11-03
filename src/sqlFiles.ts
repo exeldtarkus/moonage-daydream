@@ -350,6 +350,12 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem> {
     }
   }
 
+  /** Close (× di item): semua tab dokumen itu (bisa terbuka di beberapa editor group); belum disimpan = ditanya VS Code */
+  async close(uri: string): Promise<void> {
+    const tabs = this.tabs().filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === uri);
+    if (tabs.length) await vscode.window.tabGroups.close(tabs);
+  }
+
   /** Close All: hanya tab SQL di daftar Open; tab yang belum disimpan ditanya VS Code seperti biasa */
   async closeAll(): Promise<void> {
     const open = new Set(this.items().map((i) => i.uri));

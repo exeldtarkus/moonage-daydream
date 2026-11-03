@@ -400,6 +400,12 @@
         "icon": "$(close-all)"
       },
       {
+        "command": "moonageDaydream.openClose",
+        "title": "Close",
+        "category": "Moonage Daydream",
+        "icon": "$(close)"
+      },
+      {
         "command": "moonageDaydream.newSqlFile",
         "title": "New SQL File",
         "category": "Moonage Daydream",
@@ -667,6 +673,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "moonageDaydream.openClose",
+          "when": "view == moonageDaydream.openSql",
+          "group": "inline"
+        },
+        {
+          "command": "moonageDaydream.openClose",
+          "when": "view == moonageDaydream.openSql",
+          "group": "1_close"
+        },
         {
           "command": "moonageDaydream.filterNode",
           "when": "view == moonageDaydream.explorer && viewItem =~ /^(conn\\.(?!consul)|db|folder\\.|ms\\.)/",
@@ -1186,6 +1202,10 @@
         },
         {
           "command": "moonageDaydream.openSqlAndReveal",
+          "when": "false"
+        },
+        {
+          "command": "moonageDaydream.openClose",
           "when": "false"
         }
       ],
