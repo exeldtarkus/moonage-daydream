@@ -3,36 +3,46 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   const vscode = acquireVsCodeApi();
   const menu = document.getElementById('menu');
   const state = new Map();
+  /**
+   * state grid per tabel: data = baris (teks / null) dari JSON, view = index baris setelah filter / sort,
+   * order = urutan kolom asli per posisi, edits 'baris:kolom' -> nilai baru, deletes / sel = index baris asli.
+   */
   const st = (t) => {
     if (!state.has(t)) {
-      const tpl = t.nextElementSibling?.matches('template.vrows') ? t.nextElementSibling : null;
-      const rows = tpl ? [...tpl.content.querySelectorAll('tr')] : [...t.tBodies[0].rows];
-      state.set(t, { rows, view: rows, virtual: !!tpl, filters: {}, sort: null, hidden: new Set(), sel: new Set(), anchor: null });
+      const heads = [...t.tHead.rows[0].cells].slice(1);
+      const data = JSON.parse(t.nextElementSibling.textContent);
+      state.set(t, { data, view: data.map((_, i) => i), order: heads.map((th) => +th.dataset.c), num: heads.map((th) => th.classList.contains('num')),
+        filters: {}, sort: null, hidden: new Set(), sel: new Set(), anchor: null, cur: null, edits: new Map(), deletes: new Set() });
     }
     return state.get(t);
   };
+  const editKey = (r, c) => r + ':' + c;
+  /** nilai sel yang tampil: hasil edit bila ada, selain itu data asli */
+  const val = (s, r, c) => (s.edits.has(editKey(r, c)) ? s.edits.get(editKey(r, c)) : s.data[r][c]);
+  const esc = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const cellHtml = (v) => (v === null ? '<span class="null">(null)</span>' : esc(v));
+  function rowHtml(s, r, pos) {
+    const cls = (s.sel.has(r) ? ' sel' : '') + (s.deletes.has(r) ? ' todelete' : '');
+    return '<tr data-r="' + r + '"' + (cls ? ' class="' + cls.trim() + '"' : '') + '><td class="n">' + (pos + 1) + '</td>' + s.order.map((c) => {
+      const k = editKey(r, c);
+      const tc = [s.num[c] && 'num', s.edits.has(k) && 'edited', s.cur === k && 'cur'].filter(Boolean).join(' ');
+      return '<td' + (tc ? ' class="' + tc + '"' : '') + (s.hidden.has(c) ? ' hidden' : '') + '>' + cellHtml(val(s, r, c)) + '</td>';
+    }).join('') + '</tr>';
+  }
   /**
-   * virtual scroll: hanya baris view (hasil filter / sort) di sekitar viewport yang dipasang di tbody, sisanya diganti spacer setinggi barisnya.
-   * Baris lain tetap ada sebagai elemen terlepas (filter / sort / seleksi / edit / export tetap atas semua baris).
+   * virtual scroll: hanya baris view di sekitar viewport yang dibuat sebagai DOM dari data, sisanya diganti spacer setinggi barisnya
+   * (filter / sort / seleksi / edit / export tetap atas semua baris di data).
    */
   function render(t) {
     const s = st(t), body = t.tBodies[0];
-    if (!s.virtual) { s.view.forEach((r) => body.appendChild(r)); return; }
-    if (!s.top) {
-      s.top = document.createElement('tr');
-      s.top.className = 'vpad';
-      s.top.innerHTML = '<td colspan="9999"></td>';
-      s.bot = s.top.cloneNode(true);
-    }
     const grid = t.closest('.grid'), h = s.rowH || 31;
     let from = Math.max(0, Math.floor((grid.scrollTop - t.tHead.offsetHeight) / h) - 40);
     from -= from % 2; // zebra (nth-child) tidak berganti saat scroll
     const to = Math.min(s.view.length, from + Math.ceil((grid.clientHeight || innerHeight) / h) + 80);
-    s.top.firstChild.style.height = from * h + 'px';
-    s.bot.firstChild.style.height = (s.view.length - to) * h + 'px';
-    body.replaceChildren(s.top, ...s.view.slice(from, to), s.bot);
+    const pad = (px) => '<tr class="vpad"><td colspan="9999" style="height:' + px + 'px"></td></tr>';
+    body.innerHTML = pad(from * h) + s.view.slice(from, to).map((r, i) => rowHtml(s, r, from + i)).join('') + pad((s.view.length - to) * h);
     if (!s.rowH && to > from) {
-      s.rowH = s.view[from].getBoundingClientRect().height || h;
+      s.rowH = body.rows[1].getBoundingClientRect().height || h;
       if (s.rowH !== h) render(t);
     }
   }
@@ -40,30 +50,30 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   // scroll tidak bubble: tangkap di document lalu render tabel di .grid yang di-scroll (sekali per frame)
   document.addEventListener('scroll', (e) => {
     const t = e.target.classList?.contains('grid') && e.target.querySelector('table.rs');
-    if (!t || !st(t).virtual || scrolling) return;
+    if (!t || scrolling) return;
     scrolling = true;
-    requestAnimationFrame(() => { scrolling = false; render(t); });
+    requestAnimationFrame(() => {
+      scrolling = false;
+      // sel yang sedang diedit disimpan dulu sebelum barisnya diganti
+      if (document.activeElement?.matches('table.rs tbody:first-of-type input.cell')) document.activeElement.blur();
+      render(t);
+    });
   }, true);
-  document.querySelectorAll('table.rs').forEach((t) => st(t).virtual && render(t));
+  document.querySelectorAll('table.rs').forEach(render);
   const saved = vscode.getState() || {};
   /** baris terpilih (index asli) dalam urutan tampil sekarang */
-  const selected = (t) => { const s = st(t); return s.rows.filter((r) => !r.hidden && s.sel.has(s.rows.indexOf(r))).map((r) => s.rows.indexOf(r)); };
+  const selected = (t) => { const s = st(t); return s.view.filter((r) => s.sel.has(r)); };
   /** urutan kolom sekarang: index kolom asli per posisi (kolom bisa diurutkan ulang di panel Columns) */
-  const order = (t) => [...t.tHead.rows[0].cells].slice(1).map((th) => +th.dataset.c);
-  /** sel kolom asli c pada baris r (posisi bisa berubah setelah kolom dipindah) */
-  const cellOf = (t, r, c) => r.cells[order(t).indexOf(c) + 1];
+  const order = (t) => st(t).order;
+  const headOf = (t, c) => t.tHead.querySelector('th[data-c="' + c + '"]');
   const visibleCols = (t) => order(t).filter((c) => !st(t).hidden.has(c));
-  /** pindahkan kolom asli c ke posisi (0-based) to: sel dipindah di header dan semua baris */
+  /** pindahkan kolom asli c ke posisi (0-based) to: urutan state, header dan baris baru (Add row); baris data digambar ulang */
   function moveCol(t, c, to) {
-    const from = order(t).indexOf(c);
-    const n = order(t).length;
-    to = Math.max(0, Math.min(n - 1, to));
+    const ord = order(t), from = ord.indexOf(c);
+    to = Math.max(0, Math.min(ord.length - 1, to));
     if (from < 0 || from === to) return;
-    for (const r of [t.tHead.rows[0], ...st(t).rows]) {
-      const cell = r.cells[from + 1];
-      const ref = r.cells[to + (to > from ? 2 : 1)] ?? null;
-      r.insertBefore(cell, ref);
-    }
+    for (const r of [t.tHead.rows[0], ...newRows(t)]) r.insertBefore(r.cells[from + 1], r.cells[to + (to > from ? 2 : 1)] ?? null);
+    ord.splice(to, 0, ...ord.splice(from, 1));
   }
   /** export / copy ke extension: baris terpilih (scope sel) atau semua data, kolom yang tidak disembunyikan */
   function send(t, type, format, scope, header) {
@@ -76,32 +86,30 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const c = menu.querySelector('[data-a=xcopy]');
     if (c) c.disabled = document.getElementById('xf').value === 'xlsx';
   }
-  function paintSel(t) { const s = st(t); s.rows.forEach((r, i) => r.classList.toggle('sel', s.sel.has(i))); }
-  const text = (td) => (td.querySelector('.null') ? null : td.textContent);
+  /** tandai baris terpilih di DOM tanpa menggambar ulang (gambar ulang di tengah klik merusak double-click edit) */
+  function paintSel(t) { const s = st(t); for (const tr of t.tBodies[0].rows) if (tr.dataset.r) tr.classList.toggle('sel', s.sel.has(+tr.dataset.r)); }
   const match = (v, f) => (f.toLowerCase() === 'null' ? v === null : v !== null && v.toLowerCase().includes(f.toLowerCase()));
   function apply(t) {
     const s = st(t);
-    let rows = s.rows.filter((r) => Object.entries(s.filters).every(([c, f]) => match(text(cellOf(t, r, +c)), f)));
+    let rows = s.data.map((_, i) => i).filter((r) => Object.entries(s.filters).every(([c, f]) => match(val(s, r, +c), f)));
     if (s.sort) {
       const { c, dir } = s.sort;
-      const num = cellOf(t, t.tHead.rows[0], c).classList.contains('num');
-      const key = (r) => text(cellOf(t, r, c));
-      rows = [...rows].sort((a, b) => {
+      const num = s.num[c];
+      const key = (r) => val(s, r, c);
+      rows.sort((a, b) => {
         const x = key(a), y = key(b);
         if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1; // (null) selalu di bawah
         return dir * (num ? Number(x) - Number(y) : x.localeCompare(y, undefined, { numeric: true }));
       });
     }
-    s.rows.forEach((r) => (r.hidden = true));
-    rows.forEach((r, i) => { r.hidden = false; r.cells[0].textContent = String(i + 1); });
     s.view = rows;
-    render(t);
     const ord = order(t);
-    for (const r of [t.tHead.rows[0], ...s.rows, ...(t.tBodies[1]?.rows ?? [])]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(ord[i - 1])));
+    for (const r of [t.tHead.rows[0], ...newRows(t)]) [...r.cells].forEach((td, i) => (td.hidden = i > 0 && s.hidden.has(ord[i - 1])));
+    render(t);
     t.tHead.querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('on', b.dataset.c in s.filters));
     t.tHead.querySelectorAll('.mbtn').forEach((b) => b.classList.toggle('on', s.sort?.c === +b.dataset.c));
     const count = t.closest('.grid').nextElementSibling.querySelector('.count');
-    const filtered = rows.length !== s.rows.length;
+    const filtered = rows.length !== s.data.length;
     count.textContent = filtered ? rows.length + ' / ' + count.dataset.total + ' (filtered)' : count.dataset.total;
     if (pane === 'cols' && !document.activeElement?.matches?.('#colq')) renderSide();
   }
@@ -124,7 +132,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const tb = e.target.closest('table.rs');
     if (tb) active = tb;
     const go = e.target.closest('[data-goto]');
-    if (go) { cellOf(tableOf(), tableOf().tHead.rows[0], +go.dataset.goto).scrollIntoView({ block: 'nearest', inline: 'center' }); return; }
+    if (go) { headOf(tableOf(), +go.dataset.goto).scrollIntoView({ block: 'nearest', inline: 'center' }); return; }
     const mv = e.target.closest('[data-move]');
     if (mv) {
       const t = tableOf(), c = +mv.dataset.c;
@@ -136,13 +144,14 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const td = e.target.closest('tbody td');
     if (td && td.closest('table.rs')) {
       // pilih baris: klik = satu baris, Ctrl/Cmd+klik = tambah / kurangi, Shift+klik = rentang dari baris terakhir
-      const t = td.closest('table'), s = st(t), tr = td.parentElement, i = s.rows.indexOf(tr);
-      if (!td.classList.contains('n')) { s.cur?.classList.remove('cur'); td.classList.add('cur'); s.cur = td; }
-      const visible = s.rows.filter((r) => !r.hidden);
+      const t = td.closest('table'), s = st(t), tr = td.parentElement;
+      if (!tr.dataset.r) return; // baris baru (Add row) / spacer
+      const i = +tr.dataset.r;
+      if (!td.classList.contains('n')) { t.tBodies[0].querySelector('td.cur')?.classList.remove('cur'); td.classList.add('cur'); s.cur = editKey(i, order(t)[td.cellIndex - 1]); }
       if (e.shiftKey && s.anchor !== null) {
-        const a = visible.indexOf(s.rows[s.anchor]), z = visible.indexOf(tr);
+        const a = s.view.indexOf(s.anchor), z = s.view.indexOf(i);
         if (!(e.ctrlKey || e.metaKey)) s.sel.clear();
-        visible.slice(Math.min(a, z), Math.max(a, z) + 1).forEach((r) => s.sel.add(s.rows.indexOf(r)));
+        if (a >= 0) s.view.slice(Math.min(a, z), Math.max(a, z) + 1).forEach((r) => s.sel.add(r));
       } else if (e.ctrlKey || e.metaKey) {
         s.sel.has(i) ? s.sel.delete(i) : s.sel.add(i);
         s.anchor = i;
@@ -172,24 +181,23 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     if (b.classList.contains('delrow')) { markDelete(b.closest('.foot').previousElementSibling.querySelector('table')); return; }
     if (b.classList.contains('save')) {
       const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
-      const edits = [...(s.edits ?? [])].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
+      const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
       const inserts = newRows(t).map((tr) => { const v = []; tr.querySelectorAll('input.cell').forEach((i) => { v[+i.dataset.c] = i.value; }); return Array.from(v, (x) => x ?? ''); });
       const part = t.closest('section')?.dataset.part;
-      vscode.postMessage({ type: 'saveGrid', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits, deletes: [...(s.deletes ?? [])], inserts });
+      vscode.postMessage({ type: 'saveGrid', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits, deletes: [...s.deletes], inserts });
       return;
     }
     if (b.classList.contains('genupd') || b.classList.contains('discard')) {
       const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
       if (b.classList.contains('genupd')) {
-        const edits = [...(s.edits ?? [])].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
+        const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
         const part = t.closest('section')?.dataset.part;
         vscode.postMessage({ type: 'edits', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits });
       } else {
-        st(t).rows.flatMap((r) => [...r.querySelectorAll('td.edited')]).forEach((td) => { showCell(td, JSON.parse(td.dataset.orig)); td.classList.remove('edited'); });
-        s.edits?.clear(); // belum ada edit sel (hanya Delete rows / Add row): map belum dibuat
-        s.deletes?.clear();
-        st(t).rows.forEach((r) => r.classList.remove('todelete'));
+        s.edits.clear();
+        s.deletes.clear();
         t.tBodies[1]?.remove();
+        apply(t); // filter / sort bisa bergantung pada nilai yang diedit
         syncEdits(t);
       }
       return;
@@ -260,7 +268,6 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   const side = document.getElementById('side');
   let pane = null, active = null;
   const tableOf = () => (active && document.contains(active) ? active : document.querySelector('table.rs'));
-  const esc = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   function renderSide() {
     if (!side || side.hidden) return;
     const t = tableOf();
@@ -282,12 +289,10 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const qi = document.getElementById('colq');
       if (q) { qi.focus(); qi.setSelectionRange(q.length, q.length); }
     } else {
-      const i = s.anchor;
-      const r = i === null ? null : s.rows[i];
-      body.innerHTML = !r ? '<div class="hint">Select a row to inspect it.</div>'
-        : '<div class="hint">Row ' + r.cells[0].textContent + '</div>' + heads.map((h, c) => {
-          const td = r.cells[c + 1];
-          const v = text(td);
+      const r = s.anchor, pos = r === null ? -1 : s.view.indexOf(r);
+      body.innerHTML = pos < 0 ? '<div class="hint">Select a row to inspect it.</div>'
+        : '<div class="hint">Row ' + (pos + 1) + '</div>' + heads.map((h) => {
+          const v = val(s, r, +h.dataset.c);
           return '<div class="kv"><div class="k">' + esc(h.dataset.name) + ' <span class="t">' + esc(h.dataset.type) + '</span></div><div class="v' + (v === null ? ' null' : '') + '">' + (v === null ? '(null)' : esc(v)) + '</div></div>';
         }).join('');
     }
@@ -301,13 +306,12 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     renderSide();
   }
   // edit sel (double-click): disimpan di state, script UPDATE dibuat extension; tidak ada yang dijalankan otomatis
-  const editKey = (r, c) => r + ':' + c;
-  const showCell = (td, v) => { td.innerHTML = v === null ? '<span class="null">(null)</span>' : esc(v); };
+  const showCell = (td, v) => { td.innerHTML = cellHtml(v); };
   function syncEdits(t) {
     const s = st(t);
     const bar = t.closest('.grid').nextElementSibling.querySelector('.editbar');
     if (!bar) return;
-    const n = (s.edits?.size ?? 0) + (s.deletes?.size ?? 0) + newRows(t).length;
+    const n = s.edits.size + s.deletes.size + newRows(t).length;
     bar.querySelector('.pend').hidden = !n;
     bar.querySelector('.ecount').textContent = String(n);
   }
@@ -323,7 +327,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const td = tr.insertCell();
       td.hidden = s.hidden.has(c);
       // kolom generated (computed / identity): diisi server, tidak bisa diketik
-      td.innerHTML = t.tHead.querySelector('th[data-c="' + c + '"]')?.dataset.gen ? '<input class="cell" data-c="' + c + '" placeholder="generated" disabled>'
+      td.innerHTML = headOf(t, c)?.dataset.gen ? '<input class="cell" data-c="' + c + '" placeholder="generated" disabled>'
         : '<input class="cell" spellcheck="false" data-c="' + c + '" placeholder="default">';
     }
     tr.querySelector('input.cell:not([hidden])')?.focus();
@@ -332,19 +336,18 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   /** baris terpilih ditandai hapus (dicoret); tandai lagi = batal */
   function markDelete(t) {
     const s = st(t);
-    s.deletes ??= new Set();
     const sel = selected(t);
     const all = sel.length && sel.every((r) => s.deletes.has(r));
-    for (const r of sel) { if (all) s.deletes.delete(r); else s.deletes.add(r); s.rows[r].classList.toggle('todelete', !all); }
+    for (const r of sel) { if (all) s.deletes.delete(r); else s.deletes.add(r); }
+    render(t);
     syncEdits(t);
   }
   document.addEventListener('input', (e) => { const t = e.target.closest?.('tbody.newrows')?.closest('table'); if (t) syncEdits(t); });
   function commitCell(td, input, keep) {
-    const t = td.closest('table'), s = st(t), tr = td.parentElement;
-    const r = s.rows.indexOf(tr), c = order(t)[[...tr.cells].indexOf(td) - 1]; // index kolom asli (kolom bisa dipindah)
-    const orig = JSON.parse(td.dataset.orig);
-    const v = !keep ? orig : input.value === 'NULL' ? null : input.value;
-    s.edits ??= new Map();
+    const t = td.closest('table'), s = st(t);
+    const r = +td.parentElement.dataset.r, c = order(t)[td.cellIndex - 1]; // index kolom asli (kolom bisa dipindah)
+    const orig = s.data[r][c];
+    const v = !keep ? val(s, r, c) : input.value === 'NULL' ? null : input.value;
     if (v === orig) s.edits.delete(editKey(r, c)); else s.edits.set(editKey(r, c), v);
     td.classList.toggle('edited', s.edits.has(editKey(r, c)));
     showCell(td, v);
@@ -353,10 +356,9 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   document.addEventListener('dblclick', (e) => {
     const td = e.target.closest('tbody td');
     const t = td?.closest('table[data-edit]');
-    if (!td || !t || td.classList.contains('n') || td.querySelector('input')) return;
+    if (!td || !t || td.classList.contains('n') || td.querySelector('input') || !td.parentElement.dataset.r) return;
     if (t.tHead.rows[0].cells[td.cellIndex]?.dataset.gen) return; // kolom generated: tidak bisa diedit
-    td.dataset.orig ??= JSON.stringify(text(td));
-    const cur = text(td);
+    const cur = val(st(t), +td.parentElement.dataset.r, order(t)[td.cellIndex - 1]);
     td.innerHTML = '<input class="cell" spellcheck="false">';
     const input = td.firstChild;
     input.value = cur === null ? 'NULL' : cur;

@@ -94,8 +94,8 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
 
     // 1. hero: grid dengan tipe kolom, auto limit, WHERE, footer
     let p = await page(render('csp', 'shop / sales', { result: result([ordersSet]), source: { uri: 'file:///orders.sql', sql: SQL } }));
-    await p.click('tbody tr:nth-child(3) td:nth-child(3)');
-    await p.click('tbody tr:nth-child(5) td:nth-child(3)', { modifiers: ['Shift'] });
+    await p.click('tbody tr[data-r="2"] td:nth-child(3)');
+    await p.click('tbody tr[data-r="4"] td:nth-child(3)', { modifiers: ['Shift'] });
     await shot(p, 'results.png');
 
     // 2. filter per kolom + menu sort / hide
@@ -137,7 +137,7 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
 
     // 6. panel samping: Columns + Inspector baris terpilih
     p = await page(render('csp', 'shop / sales', { result: result([ordersSet]), source: { uri: 'file:///orders.sql', sql: SQL } }));
-    await p.click('tbody tr:nth-child(2) td:nth-child(2)');
+    await p.click('tbody tr[data-r="1"] td:nth-child(2)');
     const tabs = await p.$$('.sidetabs button');
     if (tabs[1]) await tabs[1].click();
     await shot(p, 'inspector.png');
