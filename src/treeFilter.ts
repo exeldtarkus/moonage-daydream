@@ -62,3 +62,11 @@ export function treeParent(n: Node): Node | undefined {
     default: return undefined;
   }
 }
+
+/** teks baris koneksi di Connections: "connected · nama" selama terhubung, detail di deskripsi setelah " - " */
+export function connText(name: string, type: string, addr: string, o: { connected?: boolean; active?: boolean; noConfirm?: boolean }): { label: string; description: string } {
+  return {
+    label: o.connected ? `connected · ${name}` : name,
+    description: `- ${type} · ${addr}${o.active ? ' · active' : ''}${o.noConfirm ? ' · no commit confirm' : ''}`,
+  };
+}

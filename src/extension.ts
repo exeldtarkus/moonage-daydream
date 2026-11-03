@@ -83,7 +83,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   metaDir = path.join(cacheDir, 'metadata');
   pruneMeta(metaDir, conns.list().map((c) => c.name)).catch((e: unknown) => log.error(`pruneMeta - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`));
   ctx.subscriptions.push(conns.used.event(touchConn), idleWatcher());
-  connDecorations = new ConnDecorations(conns);
+  connDecorations = new ConnDecorations(conns, isConnected);
   updateFormatterContext(ctx);
   vscode.workspace.textDocuments.forEach(lintDoc);
   updateDbcodeAlias();
@@ -1465,6 +1465,7 @@ function refreshConnState(delay = 1500) {
     if (now !== connSnapshot) {
       connSnapshot = now;
       explorer.refresh();
+      connDecorations?.refresh(); // badge ● hijau saat terhubung
     }
   }, delay);
 }
