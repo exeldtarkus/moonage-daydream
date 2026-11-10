@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Connections } from './connections';
 import { OpenSqlItem, openSqlItems, parentRel } from './sqlContext';
-import { arrangeOpen, moveInOrder } from './openOrder';
+import { arrangeOpen, moveInOrder, withClosedPinned } from './openOrder';
 
 type OpenItem = OpenSqlItem & { pinned: boolean };
 const OPEN_ORDER = 'openSql.order';
@@ -330,8 +330,7 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem>, vscode.TreeDr
 
   /** pin / lepas pin: yang di-pin selalu di atas dan tidak ikut Close All */
   async pin(uri: string, on: boolean): Promise<void> {
-    const open = new Set(this.items().map((i) => i.uri));
-    const now = this.state.get<string[]>(OPEN_PINNED, []).filter((u) => u !== uri && open.has(u)); // tab yang sudah ditutup ikut dibuang
+    const now = this.state.get<string[]>(OPEN_PINNED, []).filter((u) => u !== uri && !u.startsWith('untitled:')); // pin file tetap walau tab ditutup; untitled yang ditutup tidak bisa dibuka lagi
     await this.state.update(OPEN_PINNED, on ? [...now, uri] : now);
     this.redraw();
   }
@@ -366,7 +365,8 @@ export class OpenSql implements vscode.TreeDataProvider<OpenItem>, vscode.TreeDr
     const tabs = this.tabs().flatMap((t) =>
       t.input instanceof vscode.TabInputText ? [{ uri: t.input.uri.toString(), path: t.input.uri.path, untitled: t.input.uri.scheme === 'untitled' }] : []);
     const list = openSqlItems(tabs, (u) => vscode.workspace.textDocuments.find((d) => d.uri.toString() === u));
-    return arrangeOpen(list, this.state.get<string[]>(OPEN_ORDER, []), this.state.get<string[]>(OPEN_PINNED, []));
+    const pinned = this.state.get<string[]>(OPEN_PINNED, []);
+    return arrangeOpen(withClosedPinned(list, pinned), this.state.get<string[]>(OPEN_ORDER, []), pinned);
   }
 
   getChildren(n?: OpenItem): OpenItem[] {

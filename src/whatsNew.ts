@@ -8,6 +8,7 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 export const RELEASES: Release[] = [
   {
     version: '1.2.2', date: '2026-11-10', items: [
+      { kind: 'fixed', title: 'Pinned files stay in Open', detail: 'A file pinned in the Open view is no longer dropped when its editor tab is closed; it stays at the top (click to open it again) until you unpin it.' },
       { kind: 'fixed', title: 'Format Document keeps your place', detail: 'Shift+Alt+F on a long SQL file no longer jumps to the last (empty) line; only the changed text is replaced, so the cursor and scroll position stay where they were.' },
     ],
   },
