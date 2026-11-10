@@ -173,7 +173,7 @@ export function columnsEditor(n?: Node) {
         text = r.sql;
       }
       await vscode.env.clipboard.writeText(text);
-      return post({ type: 'status', text: `Copied ${m.as === 'json' ? 'JSON' : 'CREATE TABLE script'} to the clipboard` });
+      return void vscode.window.showInformationMessage(`Copied ${m.as === 'json' ? 'JSON' : 'CREATE TABLE script'} to the clipboard`);
     }
     // pesan tanpa tableKeys (UI lama) = key tidak berubah
     const r = columnChanges(ddl, obj, original, m.rows ?? [], m.tableKeys ?? originalKeys, originalKeys);
