@@ -127,7 +127,7 @@ export function columnsEditor(n?: Node) {
   const post = (m: unknown) => void panel.webview.postMessage(m);
   async function load() {
     try {
-      post({ type: 'status', text: 'Loading…' });
+      post({ type: 'status', text: 'Loading…', loading: true });
       const rs = (await d.run(c, await conns.password(conn.name), ddl.show(obj))).resultSets[0];
       const shown = showColumns(rs ?? { columns: [], rows: [] });
       const { cols } = shown;

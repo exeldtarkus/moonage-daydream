@@ -5,7 +5,7 @@ import { pageJson, webviewPage } from './webviewPage';
 /**
  * editor Columns (klik kanan tabel), seperti DBeaver: grid kolom bisa diedit (nama, tipe dari dropdown + ukuran, NOT NULL, default,
  * tambah / hapus), daftar Pending changes berisi langkah SQL yang akan dijalankan; Execute / Open in SQL Editor / Revert.
- * ext -> page: { type: 'load', cols, info, types, capabilities } | { type: 'script', sql, errors, count, steps } | { type: 'status', text, error? }
+ * ext -> page: { type: 'load', cols, info, types, capabilities } | { type: 'script', sql, errors, count, steps } | { type: 'status', text, error?, loading? }
  * page -> ext: { type: 'ready' | 'refresh' | 'fkTables' | 'copy' (as: 'script' | 'json') } | { type: 'change' | 'execute' | 'open' | 'fkColumns', rows?, table?, schema?, name? }
  * FK responses carry the tables / columns needed by the editor.
  */
@@ -24,6 +24,7 @@ export function columnsHtml(cspSource: string, t: { conn: string; db: string; ta
     copyBtn: create ? '' : '<span class="copywrap"><button id="copy" aria-haspopup="menu" aria-expanded="false" title="Copy this table definition">Copy ▾</button>'
       + '<div id="copyMenu" role="menu" hidden><button role="menuitem" data-as="script">Copy as script</button><button role="menuitem" data-as="json">Copy as JSON</button></div></span>',
     addColBtn: readOnly ? '' : '<button id="addCol">Add column</button>',
+    loadingBlock: create ? '' : '<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>Loading columns…</div>',
     loadingText: create ? '' : 'Loading columns…',
     roHidden: readOnly ? ' hidden' : '',
     pendingTitle: create ? 'Script' : 'Pending changes',

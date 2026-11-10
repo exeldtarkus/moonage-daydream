@@ -40,6 +40,11 @@
   #status { flex-basis: 100%; min-height: 0; color: var(--muted); }
   #status:empty { display: none; }
   #status.err { color: var(--err); }
+  .spin { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+  .loading { display: flex; align-items: center; justify-content: center; min-height: 160px; color: var(--muted); }
+  #status.loading::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -2px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 
   .grid { flex: 1; min-height: 140px; overflow: auto; padding: 0 20px 12px; }
   table { border-collapse: separate; border-spacing: 0; width: 100%; }
@@ -164,7 +169,7 @@
   </div>
   <div id="status">{{loadingText}}</div>
 </header>
-<div class="grid" id="grid"></div>
+<div class="grid" id="grid">{{loadingBlock}}</div>
 <div id="splitter" role="separator" aria-orientation="horizontal" aria-label="Resize Pending changes" tabindex="0"{{roHidden}}></div>
 <section class="pending" id="pending"{{roHidden}}>
   <div class="head">
