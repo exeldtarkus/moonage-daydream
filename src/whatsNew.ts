@@ -15,6 +15,12 @@ export const RELEASES: Release[] = [
     ],
   },
   {
+    version: '1.2.1', date: '2026-11-03', items: [
+      { kind: 'new', title: 'Load all for very large results', detail: 'Load all reads a result of up to millions of rows into a cache on disk instead of memory; the grid pages through it, with host-side search, column filters and sorting, Search Output chips, export from the cache and Clear Result Cache.' },
+      { kind: 'improved', title: 'Row counts with dots', detail: 'Row counts in the result panel use dots as thousands separator (1.000.000 row(s)).' },
+    ],
+  },
+  {
     version: '1.2.0', date: '2026-11-03', items: [
       { kind: 'new', title: 'Find Object (Ctrl+Alt+O)', detail: 'Search connections, databases, tables, views and procedures of every connection at once from a local metadata cache; pick one to run Select Top 100, open its definition or start a query, and it is revealed in Connections. Command Palette: Update Metadata reads connections again one at a time with progress, Clear Cache removes the cache.' },
       { kind: 'new', title: 'Filter in Connections (Ctrl+Alt+F)', detail: 'The funnel on a connection, database or folder shows only names that contain your text.' },
