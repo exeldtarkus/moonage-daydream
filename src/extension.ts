@@ -15,7 +15,7 @@ import { driverLog } from './log';
 import { ConnBanner } from './connBanner';
 import { CONN_COLORS, colorLabel, isConnColor } from './connColor';
 import type { ConnColor } from './connColor';
-import { formatSql } from './sqlFormat';
+import { formatEditSpans, formatSql } from './sqlFormat';
 import type { Outcome, Source } from './resultsHtml';
 import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
@@ -578,7 +578,10 @@ function formatEdits(doc: vscode.TextDocument, range: vscode.Range, o: vscode.Fo
     // seluruh dokumen: akhiri dengan satu newline; selection: pertahankan newline akhir bila ada
     const tail = r.end.line === doc.lineCount - 1 || /\r?\n$/.test(text) ? doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n' : '';
     const eolOut = doc.eol === vscode.EndOfLine.CRLF ? out.replace(/\n/g, '\r\n') : out;
-    return [vscode.TextEdit.replace(r, eolOut + tail)];
+    // edit minimal: satu edit yang menimpa seluruh dokumen membuat VS Code memindah kursor + scroll ke akhir file
+    const spans = formatEditSpans(text, eolOut + tail);
+    const base = doc.offsetAt(r.start);
+    return spans.map((s) => vscode.TextEdit.replace(new vscode.Range(doc.positionAt(base + s.from), doc.positionAt(base + s.to)), s.text));
   } catch (e) {
     log.error(`formatEdits - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showWarningMessage(`SQL format failed: ${errMsg(e)}`);

@@ -7,6 +7,11 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '1.2.2', date: '2026-11-10', items: [
+      { kind: 'fixed', title: 'Format Document keeps your place', detail: 'Shift+Alt+F on a long SQL file no longer jumps to the last (empty) line; only the changed text is replaced, so the cursor and scroll position stay where they were.' },
+    ],
+  },
+  {
     version: '1.2.0', date: '2026-11-03', items: [
       { kind: 'new', title: 'Find Object (Ctrl+Alt+O)', detail: 'Search connections, databases, tables, views and procedures of every connection at once from a local metadata cache; pick one to run Select Top 100, open its definition or start a query, and it is revealed in Connections. Command Palette: Update Metadata reads connections again one at a time with progress, Clear Cache removes the cache.' },
       { kind: 'new', title: 'Filter in Connections (Ctrl+Alt+F)', detail: 'The funnel on a connection, database or folder shows only names that contain your text.' },
