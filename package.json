@@ -200,6 +200,12 @@
         "icon": "$(play)"
       },
       {
+        "command": "moonageDaydream.openTableColumns",
+        "title": "Open Table Columns",
+        "category": "Moonage Daydream",
+        "icon": "$(table)"
+      },
+      {
         "command": "moonageDaydream.editColumns",
         "title": "Columns",
         "category": "Moonage Daydream",
@@ -1243,6 +1249,11 @@
           "command": "moonageDaydream.analyze",
           "when": "editorLangId == sql",
           "group": "navigation@3"
+        },
+        {
+          "command": "moonageDaydream.openTableColumns",
+          "when": "editorLangId == sql",
+          "group": "navigation@4"
         }
       ]
     },

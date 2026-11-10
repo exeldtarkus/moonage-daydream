@@ -191,6 +191,34 @@ export function tableRefs(stmt: string): { parts: string[]; alias?: string }[] {
   return out.filter((r) => !(targets.has(r) && r.parts.length === 1 && aliases.has(r.parts[0].toLowerCase())));
 }
 
+/** nama tabel di posisi `offset` (kursor / mouse) dalam FROM / JOIN / UPDATE / INSERT / DELETE: parts (db, schema, nama); kolom, alias, keyword, string, komentar = undefined */
+export function tableAt(sql: string, offset: number): string[] | undefined {
+  const code = maskSql(sql, true); // komentar jadi spasi
+  const full = maskSql(sql); // string + isi [..] juga spasi
+  const part = String.raw`(?:\[[^\]]*\]|"[^"]*"|\`[^\`]*\`|[\w$#@]+)`;
+  const chain = new RegExp(String.raw`${part}(?:\s*\.\s*${part}){0,2}`, 'g');
+  for (let m; (m = chain.exec(code)); ) {
+    if (offset < m.index) return undefined;
+    if (offset > m.index + m[0].length) continue;
+    // shortcut: nama dikurung ([x] / "x" / `x`) di dalam string literal tidak terdeteksi sebagai string (maskSql ikut mengosongkan kurung), tableRefs tetap memfilter; upgrade bila ada laporan salah buka
+    if (/^[\w$#@]/.test(m[0]) && full[m.index] !== sql[m.index]) return undefined; // nama polos dimulai di dalam string / komentar
+    const parts = (m[0].match(new RegExp(part, 'g')) ?? []).map(unquote);
+    const key = parts.join('.').toLowerCase();
+    return tableRefs(sql).some((r) => r.parts.join('.').toLowerCase() === key) ? parts : undefined;
+  }
+  return undefined;
+}
+
+/** parts dari tableAt -> database / schema / nama; MySQL: schema = database; schema kosong = cari di database-nya (default dbo / public / main) */
+export function resolveTableRef(parts: string[], dialect: Dialect, current: string): { db: string; schema: string | undefined; name: string } {
+  const name = parts[parts.length - 1];
+  if (dialect === 'mysql') {
+    const db = parts.length >= 2 ? parts[parts.length - 2] : current;
+    return { db, schema: db, name };
+  }
+  return { db: parts.length === 3 ? parts[0] : current, schema: parts.length >= 2 ? parts[parts.length - 2] : undefined, name };
+}
+
 /** auto limit boleh: tepat satu statement SELECT / WITH tanpa TOP, OFFSET..FETCH, INTO, SET ROWCOUNT (dipotong = berhenti, tidak ada efek samping) */
 export function autoLimitable(stmts: string[]): boolean {
   if (stmts.length !== 1) return false;

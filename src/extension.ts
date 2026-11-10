@@ -6,7 +6,7 @@ import { ConnDecorations, Explorer, Node } from './explorer';
 import { History, HistoryEntry, RunningQuery, RunningView } from './activity';
 import { firstLine, historyPick } from './runningStatus';
 import { openConnectionForm } from './connectionForm';
-import { ConnectionInfo, GroupEnv, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, idleConnections, openSession } from './db';
+import { ConnectionInfo, GroupEnv, QueryResult, Session, address, confirmAutoCommit, newDatabaseScript, maskSecrets, NewDatabase, dropConfirm, dropTarget, drivers, schemaOf, idleConnections, openSession } from './db';
 import { Results, LOCATIONS, ResultMessage, VIEW_ID } from './results';
 import { CLIPBOARD_MAX_ROWS, ExportFormat, FORMATS, memorySink, openSink, Sink } from './exporter';
 import { OpenSql, SqlFiles, SqlNode, deleteSqlNode, duplicateSqlFile, newSqlFile, nodeUri, renameSqlNode, sqlFilesDnd } from './sqlFiles';
@@ -24,7 +24,7 @@ import { newObjectTemplates } from './msTemplates';
 import { objectTemplates } from './objTemplates';
 import { mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
-import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments } from './sqlContext';
+import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments, resolveTableRef, tableAt } from './sqlContext';
 import { parsePlan } from './plan';
 import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
 import { ConsulClient, consulTarget } from './consul';
@@ -410,6 +410,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.runProcedure', (n?: Node) => objectScript(n, 'run')),
     vscode.commands.registerCommand('moonageDaydream.scriptAs', scriptAsCommand),
     vscode.commands.registerCommand('moonageDaydream.editColumns', columnsEditor),
+    vscode.commands.registerCommand('moonageDaydream.openTableColumns', openTableColumns),
     vscode.commands.registerCommand('moonageDaydream.startJob', (n?: Node) => jobCommand(n, 'start')),
     vscode.commands.registerCommand('moonageDaydream.stopJob', (n?: Node) => jobCommand(n, 'stop')),
     vscode.commands.registerCommand('moonageDaydream.activityMonitor', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', ACTIVITY_SQL, true)),
@@ -586,6 +587,25 @@ function formatEdits(doc: vscode.TextDocument, range: vscode.Range, o: vscode.Fo
     log.error(`formatEdits - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
     vscode.window.showWarningMessage(`SQL format failed: ${errMsg(e)}`);
     return [];
+  }
+}
+
+/** klik kanan nama tabel di file SQL -> editor Columns tabel itu (koneksi + database dari file) */
+async function openTableColumns() {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) return;
+  try {
+    const c = fileConn(ed.document.uri);
+    const d = c && drivers[c.type];
+    if (!c || !d?.columnDdl || d.dialect === 'mongodb') return void vscode.window.showInformationMessage('Columns needs a SQL connection on this file');
+    const parts = tableAt(ed.document.getText(), ed.document.offsetAt(ed.selection.active));
+    if (!parts) return void vscode.window.showInformationMessage('Place the cursor on a table name (FROM / JOIN / UPDATE / INSERT / DELETE)');
+    const r = resolveTableRef(parts, d.dialect, c.database || d.defaultDb);
+    const schema = r.schema ?? (await d.objects(c, await conns.password(c.name), r.db, 'table')).find((o) => o.name.toLowerCase() === r.name.toLowerCase())?.schema ?? schemaOf(c, r.db);
+    columnsEditor({ kind: 'obj', c, db: r.db, objKind: 'table', obj: { schema, name: r.name } });
+  } catch (e) {
+    log.error(`openTableColumns - EXCEPTION CAUGHT | ${errMsg(e)} - stack-trace: ${errStack(e)}`);
+    showError(`Could not open Columns: ${errMsg(e)}`);
   }
 }
 
