@@ -91,6 +91,10 @@
   .new-key-form { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
   .new-key-row { display: flex; flex-direction: column; gap: 4px; }
   .new-key-row label { font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .spin { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border-radius: 50%; border: 2px solid var(--vscode-editorWidget-border, #8884); border-top-color: var(--vscode-progressBar-background, #0e70c0); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+  .loading { color: var(--vscode-descriptionForeground); }
 </style>
 </head>
 <body>
@@ -99,7 +103,7 @@
   <span id="status">Loading…</span>
 </div>
 
-<div id="cluster" class="cluster"><div class="card"><div class="lbl">Cluster</div><div class="val">Loading…</div></div></div>
+<div id="cluster" class="cluster"><div class="card"><div class="lbl">Cluster</div><div class="val"><span class="spin"></span>Loading…</div></div></div>
 <details id="failing" style="display:none"><summary></summary><div class="list-container"><table><thead><tr><th>Status</th><th>Node</th><th>Service</th><th>Check</th><th>Output</th></tr></thead><tbody id="failingRows"></tbody></table></div></details>
 
 <div class="split-layout">
@@ -112,7 +116,7 @@
     </div>
     <div id="kvBreadcrumb" class="kv-breadcrumb"></div>
     <div class="list-container">
-      <div id="kvList"><div class="empty">Loading keys…</div></div>
+      <div id="kvList"><div class="empty loading"><span class="spin"></span>Loading keys…</div></div>
     </div>
   </div>
 

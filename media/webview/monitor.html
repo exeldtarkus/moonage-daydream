@@ -32,6 +32,10 @@
   .wrap { max-height: 45vh; overflow: auto; }
   .kill { height: 20px; padding: 0 8px; font-size: 11px; }
   .empty { padding: 12px; color: var(--vscode-descriptionForeground); }
+  .spin { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border-radius: 50%; border: 2px solid var(--vscode-editorWidget-border, #8884); border-top-color: var(--vscode-progressBar-background, #0e70c0); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+  .loading { color: var(--vscode-descriptionForeground); }
 </style>
 </head>
 <body>
@@ -44,7 +48,7 @@
 </div>
 <div class="charts">{{charts}}</div>
 <div class="tabs">{{tabs}}<span class="sp"></span><button id="open" title="Open this table as a query (grid with filter / export)">Open as query</button></div>
-<div class="wrap" id="table"><div class="empty">Waiting for the first sample…</div></div>
+<div class="wrap" id="table"><div class="empty loading"><span class="spin"></span>Waiting for the first sample…</div></div>
 <script type="application/json" id="page-data">{{data}}</script>
 <script nonce="{{nonce}}" src="monitor.js"></script>
 </body>

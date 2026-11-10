@@ -24,7 +24,7 @@
     kvPrefix = prefix;
     $('status').className = '';
     $('status').textContent = 'Loading…';
-    $('kvList').innerHTML = '<div class="empty">Loading…</div>';
+    $('kvList').innerHTML = '<div class="empty loading"><span class="spin"></span>Loading…</div>';
     vscode.postMessage({ type: 'kvBrowse', prefix: prefix });
   }
 

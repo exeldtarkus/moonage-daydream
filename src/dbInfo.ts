@@ -55,7 +55,7 @@ function size(mb: unknown): string {
 }
 
 function partBody(p: DbInfoPart, r: PartResult | undefined): string {
-  if (!r) return '<p class="muted">Loading…</p>';
+  if (!r) return '<p class="muted loading"><span class="spin" aria-hidden="true"></span>Loading…</p>';
   if ('error' in r) {
     return /permission|denied/i.test(r.error)
       ? `<p class="perm" role="note">No permission to read this section: ${esc(r.error)}</p>`
