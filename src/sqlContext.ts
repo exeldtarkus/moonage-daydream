@@ -191,22 +191,26 @@ export function tableRefs(stmt: string): { parts: string[]; alias?: string }[] {
   return out.filter((r) => !(targets.has(r) && r.parts.length === 1 && aliases.has(r.parts[0].toLowerCase())));
 }
 
-/** nama tabel di posisi `offset` (kursor / mouse) dalam FROM / JOIN / UPDATE / INSERT / DELETE: parts (db, schema, nama); kolom, alias, keyword, string, komentar = undefined */
-export function tableAt(sql: string, offset: number): string[] | undefined {
+/** semua referensi tabel (FROM / JOIN / UPDATE / INSERT / DELETE) beserta posisinya: parts (db, schema, nama), from / to = offset di `sql`; kolom, alias, keyword, string, komentar tidak ikut */
+export function tableSpans(sql: string): { from: number; to: number; parts: string[] }[] {
   const code = maskSql(sql, true); // komentar jadi spasi
   const full = maskSql(sql); // string + isi [..] juga spasi
   const part = String.raw`(?:\[[^\]]*\]|"[^"]*"|\`[^\`]*\`|[\w$#@]+)`;
   const chain = new RegExp(String.raw`${part}(?:\s*\.\s*${part}){0,2}`, 'g');
+  const refs = new Set(tableRefs(sql).map((r) => r.parts.join('.').toLowerCase()));
+  const out: { from: number; to: number; parts: string[] }[] = [];
   for (let m; (m = chain.exec(code)); ) {
-    if (offset < m.index) return undefined;
-    if (offset > m.index + m[0].length) continue;
     // shortcut: nama dikurung ([x] / "x" / `x`) di dalam string literal tidak terdeteksi sebagai string (maskSql ikut mengosongkan kurung), tableRefs tetap memfilter; upgrade bila ada laporan salah buka
-    if (/^[\w$#@]/.test(m[0]) && full[m.index] !== sql[m.index]) return undefined; // nama polos dimulai di dalam string / komentar
+    if (/^[\w$#@]/.test(m[0]) && full[m.index] !== sql[m.index]) continue; // nama polos dimulai di dalam string / komentar
     const parts = (m[0].match(new RegExp(part, 'g')) ?? []).map(unquote);
-    const key = parts.join('.').toLowerCase();
-    return tableRefs(sql).some((r) => r.parts.join('.').toLowerCase() === key) ? parts : undefined;
+    if (refs.has(parts.join('.').toLowerCase())) out.push({ from: m.index, to: m.index + m[0].length, parts });
   }
-  return undefined;
+  return out;
+}
+
+/** nama tabel di posisi `offset` (kursor / mouse); bukan tabel = undefined */
+export function tableAt(sql: string, offset: number): string[] | undefined {
+  return tableSpans(sql).find((s) => offset >= s.from && offset <= s.to)?.parts;
 }
 
 /** parts dari tableAt -> database / schema / nama; MySQL: schema = database; schema kosong = cari di database-nya (default dbo / public / main) */

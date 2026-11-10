@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { resolveTableRef, tableAt } from '../sqlContext';
+import { resolveTableRef, tableAt, tableSpans } from '../sqlContext';
 
 const at = (sql: string, needle: string, shift = 1) => tableAt(sql, sql.indexOf(needle) + shift);
 
@@ -29,4 +29,11 @@ test('resolveTableRef: database / schema per dialect, defaults from the file con
   assert.deepEqual(resolveTableRef(['shop', 'T'], 'mysql', 'cur'), { db: 'shop', schema: 'shop', name: 'T' }, 'MySQL: schema = database');
   assert.deepEqual(resolveTableRef(['T'], 'mysql', 'cur'), { db: 'cur', schema: 'cur', name: 'T' });
   assert.deepEqual(resolveTableRef(['s', 'T'], 'postgres', 'cur'), { db: 'cur', schema: 's', name: 'T' });
+});
+
+test('tableSpans: every table reference with its range (for Ctrl+click links)', () => {
+  const sql = "SELECT o.id FROM [db].[dbo].[orders] o JOIN items i ON i.oid = o.id WHERE o.n = 'orders'";
+  const spans = tableSpans(sql);
+  assert.deepEqual(spans.map((s) => sql.slice(s.from, s.to)), ['[db].[dbo].[orders]', 'items']);
+  assert.deepEqual(spans.map((s) => s.parts), [['db', 'dbo', 'orders'], ['items']]);
 });

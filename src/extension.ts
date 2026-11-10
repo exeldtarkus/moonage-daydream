@@ -24,7 +24,7 @@ import { newObjectTemplates } from './msTemplates';
 import { objectTemplates } from './objTemplates';
 import { mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
-import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments, resolveTableRef, tableAt } from './sqlContext';
+import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments, resolveTableRef, tableAt, tableSpans } from './sqlContext';
 import { parsePlan } from './plan';
 import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
 import { ConsulClient, consulTarget } from './consul';
@@ -411,6 +411,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('moonageDaydream.scriptAs', scriptAsCommand),
     vscode.commands.registerCommand('moonageDaydream.editColumns', columnsEditor),
     vscode.commands.registerCommand('moonageDaydream.openTableColumns', openTableColumns),
+    // Ctrl+klik nama tabel di file SQL = Columns (link hanya di nama tabel, garis bawah muncul saat Ctrl + hover)
+    vscode.languages.registerDocumentLinkProvider({ language: 'sql' }, { provideDocumentLinks: tableLinks }),
     vscode.commands.registerCommand('moonageDaydream.startJob', (n?: Node) => jobCommand(n, 'start')),
     vscode.commands.registerCommand('moonageDaydream.stopJob', (n?: Node) => jobCommand(n, 'stop')),
     vscode.commands.registerCommand('moonageDaydream.activityMonitor', (n?: Node) => n?.kind === 'conn' && openScript(n.c, 'master', ACTIVITY_SQL, true)),
@@ -591,14 +593,25 @@ function formatEdits(doc: vscode.TextDocument, range: vscode.Range, o: vscode.Fo
 }
 
 /** klik kanan nama tabel di file SQL -> editor Columns tabel itu (koneksi + database dari file) */
-async function openTableColumns() {
+function tableLinks(doc: vscode.TextDocument): vscode.DocumentLink[] {
+  const c = fileConn(doc.uri);
+  if (!c || !drivers[c.type].columnDdl || drivers[c.type].dialect === 'mongodb') return [];
+  const text = doc.getText();
+  if (text.length > 500_000) return []; // shortcut: file SQL sangat besar tidak diberi link (parse tiap perubahan), naikkan batas bila perlu
+  return tableSpans(text).map((s) => Object.assign(new vscode.DocumentLink(new vscode.Range(doc.positionAt(s.from), doc.positionAt(s.to)),
+    vscode.Uri.parse(`command:moonageDaydream.openTableColumns?${encodeURIComponent(JSON.stringify([{ uri: doc.uri.toString(), offset: s.from }]))}`)),
+    { tooltip: 'Open table Columns (Ctrl+click)' }));
+}
+
+/** arg dari link = { uri, offset } tabel yang diklik; dari menu klik kanan = posisi kursor */
+async function openTableColumns(arg?: { uri: string; offset: number }) {
   const ed = vscode.window.activeTextEditor;
   if (!ed) return;
   try {
     const c = fileConn(ed.document.uri);
     const d = c && drivers[c.type];
     if (!c || !d?.columnDdl || d.dialect === 'mongodb') return void vscode.window.showInformationMessage('Columns needs a SQL connection on this file');
-    const parts = tableAt(ed.document.getText(), ed.document.offsetAt(ed.selection.active));
+    const parts = tableAt(ed.document.getText(), arg && arg.uri === ed.document.uri.toString() ? arg.offset : ed.document.offsetAt(ed.selection.active));
     if (!parts) return void vscode.window.showInformationMessage('Place the cursor on a table name (FROM / JOIN / UPDATE / INSERT / DELETE)');
     const r = resolveTableRef(parts, d.dialect, c.database || d.defaultDb);
     const schema = r.schema ?? (await d.objects(c, await conns.password(c.name), r.db, 'table')).find((o) => o.name.toLowerCase() === r.name.toLowerCase())?.schema ?? schemaOf(c, r.db);
