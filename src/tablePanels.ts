@@ -1,7 +1,7 @@
 // editor Columns dan New Table (webview), termasuk tabel Keys
 import * as vscode from 'vscode';
 import { Node } from './explorer';
-import { ColumnRow, ConnectionInfo, Driver, NewColumn, TableKey, createTable, readKeys, columnChanges, columnsConfirm, execScript, showColumns, drivers } from './db';
+import { ColumnRow, ConnectionInfo, Driver, NewColumn, TableKey, createTable, columnsJson, readKeys, columnChanges, columnsConfirm, execScript, showColumns, drivers } from './db';
 import { columnsHtml } from './columnsHtml';
 import { gridMeta, showError } from './gridEdit';
 import { conns, explorer, log, openScript, trackPanel } from './extension';
@@ -143,7 +143,7 @@ export function columnsEditor(n?: Node) {
       post({ type: 'status', text: `Load failed: ${errMsg(e)}`, error: true });
     }
   }
-  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[]; tableKeys?: TableKey[]; schema?: string; name?: string }) => {
+  panel.webview.onDidReceiveMessage(async (m: { type: string; rows?: ColumnRow[]; tableKeys?: TableKey[]; schema?: string; name?: string; as?: 'script' | 'json' }) => {
     if (m.type === 'ready' || m.type === 'refresh') return load();
     if (m.type === 'fkTables') {
       try {
@@ -162,6 +162,18 @@ export function columnsEditor(n?: Node) {
         log.error(`columnsEditor fkColumns - EXCEPTION CAUGHT | ${conn.name} / ${db} / ${m.name}: ${errMsg(e)} - stack-trace: ${errStack(e)}`);
         return post({ type: 'status', text: `Could not read columns of ${m.name}: ${errMsg(e)}`, error: true });
       }
+    }
+    if (m.type === 'copy') {
+      // salin kondisi di server (bukan perubahan yang belum dieksekusi)
+      let text = '';
+      if (m.as === 'json') text = columnsJson(obj, original, info, originalKeys);
+      else {
+        const r = createTable(ddl, obj, original, originalKeys);
+        if (r.errors.length || !r.sql) return post({ type: 'status', text: `Cannot copy as script: ${r.errors[0] ?? `${d.label} has no CREATE TABLE script`}`, error: true });
+        text = r.sql;
+      }
+      await vscode.env.clipboard.writeText(text);
+      return post({ type: 'status', text: `Copied ${m.as === 'json' ? 'JSON' : 'CREATE TABLE script'} to the clipboard` });
     }
     // pesan tanpa tableKeys (UI lama) = key tidak berubah
     const r = columnChanges(ddl, obj, original, m.rows ?? [], m.tableKeys ?? originalKeys, originalKeys);

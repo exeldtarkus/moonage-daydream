@@ -30,6 +30,12 @@
   .summary { color: var(--muted); padding-bottom: 2px; }
   .summary b { color: var(--fg); font-weight: 600; }
   .actions { margin-left: auto; display: flex; gap: 8px; }
+  .copywrap { position: relative; }
+  #copyMenu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; display: flex; flex-direction: column; min-width: 160px; padding: 4px; border-radius: 4px;
+    background: var(--vscode-menu-background, var(--bg)); border: 1px solid var(--vscode-menu-border, var(--line)); box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0,0,0,.3)); }
+  #copyMenu[hidden] { display: none; }
+  #copyMenu button { height: 26px; text-align: left; background: transparent; color: var(--vscode-menu-foreground, var(--fg)); border-color: transparent; }
+  #copyMenu button:hover { background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground)); color: var(--vscode-menu-selectionForeground, var(--fg)); }
   .ro { color: var(--vscode-editorWarning-foreground); align-self: center; }
   #status { flex-basis: 100%; min-height: 0; color: var(--muted); }
   #status:empty { display: none; }
@@ -153,6 +159,7 @@
   <div class="actions">
     {{roNote}}
     {{refreshBtn}}
+    {{copyBtn}}
     {{addColBtn}}
   </div>
   <div id="status">{{loadingText}}</div>

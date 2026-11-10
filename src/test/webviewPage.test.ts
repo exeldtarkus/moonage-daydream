@@ -46,7 +46,7 @@ test('pageJson: aman ditaruh di <script type="application/json"> dan bisa di-par
 });
 
 test('webviewPage: <script nonce src="x.js"> diganti isi media/webview/x.js (inline, CSP nonce tetap)', () => {
-  const html = webviewPage('columns', { cspSource: 'C', nonce: 'N', table: '', conn: '', db: '', newName: '', roNote: '', refreshBtn: '', addColBtn: '', loadingText: '', roHidden: '', pendingTitle: '', revertBtn: '', executeBtn: '', data: '{}' });
+  const html = webviewPage('columns', { cspSource: 'C', nonce: 'N', table: '', conn: '', db: '', newName: '', roNote: '', refreshBtn: '', copyBtn: '', addColBtn: '', loadingText: '', roHidden: '', pendingTitle: '', revertBtn: '', executeBtn: '', data: '{}' });
   assert.ok(!/<script[^>]* src=/.test(html), 'tidak boleh ada script src tersisa');
   assert.match(html, /<script nonce="N">\nconst vscode = acquireVsCodeApi\(\);/);
 });

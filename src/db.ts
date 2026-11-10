@@ -462,6 +462,24 @@ export function showColumns(rs: Pick<ResultSet, 'columns' | 'rows'>): { cols: Co
   };
 }
 
+/** Copy as JSON di editor Columns: semua kolom (tipe, NULL, default, PK / AI / UQ / FK, ...) + kolom info read-only dari server + key tabel */
+export function columnsJson(obj: DbObject, cols: ColumnRow[], info: { columns: string[]; rows: unknown[][] }, keys: TableKey[]): string {
+  const filled = (v: unknown) => v !== null && v !== undefined && v !== '';
+  return JSON.stringify({
+    table: obj.schema ? `${obj.schema}.${obj.name}` : obj.name,
+    columns: cols.map((c, i) => ({
+      position: i + 1, name: c.name, type: c.type, nullable: c.nullable,
+      ...(c.default !== undefined ? { default: c.default } : {}),
+      ...(c.pk ? { primaryKey: true } : {}), ...(c.ai ? { autoIncrement: true } : {}), ...(c.unique ? { unique: true } : {}),
+      ...(c.fk ? { foreignKey: c.fk } : {}),
+      ...(c.keep ? { collate: c.keep } : {}),
+      ...(c.generated ? { generated: true } : {}), ...(c.gen ? { generatedExpression: c.gen } : {}),
+      ...Object.fromEntries(info.columns.flatMap((n, k) => (filled(info.rows[i]?.[k]) ? [[n, info.rows[i][k]]] : []))),
+    })),
+    keys: keys.map((k) => ({ kind: k.kind, ...(k.name ? { name: k.name } : {}), columns: k.cols, ...(k.ref ? { references: k.ref } : {}) })),
+  }, null, 2);
+}
+
 const sameCol = (a: ColumnDef, b: ColumnDef) => a.name === b.name && a.type.trim() === b.type.trim() && a.nullable === b.nullable
   && (a.default?.trim() || '') === (b.default?.trim() || '');
 

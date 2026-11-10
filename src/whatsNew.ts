@@ -8,6 +8,7 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 export const RELEASES: Release[] = [
   {
     version: '1.2.2', date: '2026-11-10', items: [
+      { kind: 'new', title: 'Copy from the Columns editor', detail: 'The Copy button offers Copy as script (the CREATE TABLE script of the table) and Copy as JSON (every column with its type, nullability, default, PK / AI / UQ / FK and the other column details, plus the table keys).' },
       { kind: 'new', title: 'Open Table Columns from a SQL file', detail: 'Right-click a table name in a SQL file (FROM / JOIN / UPDATE / INSERT / DELETE, with or without [database].[schema]) and choose Open Table Columns to open its Columns editor on the file\'s connection.' },
       { kind: 'fixed', title: 'Pinned files stay in Open', detail: 'A file pinned in the Open view is no longer dropped when its editor tab is closed; it stays at the top (click to open it again) until you unpin it.' },
       { kind: 'fixed', title: 'Format Document keeps your place', detail: 'Shift+Alt+F on a long SQL file no longer jumps to the last (empty) line; only the changed text is replaced, so the cursor and scroll position stay where they were.' },
