@@ -7,7 +7,16 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 folder="$(realpath "${1:-$root/test-extention}")"
 # database lab lokal untuk test manual fitur (script lokal, ter-ignore git); gagal tidak menghentikan dev
-[[ -f "$root/docs/main/temp/dev-up.sh" ]] && { bash "$root/docs/main/temp/dev-up.sh" || echo "[dev] dev-up.sh failed, continuing" >&2; }
+if [[ -f "$root/docs/main/temp/dev-up.sh" ]]; then
+  ans=''
+  # tanpa input (dijalankan non-interaktif) atau Enter = ya, seperti sebelumnya
+  read -rp "[dev] Start the local database containers (Docker)? [Y/n] " ans || true
+  if [[ $ans =~ ^[Nn] ]]; then
+    echo "[dev] skipping local databases" >&2
+  else
+    bash "$root/docs/main/temp/dev-up.sh" || echo "[dev] dev-up.sh failed, continuing" >&2
+  fi
+fi
 if [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
   wincode="$(ls -d /mnt/c/Users/*/AppData/Local/Programs/"Microsoft VS Code"/bin/code 2>/dev/null | head -1)"
   [[ -n "$wincode" ]] || { echo "[dev] VS Code Windows tidak ditemukan di /mnt/c/Users/*/AppData/Local/Programs" >&2; exit 1; }
