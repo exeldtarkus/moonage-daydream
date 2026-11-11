@@ -112,6 +112,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     : m.type === 'cancelView' ? cancelView(m, o)
     : m.type === 'export' ? exportResult(m, undefined, o)
     : m.type === 'copy' ? exportResult(m, 'clipboard', o)
+    : m.type === 'copyValue' ? copyCellValue(m)
     : m.type === 'planXml' ? openPlanXml(o)
     : m.type === 'pin' ? results.pin()
     : m.type === 'more' ? loadMore(m)
@@ -1483,6 +1484,12 @@ export async function applyWhere(where: string, part?: number) {
  * target: 'clipboard' = Copy (format teks, All Data dibatasi CLIPBOARD_MAX_ROWS); Uri diisi test (tanpa dialog Save).
  * Mengembalikan jumlah baris yang ditulis.
  */
+/** tombol Copy di popup nilai sel grid hasil: salin nilai mentah (bukan teks yang sudah dirapikan) */
+async function copyCellValue(m: ResultMessage) {
+  await vscode.env.clipboard.writeText(m.value ?? '');
+  vscode.window.setStatusBarMessage('Copied the cell value to the clipboard', 3000);
+}
+
 export async function exportResult(m: ResultMessage, target?: vscode.Uri | 'clipboard', outcome?: Outcome): Promise<number | undefined> {
   const o = outcome ?? results.current?.outcome; // outcome: tab pin (snapshot) asal pesan
   if (!o || m.set === undefined) return;

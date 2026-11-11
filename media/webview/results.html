@@ -52,6 +52,12 @@
   .peek .s { color: var(--vscode-debugTokenExpression-string, #ce9178); }
   .peek .n { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
   .peek .b { color: var(--vscode-debugTokenExpression-boolean, #569cd6); }
+  .peekbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+  .menu .peekcopy { display: inline-flex; width: auto; align-items: center; gap: 4px; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer;
+    font-family: var(--vscode-font-family); font-size: 11px;
+    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
+  .menu .peekcopy:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+  .menu .peekcopy svg { width: 12px; height: 12px; }
   .menu hr { border: 0; border-top: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-panel-border)); margin: 4px 0; }
   .foot .morebtn { margin-left: auto; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
     color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }

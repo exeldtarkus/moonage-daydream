@@ -384,6 +384,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (menu.contains(b)) {
+      if (b.classList.contains('peekcopy')) return; // popup nilai sel: ditangani handler peek, bukan menu kolom
       const t = menu.table, c = menu.col, s = st(t);
       const a = b.dataset.a;
       if (a === 'xsave' || a === 'xcopy') {
@@ -540,12 +541,39 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     }
     return t.length > PEEK_MIN || t.includes('\n') ? esc(String(v)) : null;
   }
+  const COPY_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M10 1H3a1 1 0 0 0-1 1v9h2V3h6V1zm3 3H6a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1zm-.5 9.5h-6v-8h6v8z"/></svg>';
+  const PEEK_BAR = '<div class="peekbar"><button class="peekcopy" title="Copy value">' + COPY_ICON + 'Copy</button></div>';
+  /** popup nilai sel: dipakai hover maupun double-click; nilai mentah disimpan untuk tombol Copy */
+  function peekShow(td) {
+    const t = td.closest('table.rs');
+    if (!t || td.classList.contains('n') || !td.parentElement.dataset.r || td.querySelector('input')) return; // sel yang sedang diedit: tidak diganggu
+    if (!menu.hidden && !menu.classList.contains('peek')) return; // menu lain (filter / export) sedang terbuka
+    const v = val(st(t), +td.parentElement.dataset.r, order(t)[td.cellIndex - 1]);
+    const html = peekText(v);
+    if (!html) return;
+    peekTd = td;
+    menu.peekValue = v;
+    open(td, PEEK_BAR + '<pre class="peek">' + html + '</pre>', null, 'peek');
+  }
+  const HOVER_MS = 500;
+  let peekTd = null, showT = null, hideT = null;
+  const peekHide = () => { if (menu.classList.contains('peek')) { menu.hidden = true; peekTd = null; } };
+  document.addEventListener('mouseover', (e) => {
+    clearTimeout(showT);
+    clearTimeout(hideT);
+    if (menu.contains(e.target)) return; // mouse di dalam popup (mis. menuju tombol Copy): biarkan terbuka
+    const td = e.target.closest?.('tbody td');
+    if (!td) { hideT = setTimeout(peekHide, 300); return; }
+    if (td !== peekTd) showT = setTimeout(() => peekShow(td), HOVER_MS);
+  });
   document.addEventListener('dblclick', (e) => {
     const td = e.target.closest('tbody td');
-    const t = td?.closest('table.rs');
-    if (!t || td.classList.contains('n') || !td.parentElement.dataset.r) return;
-    const html = peekText(val(st(t), +td.parentElement.dataset.r, order(t)[td.cellIndex - 1]));
-    if (html) open(td, '<pre class="peek">' + html + '</pre>', null, 'peek');
+    if (td) { clearTimeout(showT); peekShow(td); }
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest?.('.peekcopy')) return;
+    vscode.postMessage({ type: 'copyValue', value: menu.peekValue });
+    peekHide();
   });
   // drag kolom di panel Columns: lepas di atas kolom lain -> pindah ke posisi itu
   let dragCol = null;

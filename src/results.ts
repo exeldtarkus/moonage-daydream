@@ -18,6 +18,8 @@ export interface ResultMessage {
   rows?: number[];
   cols?: number[];
   format?: string;
+  /** Copy value di popup sel grid hasil: nilai mentah sel */
+  value?: string;
   /** edit grid: sel yang diubah (index baris asli, index kolom, nilai baru / null) */
   edits?: { row: number; col: number; value: string | null }[];
   /** save grid: index baris asli yang dihapus + baris baru (nilai per kolom hasil) */

@@ -8,7 +8,7 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 export const RELEASES: Release[] = [
   {
     version: '1.2.6', date: '2026-11-11', items: [
-      { kind: 'new', title: 'Cell value popup', detail: 'Double-click a cell in the result grid to see the whole value in a popup; JSON is pretty-printed and colored. Short plain values stay as they are.' },
+      { kind: 'new', title: 'Cell value popup', detail: 'Hover (or double-click) a cell in the result grid to see the whole value in a popup, with a Copy button for the raw value; JSON is pretty-printed and colored. Short plain values stay as they are.' },
       { kind: 'improved', title: 'Long values keep their column narrow', detail: 'A long value (JSON, long text) is cut off with an ellipsis instead of stretching its column over the whole grid; the full value is in the popup and the Inspector.' },
     ],
   },
