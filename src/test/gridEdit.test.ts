@@ -218,3 +218,11 @@ test('grid copy format can be set from the Command Palette', () => {
   assert.equal(c?.title, 'Set Grid Copy Format (Ctrl+C)…');
   assert.equal(c?.category, 'Moonage Daydream');
 });
+
+test('grid: a selected row stays visibly blue even if the theme hides list.activeSelectionBackground', () => {
+  const result = { resultSets: [{ columns: ['a'], types: ['int'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 };
+  const rule = /tbody tr\.sel td \{([^}]*)\}/.exec(render('csp', 't', { result }))?.[1] ?? '';
+  // warna seleksi dicampur sendiri dari focusBorder: tema yang list.activeSelectionBackground-nya mirip latar grid tetap terlihat
+  assert.match(rule, /color-mix\(in srgb, var\(--vscode-focusBorder/);
+  assert.doesNotMatch(rule, /list-activeSelectionForeground/); // teks tetap warna asli di atas tint
+});

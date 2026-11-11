@@ -9,6 +9,7 @@ export const RELEASES: Release[] = [
   {
     version: '1.2.6', date: '2026-11-11', items: [
       { kind: 'new', title: 'Cell value popup', detail: 'Hover (or double-click) a cell in the result grid to see the whole value in a popup, with a Copy button for the raw value; JSON is pretty-printed and colored. Short plain values stay as they are.' },
+      { kind: 'fixed', title: 'Selected rows are visible again', detail: 'The selected row is tinted with the editor focus color instead of list.activeSelectionBackground, which some themes set to the same color as the grid background.' },
       { kind: 'improved', title: 'Long values keep their column narrow', detail: 'A long value (JSON, long text) is cut off with an ellipsis instead of stretching its column over the whole grid; the full value is in the popup and the Inspector.' },
     ],
   },

@@ -82,7 +82,8 @@
     font: inherit; color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, transparent); }
   .foot .xbtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
   .foot .xbtn svg { width: 12px; height: 12px; }
-  tbody tr.sel td { background: var(--vscode-list-activeSelectionBackground, #094771) !important; color: var(--vscode-list-activeSelectionForeground, inherit); }
+  /* baris terpilih: warna dicampur dari focusBorder, bukan list.activeSelectionBackground (ada tema yang warnanya mirip latar grid -> seleksi tidak terlihat) */
+  tbody tr.sel td { background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 20%, transparent) !important; }
   /* sel aktif (terakhir diklik): biru, di atas warna baris terpilih / Delete rows */
   tbody td.cur, tbody tr.sel td.cur, tbody tr.todelete td.cur { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: -2px; background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 30%, transparent) !important; }
   tbody td { cursor: default; }
