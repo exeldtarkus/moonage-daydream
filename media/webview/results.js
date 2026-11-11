@@ -514,6 +514,37 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     });
     input.addEventListener('blur', () => finish(true));
   });
+  /**
+   * popup nilai sel (double-click): nilai panjang / JSON ditampilkan penuh, JSON di-pretty-print + berwarna.
+   * Jalan berdampingan dengan edit sel: di grid yang bisa diedit input tetap muncul, popup hanya untuk dibaca.
+   */
+  const PEEK_MIN = 60;
+  const JTOK = /"(?:\\.|[^"\\])*"\s*:|"(?:\\.|[^"\\])*"|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
+  function hiJson(txt) {
+    let out = '', last = 0;
+    for (const m of txt.matchAll(JTOK)) {
+      const cls = m[0].endsWith(':') ? 'k' : m[0][0] === '"' ? 's' : /^[-\d]/.test(m[0]) ? 'n' : 'b';
+      out += esc(txt.slice(last, m.index)) + '<span class="' + cls + '">' + esc(m[0]) + '</span>';
+      last = m.index + m[0].length;
+    }
+    return out + esc(txt.slice(last));
+  }
+  /** isi popup sel: JSON -> pretty print berwarna, teks panjang / banyak baris -> apa adanya; null = tidak perlu popup */
+  function peekText(v) {
+    if (v === null) return null;
+    const t = String(v).trim();
+    if (t[0] === '{' || t[0] === '[') {
+      try { return hiJson(JSON.stringify(JSON.parse(t), null, 2)); } catch { /* bukan JSON: ditampilkan sebagai teks biasa */ }
+    }
+    return t.length > PEEK_MIN || t.includes('\n') ? esc(String(v)) : null;
+  }
+  document.addEventListener('dblclick', (e) => {
+    const td = e.target.closest('tbody td');
+    const t = td?.closest('table.rs');
+    if (!t || td.classList.contains('n') || !td.parentElement.dataset.r) return;
+    const html = peekText(val(st(t), +td.parentElement.dataset.r, order(t)[td.cellIndex - 1]));
+    if (html) open(td, '<pre class="peek">' + html + '</pre>', null, 'peek');
+  });
   // drag kolom di panel Columns: lepas di atas kolom lain -> pindah ke posisi itu
   let dragCol = null;
   document.addEventListener('dragstart', (e) => { const el = e.target.closest?.('#side .col'); if (el) { dragCol = +el.dataset.c; e.dataTransfer.effectAllowed = 'move'; } });

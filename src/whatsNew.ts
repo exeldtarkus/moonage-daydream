@@ -7,6 +7,11 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '1.2.6', date: '2026-11-11', items: [
+      { kind: 'new', title: 'Cell value popup', detail: 'Double-click a cell in the result grid to see the whole value in a popup; JSON is pretty-printed and colored. Short plain values stay as they are.' },
+    ],
+  },
+  {
     version: '1.2.5', date: '2026-11-10', items: [
       { kind: 'improved', title: 'Loading indicators', detail: 'The Columns editor, Database Info, Live Monitor, Consul Dashboard, Add Data and New Database show a spinner while their data is being read instead of an empty page.' },
     ],
