@@ -26,6 +26,8 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     }
     return state.get(t);
   };
+  /** batas nilai "panjang": dipotong di grid dan punya popup double-click */
+  const PEEK_MIN = 60;
   const editKey = (r, c) => r + ':' + c;
   /** nilai sel yang tampil: hasil edit bila ada, selain itu data asli (mode cache: halaman yang sudah diterima) */
   const val = (s, r, c) => (s.c ? (s.c.rmap.get(r)?.[c] ?? null) : s.edits.has(editKey(r, c)) ? s.edits.get(editKey(r, c)) : s.data[r][c]);
@@ -39,7 +41,8 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   const keyHit = (v, k) => (k.n ? v === null : v === null ? false : k.e !== undefined ? v === k.e : v.toLowerCase().includes(k.c));
   const ids = (t) => { const part = t.closest('section')?.dataset.part; return { set: +t.dataset.set, part: part === undefined ? undefined : +part }; };
   const esc = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const cellHtml = (v) => (v === null ? '<span class="null">(null)</span>' : esc(v));
+  /** nilai panjang dibungkus .cv supaya kolomnya tidak melebar (dipotong ellipsis); nilai penuh: double-click / Inspector */
+  const cellHtml = (v) => (v === null ? '<span class="null">(null)</span>' : v.length > PEEK_MIN ? '<span class="cv">' + esc(v) + '</span>' : esc(v));
   function rowHtml(s, r, pos) {
     const cls = (s.sel.has(r) ? ' sel' : '') + (s.deletes.has(r) ? ' todelete' : '');
     return '<tr data-r="' + r + '"' + (cls ? ' class="' + cls.trim() + '"' : '') + '><td class="n">' + (pos + 1) + '</td>' + s.order.map((c) => {
@@ -518,7 +521,6 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
    * popup nilai sel (double-click): nilai panjang / JSON ditampilkan penuh, JSON di-pretty-print + berwarna.
    * Jalan berdampingan dengan edit sel: di grid yang bisa diedit input tetap muncul, popup hanya untuk dibaca.
    */
-  const PEEK_MIN = 60;
   const JTOK = /"(?:\\.|[^"\\])*"\s*:|"(?:\\.|[^"\\])*"|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
   function hiJson(txt) {
     let out = '', last = 0;

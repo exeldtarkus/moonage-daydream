@@ -28,3 +28,8 @@ test('cell peek: popup is scrollable, wraps and colors JSON tokens', () => {
   assert.match(html, /\.peek \.s \{/);
   assert.match(html, /\.peek \.n \{/);
 });
+
+test('grid: a long value does not stretch its column (capped width + ellipsis)', () => {
+  assert.match(page(), /\.cv \{[^}]*max-width: 420px;[^}]*text-overflow: ellipsis/);
+  assert.ok(page().includes("v.length > PEEK_MIN ? '<span class=\"cv\">'"), 'long cell values are wrapped in .cv');
+});

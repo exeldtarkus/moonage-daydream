@@ -80,6 +80,8 @@
   /* sel aktif (terakhir diklik): biru, di atas warna baris terpilih / Delete rows */
   tbody td.cur, tbody tr.sel td.cur, tbody tr.todelete td.cur { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: -2px; background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 30%, transparent) !important; }
   tbody td { cursor: default; }
+  /* nilai panjang (JSON, teks) tidak melebarkan kolom: dipotong dengan ellipsis, nilai penuh lewat double-click / Inspector */
+  .cv { display: inline-block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
   tbody tr.vpad td { padding: 0; height: auto; border: 0; background: none !important; pointer-events: none; }
   .menu.export { padding: 10px 12px; min-width: 230px; }
   .menu.export label { display: block; margin: 6px 0 4px; font-weight: 600; }
