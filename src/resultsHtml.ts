@@ -123,8 +123,8 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
     const more = gc ? '' : s.limited ? ` · auto limit ${fmtCount(s.limited)}` : s.total > s.rows.length ? ` (showing first ${fmtCount(s.rows.length)})` : '';
     const head = s.columns.map((c, k) => {
       const t = s.types?.[k] ?? '';
-      return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${canMore && i === 0 && gen.has(c.toLowerCase()) ? ' data-gen="1"' : ''}${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="ty">${typeTag(t)}</span>${esc(c)}`
-        + `<span class="hb"><button class="fbtn" data-c="${k}" title="${gc ? 'Filter all cached rows' : 'Filter loaded rows'}">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></th>`;
+      return `<th data-c="${k}" data-name="${esc(c)}" data-type="${esc(t)}"${canMore && i === 0 && gen.has(c.toLowerCase()) ? ' data-gen="1"' : ''}${num[k] ? ' class="num"' : ''}${t ? ` title="${esc(t)}"` : ''}><span class="hd"><span class="lbl"><span class="ty">${typeTag(t)}</span>${esc(c)}</span>`
+        + `<span class="hb"><button class="fbtn" data-c="${k}" title="${gc ? 'Filter all cached rows' : 'Filter loaded rows'}">${FUNNEL}</button><button class="mbtn" data-c="${k}" title="Sort / hide">${DOTS}</button></span></span></th>`;
     }).join('');
     const truncated = !gc && (!!s.limited || s.total > s.rows.length);
     const title = gc ? cacheTitle(gc) : `${fmtCount(s.total)} row(s)${more}`;
