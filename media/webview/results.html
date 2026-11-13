@@ -30,9 +30,9 @@
   th.n { z-index: 2; background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   .null { opacity: .5; }
   /* toolbar WHERE + tombol header + menu kolom */
-  .where { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-family: var(--vscode-font-family); }
+  .where { display: flex; align-items: center; gap: 6px; margin: 2px 0; font-family: var(--vscode-font-family); }
   .where label { font-size: 11px; font-weight: 600; opacity: .8; }
-  .where input { flex: 1; min-width: 0; padding: 4px 8px; font-family: var(--vscode-editor-font-family); font-size: 12px;
+  .where input { flex: 1; min-width: 0; padding: 2px 8px; font-family: var(--vscode-editor-font-family); font-size: 12px;
     color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }
   .where input:focus { outline: 1px solid var(--vscode-focusBorder); }
   .where .clear, .hb button { border: 0; background: none; color: inherit; cursor: pointer; opacity: .6; padding: 2px; }
@@ -139,9 +139,12 @@
   .foot { display: flex; gap: 16px; padding: 6px 12px; font-family: var(--vscode-font-family); font-size: 12px; opacity: .8;
     border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   /* Search Output gaya Kibana "is one of": key = chip (OR), cocok di kolom mana pun */
-  .sout { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-family: var(--vscode-font-family); font-size: 12px; }
+  /* satu baris toolbar per hasil: Result N · jumlah baris + Search Output */
+  .rbar { display: flex; align-items: center; gap: 10px; margin: 4px 0; font-family: var(--vscode-font-family); font-size: 12px; }
+  .rhead { font-weight: 600; white-space: nowrap; } .rhead .rtitle { font-weight: normal; opacity: .7; }
+  .sout { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0; font-family: var(--vscode-font-family); font-size: 12px; }
   .sout label { font-size: 11px; font-weight: 600; opacity: .8; white-space: nowrap; }
-  .sout .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 2px 4px; min-height: 22px;
+  .sout .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 1px 4px; min-height: 20px;
     background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }
   .sout .chips:focus-within { outline: 1px solid var(--vscode-focusBorder); }
   .sout .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: 0; border-radius: 9px; cursor: pointer; font: inherit;
