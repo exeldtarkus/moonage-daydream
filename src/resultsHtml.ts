@@ -232,7 +232,7 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
     top: 'loading' in o ? '' : `<div class="top">${pinned ? '📌 ' : ''}${esc(title)} · ${status}${'parts' in o ? `<button class="pinbtn collapsebtn" title="Fold every query away; click again to open them all">${CHEVRON}<span class="lbl">Collapse all</span></button>` : ''}${pinned || running(o) ? '' : `<button class="pinbtn" title="Pin: keep this result in its own tab (next to the others) so new runs do not replace it">${PIN_ICON}Pin</button>`}</div>`,
     body,
     sideTabs: 'result' in o || 'parts' in o ? `<nav class="sidetabs"><button data-pane="cols" title="Show, hide and reorder columns">${COLS_ICON}Columns</button><button data-pane="insp" title="Inspect the selected row">${INSPECT_ICON}Inspector</button><button data-pane="exp" title="Export / save the active result to a file">${EXPORT_ICON}Export</button></nav>
-<aside id="side" hidden><div class="sidehead"><b id="sidetitle"></b><button class="sideclose" title="Close">×</button></div><div id="sidebody"></div></aside>` : '',
+<aside id="side" hidden><div class="sidehead"><b id="sidetitle"></b><button class="sideclose" title="Close">×</button></div><div id="sidesrc"></div><div id="sidebody"></div></aside>` : '',
     data: pageJson(FORMAT_OPTIONS),
   });
 }

@@ -266,7 +266,11 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   document.addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('tbody td')) e.preventDefault(); });
   document.addEventListener('click', (e) => {
     const tb = e.target.closest('table.rs');
-    if (tb) active = tb;
+    if (tb) {
+      const moved = tb !== active;
+      active = tb;
+      if (moved && side && !side.hidden) renderSide(); // panel samping selalu mengikuti hasil yang disentuh
+    }
     const go = e.target.closest('[data-goto]');
     if (go) { headOf(tableOf(), +go.dataset.goto).scrollIntoView({ block: 'nearest', inline: 'center' }); return; }
     const mv = e.target.closest('[data-move]');
@@ -425,11 +429,26 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   const side = document.getElementById('side');
   let pane = null, active = null;
   const tableOf = () => (active && document.contains(active) ? active : document.querySelector('table.rs'));
+  /** daftar semua grid hasil di halaman (multi query / beberapa result set) untuk pemilih di panel samping */
+  const sideTables = () => [...document.querySelectorAll('table.rs')];
+  function sideSources() {
+    const box = document.getElementById('sidesrc');
+    if (!box) return;
+    const all = sideTables(), cur = tableOf();
+    if (all.length < 2) { box.innerHTML = ''; return; }
+    box.innerHTML = '<select class="srcsel" aria-label="Result to work on">' + all.map((t, i) => {
+      const part = t.closest('section')?.dataset.part;
+      const label = (part === undefined ? '' : 'Query ' + (+part + 1) + ' · ') + 'Result ' + (+t.dataset.set + 1)
+        + ' (' + fmt(viewLen(st(t))) + ' rows)';
+      return '<option value="' + i + '"' + (t === cur ? ' selected' : '') + '>' + esc(label) + '</option>';
+    }).join('') + '</select>';
+  }
   function renderSide() {
     if (!side || side.hidden) return;
     const t = tableOf();
     const body = document.getElementById('sidebody');
     document.getElementById('sidetitle').textContent = pane === 'cols' ? 'Columns' : pane === 'insp' ? 'Inspector' : 'Export';
+    sideSources();
     if (!t) { body.innerHTML = '<div class="hint">No result</div>'; return; }
     const s = st(t);
     const heads = [...t.tHead.rows[0].cells].slice(1);
@@ -617,6 +636,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     renderSide();
   });
   document.addEventListener('change', (e) => {
+    if (e.target.classList?.contains('srcsel')) { active = sideTables()[+e.target.value]; renderSide(); return; }
     if (e.target.id === 'xf') syncCopy();
     if (e.target.dataset?.col !== undefined) {
       const t = tableOf(), s = st(t), c = +e.target.dataset.col;
