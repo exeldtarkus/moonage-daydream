@@ -7,7 +7,7 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
-    version: '1.2.8', date: '2026-11-13', items: [
+    version: '1.3.0', date: '2026-11-13', items: [
       { kind: 'improved', title: 'Compact result toolbar', detail: 'The WHERE box is slimmer and the result title now shares one row with Search Output, so a result takes two short toolbar rows instead of three and more rows of data fit on screen.' },
       { kind: 'new', title: 'Collapse a query in a multi-query result', detail: 'When several statements run at once, every Query section has a chevron: click the title to fold its result away and keep the ones you are analysing in view. All of them start expanded, and Collapse all in the title bar folds or opens every query at once.' },
       { kind: 'improved', title: 'Export moved to the side rail', detail: 'Export is now a panel next to Columns and Inspector on the right edge of the result view: pick the rows and the format, then Save to a file or Copy to the clipboard. The three tabs share one tidy rail.' },
