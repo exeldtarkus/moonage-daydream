@@ -11,7 +11,7 @@ const foot = () => /<div class="foot">([\s\S]*?)<\/div><\/div>/.exec(page())?.[1
 
 test('header hasil: satu baris berisi judul + ikon aksi', () => {
   const html = page();
-  assert.match(html, /<div class="rbar"><span class="rhead">Result 1 [\s\S]{0,120}<span class="rtools">/);
+  assert.match(html, /<div class="rbar"><span class="rtools">/);
   assert.match(html, /<span class="rtools">[\s\S]{0,2000}class="searchbtn"/, 'ikon search di header');
   assert.match(html, /<span class="rtools">[\s\S]{0,4000}class="addrow"/, 'Add row pindah ke header');
   assert.match(html, /<span class="rtools">[\s\S]{0,4000}class="delrow"/, 'Delete rows pindah ke header');

@@ -150,7 +150,10 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
     const truncated = !gc && (!!s.limited || s.total > s.rows.length);
     const title = gc ? cacheTitle(gc) : `${fmtCount(s.total)} row(s)${more}`;
     const tools = `<span class="rtools"><button class="searchbtn" title="Search Output (Ctrl+F)" aria-label="Search Output">${SEARCH_ICON}</button>${canMore && i === 0 ? editBar(block) : ''}</span>`;
-    return `<div class="blk"><div class="rbar"><span class="rhead">Result ${i + 1} <span class="rtitle">${title}</span></span>${tools}${SEARCH_OUTPUT}</div>
+    const multi = r.resultSets.length > 1;
+    const rhead = gc ? `<span class="rhead">${multi ? `Result ${i + 1} ` : ''}<span class="rtitle">${title}</span></span>`
+      : multi ? `<span class="rhead">Result ${i + 1}</span>` : ''; // jumlah baris sudah ada di footer
+    return `<div class="blk"><div class="rbar">${rhead}${tools}${SEARCH_OUTPUT}</div>
 <div class="grid"><table class="rs" data-set="${i}"${gc ? ` data-cache="${esc(JSON.stringify(cacheState(gc)))}"` : ''}${canMore && i === 0 && !block ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody></tbody></table>
 <script type="application/json" class="rows">${pageJson(gc ? [] : s.rows.map((row) => row.map(cellText)))}</script></div>
 <div class="foot"><span>Rows: <b class="count" data-total="${gc ? gc.view.cache.length : s.rows.length}">${fmtCount(gc ? gc.view.count : s.total)}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${PAGER}${canMore && i === 0 && truncated && s.rows.length < GRID_MAX_ROWS

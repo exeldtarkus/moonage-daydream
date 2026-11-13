@@ -33,8 +33,8 @@ test('render shows result sets, messages and errors', () => {
     resultSets: [{ columns: ['id', 'a<b'], rows: [[1, null]], total: 1 }, { columns: ['x'], rows: [], total: 0 }, { columns: ['y'], rows: [[1], [2]], total: 5000 }],
     rowsAffected: [1, 0], messages: ['hello'], durationMs: 7,
   } });
-  assert.ok(html.includes('Result 1 <span class="rtitle">1 row(s)<') && html.includes('Result 2 <span class="rtitle">0 row(s)<'));
-  assert.ok(html.includes('Result 3 <span class="rtitle">5.000 row(s) (showing first 2)'));
+  assert.ok(html.includes('<span class="rhead">Result 1</span>') && html.includes('<span class="rhead">Result 2</span>'), 'penanda result set');
+  assert.ok(html.includes('<span class="rhead">Result 3</span>') && html.includes('>5.000</b> (showing first 2)'), 'jumlah baris di footer');
   assert.ok(html.includes('<span class="ty"></span>a&lt;b</span><span class="hb">') && html.includes('hello') && html.includes('Done in 7 ms'));
   assert.ok(html.includes('<script type="application/json" class="rows">[["1",null]]</script>') && html.includes('Rows: <b class="count" data-total="2">5.000</b>') && html.includes('</svg><b>7ms</b>'), 'numbers right-aligned, footer');
   const typed = render('csp', 't', { result: { resultSets: [{ columns: ['n', 's'], types: ['int', 'nvarchar'], rows: [], total: 0 }], rowsAffected: [], messages: [], durationMs: 1 } });
@@ -45,7 +45,7 @@ test('render shows result sets, messages and errors', () => {
 test('render: rows affected of every non-SELECT statement, also next to SELECT results', () => {
   const sel = { columns: ['a'], rows: [[1]], total: 1 };
   const both = render('csp', 'local', { result: { resultSets: [sel], rowsAffected: [1], messages: [], durationMs: 1 } });
-  assert.ok(both.includes('Result 1') && both.includes('1 row(s) affected'), 'SELECT + UPDATE: UPDATE result shown');
+  assert.ok(both.includes('<table class="rs"') && both.includes('1 row(s) affected'), 'SELECT + UPDATE: UPDATE result shown');
   const two = render('csp', 'local', { result: { resultSets: [], rowsAffected: [2, 3], messages: [], durationMs: 1 } });
   assert.ok(two.includes('2 row(s) affected\n3 row(s) affected') && !two.includes('5 row(s)'), 'one line per statement, in order');
   const ddl = render('csp', 'local', { result: { resultSets: [], rowsAffected: [], messages: [], durationMs: 1 } });
