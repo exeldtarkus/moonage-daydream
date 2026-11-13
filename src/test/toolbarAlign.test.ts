@@ -11,7 +11,7 @@ const page = () => render('csp', 't', { result: res, source: { uri: 'file:///q.s
 test('toolbar hasil: menyatu dengan grid (satu kotak, tanpa celah)', () => {
   const html = page();
   assert.match(html, /\.rbar \{[^}]*border: 1px solid var\(--vscode-panel-border\)/);
-  assert.match(html, /\.rbar \{[^}]*border-bottom: 0/);
+  assert.match(html, /\.rbar \{[^}]*border-bottom: 1px solid/, 'garis pemisah ke grid');
   assert.match(html, /\.grid \{[^}]*border-top: 0/);
 });
 
@@ -31,4 +31,14 @@ test('toolbar hasil: tiap segmen dipisah garis penuh (ikon | WHERE | search)', (
 
 test('toolbar hasil: lebar pemisah dihitung dari posisi garis kolom, bukan lebar sel saja', () => {
   assert.match(page(), /getBoundingClientRect\(\)\.right - bar\.getBoundingClientRect\(\)\.left - 1/);
+});
+
+test('toolbar hasil: ada garis pemisah antara toolbar ikon dan grid', () => {
+  assert.match(page(), /\.rbar \{[^}]*border-bottom: 1px solid var\(--vscode-panel-border\)/);
+});
+
+test('toolbar hasil: ikon sedikit lebih besar', () => {
+  const html = page();
+  assert.match(html, /\.rtools button \{[^}]*width: 26px; height: 24px/);
+  assert.match(html, /\.rtools button svg \{ width: 16px; height: 16px/);
 });

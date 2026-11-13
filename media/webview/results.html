@@ -141,8 +141,9 @@
     border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   /* Search Output gaya Kibana "is one of": key = chip (OR), cocok di kolom mana pun */
   /* satu baris toolbar per hasil: Result N · jumlah baris + Search Output */
-  .rbar { display: flex; align-items: stretch; gap: 0; margin: 10px 0 0; min-height: 28px; font-family: var(--vscode-font-family); font-size: 12px;
-    border: 1px solid var(--vscode-panel-border); border-bottom: 0; background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
+  .rbar { display: flex; align-items: stretch; gap: 0; margin: 10px 0 0; min-height: 32px; font-family: var(--vscode-font-family); font-size: 12px;
+    border: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   /* tiap segmen (gutter | ikon | WHERE | Search Output) dipisah garis penuh; gutter selebar kolom nomor baris (--ncol diukur script) */
   .rbar::before { content: ''; flex: none; width: var(--ncol, 38px); }
   .rbar > * { display: flex; align-items: center; padding: 0 8px; min-width: 0; }
@@ -154,9 +155,9 @@
   .rhead { font-weight: 600; white-space: nowrap; } .rhead .rtitle { font-weight: normal; opacity: .7; }
   /* ikon aksi di header hasil (gaya toolbar): search, Add row, Delete rows, Save, script, Discard */
   .rtools { display: inline-flex; align-items: center; gap: 2px; }
-  .rtools button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; padding: 0; border: 0; border-radius: 3px;
+  .rtools button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; padding: 0; border: 0; border-radius: 3px;
     cursor: pointer; color: inherit; background: none; opacity: .75; }
-  .rtools button svg { width: 14px; height: 14px; }
+  .rtools button svg { width: 16px; height: 16px; }
   .rtools button:hover:not(:disabled) { opacity: 1; background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
   .rtools button.on { opacity: 1; color: var(--vscode-textLink-foreground); background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
   .rtools .editbar { gap: 2px; } .rtools .editbar::before { content: ''; width: 1px; height: 14px; margin: 0 4px; background: var(--vscode-panel-border); }
