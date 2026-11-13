@@ -32,3 +32,10 @@ test('WHERE: form tidak lagi digambar sebagai baris sendiri di atas grid', () =>
   assert.ok(!/<\/div>\s*<form class="where"/.test(sql()), 'bukan baris terpisah');
   assert.match(sql(), /<form class="where" hidden[\s\S]{0,400}<\/form><div class="sout"/, 'berada di dalam toolbar hasil');
 });
+
+test('WHERE dan Search Output bergantian: membuka satu menutup yang lain', () => {
+  const html = sql();
+  assert.match(html, /function openSearch\(blk, mode\) \{[\s\S]{0,400}closeField\(blk, 'form\.where'/, 'buka search -> WHERE ditutup');
+  assert.match(html, /function openWhere\(blk, mode\) \{[\s\S]{0,400}closeField\(blk, '\.sout'/, 'buka WHERE -> search ditutup');
+  assert.match(html, /function closeField\(blk, sel\)/, 'satu helper untuk menutup yang lain');
+});

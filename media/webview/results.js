@@ -245,11 +245,18 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const top = r.bottom + 2 + h <= innerHeight ? r.bottom + 2 : r.top - h - 2;
     menu.style.top = Math.max(4, Math.min(top, innerHeight - h - 4)) + 'px';
   }
+  /** hanya satu isian aktif di toolbar: membuka WHERE menutup Search Output, dan sebaliknya */
+  function closeField(blk, sel) {
+    const el = blk?.querySelector(sel);
+    if (!el || el.hidden) return;
+    if (sel === '.sout') openSearch(blk, 'toggle'); else openWhere(blk, 'toggle');
+  }
   /** Search Output disembunyikan sampai dibuka lewat ikon search atau Ctrl+F; menutupnya juga membuang key supaya tidak ada filter tersembunyi */
   function openSearch(blk, mode) {
     const sout = blk?.querySelector('.sout');
     if (!sout) return;
     const close = mode === 'toggle' && !sout.hidden;
+    if (!close) closeField(blk, 'form.where');
     sout.hidden = close;
     blk.querySelector('.searchbtn')?.classList.toggle('on', !close);
     const t = blk.querySelector('table.rs');
@@ -262,6 +269,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const form = blk?.querySelector('form.where');
     if (!form) return;
     const close = mode === 'toggle' && !form.hidden;
+    if (!close) closeField(blk, '.sout');
     form.hidden = close;
     blk.querySelector('.wherebtn')?.classList.toggle('on', !close || !!form.where.value);
     if (!close) form.where.focus();
