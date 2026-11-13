@@ -114,6 +114,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     : m.type === 'copy' ? exportResult(m, 'clipboard', o)
     : m.type === 'copyValue' ? copyCellValue(m)
     : m.type === 'planXml' ? openPlanXml(o)
+    : m.type === 'info' ? vscode.window.showInformationMessage(m.text ?? '')
     : m.type === 'pin' ? results.pin()
     : m.type === 'more' ? loadMore(m)
     : m.type === 'edits' ? editScript(m)

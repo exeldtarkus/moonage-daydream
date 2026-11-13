@@ -500,14 +500,17 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       td.innerHTML = headOf(t, c)?.dataset.gen ? '<input class="cell" data-c="' + c + '" placeholder="generated" disabled>'
         : '<input class="cell" spellcheck="false" data-c="' + c + '" placeholder="default">';
     }
-    tr.querySelector('input.cell:not([hidden])')?.focus();
+    // gulirkan baris baru ke layar + fokus ke sel pertama yang boleh diisi (kolom generated tidak bisa difokus)
+    tr.scrollIntoView({ block: 'nearest' });
+    [...tr.querySelectorAll('input.cell:not([disabled])')].find((i) => !i.parentElement.hidden)?.focus();
     syncEdits(t);
   }
   /** baris terpilih ditandai hapus (dicoret); tandai lagi = batal */
   function markDelete(t) {
     const s = st(t);
     const sel = selected(t);
-    const all = sel.length && sel.every((r) => s.deletes.has(r));
+    if (!sel.length) return void vscode.postMessage({ type: 'info', text: 'Select one or more rows first, then use Delete rows to mark them for deletion.' });
+    const all = sel.every((r) => s.deletes.has(r));
     for (const r of sel) { if (all) s.deletes.delete(r); else s.deletes.add(r); }
     render(t);
     syncEdits(t);

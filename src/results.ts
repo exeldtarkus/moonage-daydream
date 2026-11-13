@@ -20,6 +20,8 @@ export interface ResultMessage {
   format?: string;
   /** Copy value di popup sel grid hasil: nilai mentah sel */
   value?: string;
+  /** pesan singkat dari panel hasil yang perlu ditampilkan sebagai notifikasi (mis. Delete rows tanpa seleksi) */
+  text?: string;
   /** edit grid: sel yang diubah (index baris asli, index kolom, nilai baru / null) */
   edits?: { row: number; col: number; value: string | null }[];
   /** save grid: index baris asli yang dihapus + baris baru (nilai per kolom hasil) */
