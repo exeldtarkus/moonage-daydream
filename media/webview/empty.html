@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<style>
+  body { margin: 0; height: 100vh; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background);
+    font-family: var(--vscode-font-family); font-size: 13px; }
+  .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    padding: 24px; box-sizing: border-box; text-align: center; }
+  .glyph { width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; border-radius: 14px;
+    color: var(--vscode-textLink-foreground, #3794ff); background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 12%, transparent); }
+  .glyph svg { width: 30px; height: 30px; }
+  h1 { margin: 2px 0 0; font-size: 15px; font-weight: 600; }
+  p { margin: 0; max-width: 420px; opacity: .7; line-height: 1.5; }
+  ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; grid-template-columns: auto auto; gap: 7px 12px; justify-content: center; }
+  li { display: contents; } /* tombol & keterangan jadi dua kolom yang rata */
+  li .k { justify-self: end; white-space: nowrap; } li .t { justify-self: start; text-align: left; opacity: .7; }
+  kbd { display: inline-block; min-width: 10px; padding: 1px 6px; font-family: var(--vscode-font-family); font-size: 11px; line-height: 17px;
+    border: 1px solid var(--vscode-keybindingLabel-border, var(--vscode-panel-border)); border-bottom-width: 2px; border-radius: 4px;
+    color: var(--vscode-keybindingLabel-foreground, inherit); background: var(--vscode-keybindingLabel-background, rgba(128, 128, 128, .17)); }
+  i { font-style: normal; opacity: .5; margin: 0 2px; }
+</style>
+</head>
+<body>
+<div class="empty">
+  <div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7.5" ry="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 6v12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></div>
+  <h1>{{title}}</h1>
+  <p>{{text}}</p>
+  {{tips}}
+</div>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CANCEL_COMMAND, Outcome, render } from './resultsHtml';
+import { CANCEL_COMMAND, Outcome, placeholderHtml, render } from './resultsHtml';
 
 export type Location = 'panel' | 'right' | 'left';
 export const LOCATIONS: { id: Location; label: string }[] = [
@@ -87,7 +87,7 @@ export class Results implements vscode.WebviewViewProvider {
       else await vscode.commands.executeCommand(`${VIEW_ID}.focus`); // view belum pernah dibuka: resolveWebviewView yang menggambar
       if (this.view) this.paint(this.view.webview);
     } else {
-      if (this.view) this.view.webview.html = placeholder(this.location);
+      if (this.view) this.view.webview.html = placeholderHtml(this.location);
       if (this.panel && this.panel.viewColumn && editor?.viewColumn && sideOk(this.location, this.panel.viewColumn, editor.viewColumn)) {
         this.panel.reveal(undefined, true);
       } else {
@@ -161,15 +161,10 @@ export class Results implements vscode.WebviewViewProvider {
   }
 
   private paint(w: vscode.Webview) {
-    w.html = this.last ? render(w.cspSource, this.last.title, this.last.outcome) : placeholder(undefined);
+    w.html = this.last ? render(w.cspSource, this.last.title, this.last.outcome) : placeholderHtml(undefined);
   }
 }
 
 function sideOk(loc: Location, panelCol: number, editorCol: number): boolean {
   return loc === 'right' ? panelCol > editorCol : panelCol < editorCol;
-}
-
-function placeholder(loc: Location | undefined): string {
-  const msg = loc ? `Results are shown ${loc} of the editor.` : 'Run a query (Ctrl+Alt+Enter) to see results here.';
-  return `<!DOCTYPE html><html><body style="opacity:.7;font-family:var(--vscode-font-family);padding:8px 12px">${msg}</body></html>`;
 }

@@ -244,3 +244,18 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
 }
 
 const running = (o: Outcome) => ('parts' in o ? o.parts.some((p) => 'loading' in p.o) : 'loading' in o);
+
+/** panel hasil masih kosong (belum ada query dijalankan / hasil tampil di panel lain) */
+export function placeholderHtml(loc: 'left' | 'right' | 'below' | undefined): string {
+  const key = (...keys: string[]) => keys.map((k) => `<kbd>${k}</kbd>`).join('<i>+</i>');
+  const tips = [
+    [key('Ctrl', 'Alt', 'Enter'), 'Run the query under the cursor'],
+    [key('Ctrl', 'Alt', 'O'), 'Find a table, view or procedure'],
+    [key('Shift', 'Alt', 'F'), 'Format the SQL file'],
+  ].map(([k, t]) => `<li><span class="k">${k}</span><span class="t">${t}</span></li>`).join('');
+  return webviewPage('empty', {
+    title: loc ? 'Results open in the other panel' : 'No results yet',
+    text: loc ? `Query results are shown ${loc} of the editor.` : 'Run a query from a .sql file and its rows, messages and execution plan show up here.',
+    tips: loc ? '' : `<ul>${tips}</ul>`,
+  });
+}
