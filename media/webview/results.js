@@ -521,6 +521,34 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     bar.querySelector('.ecount').textContent = String(n);
   }
   const newRows = (t) => [...(t.tBodies[1]?.rows ?? [])];
+  /**
+   * navigasi grid dengan keyboard: panah memindahkan sel aktif (dan memilih barisnya),
+   * Shift + panah atas / bawah memperluas seleksi dari baris anchor; kiri / kanan hanya pindah kolom.
+   */
+  function moveCur(t, dRow, dCol, shift) {
+    const s = st(t), cols = order(t).filter((c) => !s.hidden.has(c)), n = viewLen(s);
+    if (!cols.length || !n) return;
+    const cur = s.cur ? s.cur.split(':').map(Number) : null;
+    const at = cur ? posOf(s, cur[0]) : -1;
+    const pos = at < 0 ? 0 : Math.min(n - 1, Math.max(0, at + dRow));
+    const ci = Math.min(cols.length - 1, Math.max(0, (cur ? Math.max(0, cols.indexOf(cur[1])) : 0) + dCol));
+    const r = rAt(s, pos);
+    if (r === undefined) return; // mode cache: halaman baris itu belum diterima
+    s.cur = editKey(r, cols[ci]);
+    if (shift && s.anchor !== null) {
+      const a = posOf(s, s.anchor);
+      s.sel = new Set();
+      if (a >= 0) for (let p = Math.min(a, pos); p <= Math.max(a, pos); p++) { const x = rAt(s, p); if (x !== undefined) s.sel.add(x); }
+    } else {
+      s.sel = new Set([r]);
+      s.anchor = r;
+    }
+    const g = geo(t); // gulir hanya bila sel aktif keluar dari viewport
+    if (pos <= g.first) scrollToPos(t, pos);
+    else if (pos >= g.first + g.vis - 1) scrollToPos(t, Math.max(0, pos - g.vis + 2));
+    render(t);
+    if (pane === 'insp') renderSide();
+  }
   /** buang semua perubahan grid yang belum disimpan (tombol Discard / tombol Esc); mengembalikan jumlah yang dibuang */
   function discardEdits(t) {
     const s = st(t);
@@ -703,6 +731,15 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (e.key === 'Escape' || (e.key === 'Enter' && e.target.id === 'f')) menu.hidden = true;
+    const dr = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+    const dc = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+    if ((dr || dc) && !e.target.closest?.('input, select, textarea')) {
+      const t = tableOf();
+      if (!t) return;
+      e.preventDefault();
+      moveCur(t, dr, dc, e.shiftKey);
+      return;
+    }
     if (e.key === 'Escape') { // Esc = Discard: buang perubahan grid yang belum disimpan
       const t = [tableOf(), ...document.querySelectorAll('table.rs')].find((x) => x && st(x).edits.size + st(x).deletes.size + newRows(x).length);
       const n = t && discardEdits(t);
