@@ -96,7 +96,7 @@ test('grid edit MongoDB: result has no SQL WHERE toolbar but keeps the edit bar'
   const html = render('csp', 't', { result, source: { uri: 'u', sql: 'db.shop.find({})', mongo: true } });
   assert.doesNotMatch(html, /<form class="where"/);
   assert.match(html, /data-edit="1"/);
-  assert.match(render('csp', 't', { result, source: { uri: 'u', sql: 'select 1 from t' } }), /<form class="where"/);
+  assert.doesNotMatch(render('csp', 't', { result, source: { uri: 'u', sql: 'select 1 from t' } }), /<form class="where"/, 'SQL pun tanpa baris WHERE selama WHERE_BAR = false');
 });
 
 test('grid edit: rows marked for deletion are red, also while selected', () => {

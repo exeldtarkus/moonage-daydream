@@ -209,10 +209,10 @@ test('addWhere adds the filter to the top-level SELECT', () => {
   assert.throws(() => addWhere('SELECT 1', 'a = 1'), /FROM/);
 });
 
-test('render: WHERE toolbar for single SELECT source, nonce script', () => {
+test('render: hasil SELECT tanpa toolbar WHERE (disembunyikan), nonce script', () => {
   const r = { resultSets: [{ columns: ['a'], rows: [[1]], total: 1 }], rowsAffected: [], messages: [], durationMs: 1 };
   const html = render('csp', 't', { result: r, source: { uri: 'file:///a.sql', sql: 'SELECT a FROM t', where: "a = 'x\"y'" } });
-  assert.ok(html.includes('<form class="where"><label>WHERE</label>') && html.includes('value="a = \'x&quot;y\'"') && html.includes('class="clear"'));
+  assert.ok(!html.includes('<form class="where"'), 'baris WHERE tidak digambar (WHERE_BAR = false)');
   const nonce = /script-src 'nonce-([A-Za-z0-9]+)'/.exec(html)?.[1];
   assert.ok(nonce && html.includes(`<script nonce="${nonce}">`), 'CSP nonce matches script');
   assert.ok(!render('csp', 't', { result: r }).includes('class="where"'), 'no source: no WHERE bar');

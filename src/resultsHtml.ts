@@ -83,6 +83,9 @@ const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12l-4.
 const DOTS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.5" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="12.5" r="1.3" fill="currentColor"/></svg>';
 
 /** toolbar WHERE di atas grid (part = index query pada run paralel) */
+/** shortcut: baris WHERE disembunyikan sementara atas permintaan user; set true untuk menghidupkannya lagi */
+const WHERE_BAR: boolean = false;
+
 function whereBar(where: string | undefined, part?: number): string {
   return `<form class="where"${part === undefined ? '' : ` data-part="${part}"`}><label>WHERE</label>`
     + `<input name="where" spellcheck="false" placeholder="e.g. name LIKE 'RF%'  (Enter to run again on the server)" value="${esc(where ?? '')}">`
@@ -191,7 +194,7 @@ function partHtml(p: Part, i: number, uri: string, pinned: boolean): string {
   // tiap query bisa ditutup (details, default terbuka) supaya hasil yang banyak lebih mudah dibaca
   const body = 'loading' in o
     ? `<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div>`
-    : `${pinned ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned, o.editBlock, o.genCols)}`;
+    : `${pinned || !WHERE_BAR ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned, o.editBlock, o.genCols)}`;
   return `<section data-part="${i}"><details class="qpart" open>${head}${body}</details></section>`;
 }
 
@@ -217,10 +220,10 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
 </div>`;
   } else if ('error' in o) {
     status = 'Failed';
-    body = `${o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
+    body = `${WHERE_BAR && o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = `${o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned, o.editBlock, o.genCols)}`;
+    body = `${WHERE_BAR && o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned, o.editBlock, o.genCols)}`;
   }
   return webviewPage('results', {
     cspSource,
