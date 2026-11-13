@@ -18,6 +18,17 @@ test('toolbar hasil: menyatu dengan grid (satu kotak, tanpa celah)', () => {
 test('toolbar hasil: pemisah sejajar dengan garis kolom nomor baris', () => {
   const html = page();
   assert.match(html, /\.rbar::before \{[^}]*width: var\(--ncol/, 'lebar pemisah mengikuti kolom nomor');
-  assert.match(html, /\.rbar::before \{[^}]*border-right: 1px solid var\(--vscode-panel-border\)/);
+  assert.match(html, /\.rbar::before \+ \* \{[^}]*border-left: 1px solid var\(--vscode-panel-border\)/, 'garis setelah gutter');
   assert.match(html, /setProperty\('--ncol'/, 'lebar kolom nomor diukur saat grid digambar');
+});
+
+test('toolbar hasil: tiap segmen dipisah garis penuh (ikon | WHERE | search)', () => {
+  const html = page();
+  assert.match(html, /\.rbar > \* \+ \*[^{]*\{[^}]*border-left: 1px solid var\(--vscode-panel-border\)/);
+  assert.match(html, /\.rbar \{[^}]*gap: 0/, 'tanpa jarak: garis pemisah yang memisahkan');
+  assert.match(html, /\.rbar > \* \{[^}]*align-items: center/);
+});
+
+test('toolbar hasil: lebar pemisah dihitung dari posisi garis kolom, bukan lebar sel saja', () => {
+  assert.match(page(), /getBoundingClientRect\(\)\.right - bar\.getBoundingClientRect\(\)\.left - 1/);
 });

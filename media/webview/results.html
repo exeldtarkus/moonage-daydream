@@ -141,14 +141,19 @@
     border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   /* Search Output gaya Kibana "is one of": key = chip (OR), cocok di kolom mana pun */
   /* satu baris toolbar per hasil: Result N · jumlah baris + Search Output */
-  .rbar { display: flex; align-items: stretch; gap: 8px; margin: 10px 0 0; min-height: 26px; font-family: var(--vscode-font-family); font-size: 12px;
+  .rbar { display: flex; align-items: stretch; gap: 0; margin: 10px 0 0; min-height: 28px; font-family: var(--vscode-font-family); font-size: 12px;
     border: 1px solid var(--vscode-panel-border); border-bottom: 0; background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
-  /* pemisah pertama sejajar dengan garis kolom nomor baris di grid (--ncol diukur script) */
-  .rbar::before { content: ''; flex: none; width: var(--ncol, 38px); border-right: 1px solid var(--vscode-panel-border); }
-  .rbar > * { align-self: center; } .rbar .rhead { padding-left: 2px; }
+  /* tiap segmen (gutter | ikon | WHERE | Search Output) dipisah garis penuh; gutter selebar kolom nomor baris (--ncol diukur script) */
+  .rbar::before { content: ''; flex: none; width: var(--ncol, 38px); }
+  .rbar > * { display: flex; align-items: center; padding: 0 8px; min-width: 0; }
+  .rbar > * + *, .rbar::before + * { border-left: 1px solid var(--vscode-panel-border); }
+  /* input menyatu dengan toolbar: bingkainya garis segmen, bukan kotak input sendiri */
+  .rbar .where input, .rbar .sout .chips { border: 0; background: transparent; padding: 2px 0; }
+  .rbar .where input:focus { outline: 0; } .rbar .where:focus-within, .rbar .sout:focus-within { background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, .12)); }
+  .rbar .sout .chips:focus-within { outline: 0; }
   .rhead { font-weight: 600; white-space: nowrap; } .rhead .rtitle { font-weight: normal; opacity: .7; }
   /* ikon aksi di header hasil (gaya toolbar): search, Add row, Delete rows, Save, script, Discard */
-  .rtools { display: inline-flex; align-items: center; gap: 2px; margin-left: -2px; }
+  .rtools { display: inline-flex; align-items: center; gap: 2px; }
   .rtools button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; padding: 0; border: 0; border-radius: 3px;
     cursor: pointer; color: inherit; background: none; opacity: .75; }
   .rtools button svg { width: 14px; height: 14px; }
