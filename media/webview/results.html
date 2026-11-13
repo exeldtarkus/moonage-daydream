@@ -28,6 +28,8 @@
   .n { width: 1%; padding: 0 12px; color: var(--vscode-editorLineNumber-foreground); text-align: left; user-select: none;
     position: sticky; left: 0; background: var(--vscode-editor-background); border-right: 1px solid var(--vscode-panel-border); }
   th.n { z-index: 2; background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
+  /* kolom sisa: menyerap lebar yang tersisa supaya hasil berkolom sedikit tetap rapat di kiri */
+  .fill { width: 100%; padding: 0; border-right: 0; }
   .null { opacity: .5; }
   /* toolbar WHERE + tombol header + menu kolom */
   .where { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0; font-family: var(--vscode-font-family); }

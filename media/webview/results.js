@@ -17,7 +17,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const st = (t) => {
     if (!state.has(t)) {
-      const heads = [...t.tHead.rows[0].cells].slice(1);
+      const heads = [...t.tHead.rows[0].cells].slice(1).filter((th) => th.dataset.c !== undefined);
       const data = JSON.parse(t.nextElementSibling.textContent);
       const cs = t.dataset.cache ? JSON.parse(t.dataset.cache) : null;
       state.set(t, { data, view: data.map((_, i) => i), order: heads.map((th) => +th.dataset.c), num: heads.map((th) => th.classList.contains('num')),
@@ -50,7 +50,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const hit = s.pk?.length && !s.hidden.has(c) && s.pk.some((x) => keyHit(v, x)); // sel yang cocok dengan key Search Output
       const tc = [s.num[c] && 'num', s.edits.has(k) && 'edited', s.cur === k && 'cur', hit && 'hit'].filter(Boolean).join(' ');
       return '<td' + (tc ? ' class="' + tc + '"' : '') + (s.hidden.has(c) ? ' hidden' : '') + '>' + cellHtml(v) + '</td>';
-    }).join('') + '</tr>';
+    }).join('') + '<td class="fill"></td></tr>';
   }
   /** baris mode cache yang halamannya belum datang: nomor saja, halaman diminta ke host sekali */
   function phRow(t, s, p) {
@@ -59,7 +59,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       s.c.req.add(pg);
       vscode.postMessage({ type: 'cpage', ...ids(t), start: pg * PG, count: PG, gen: s.c.gen });
     }
-    return '<tr class="ph"><td class="n">' + (p + 1) + '</td><td colspan="' + s.order.length + '">…</td></tr>';
+    return '<tr class="ph"><td class="n">' + (p + 1) + '</td><td colspan="' + s.order.length + '">…</td><td class="fill"></td></tr>';
   }
   /** tinggi scroll maksimal: elemen lebih tinggi dari ±33 juta px tidak digambar browser, 5 juta baris diskalakan */
   const MAXH = 15e6;
@@ -308,7 +308,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const t = td.closest('table'), s = st(t), tr = td.parentElement;
       if (!tr.dataset.r) return; // baris baru (Add row) / spacer
       const i = +tr.dataset.r;
-      if (!td.classList.contains('n')) { t.tBodies[0].querySelector('td.cur')?.classList.remove('cur'); td.classList.add('cur'); s.cur = editKey(i, order(t)[td.cellIndex - 1]); }
+      if (!td.classList.contains('n') && !td.classList.contains('fill')) { t.tBodies[0].querySelector('td.cur')?.classList.remove('cur'); td.classList.add('cur'); s.cur = editKey(i, order(t)[td.cellIndex - 1]); }
       if (e.shiftKey && s.anchor !== null) {
         const a = posOf(s, s.anchor), z = posOf(s, i);
         if (!(e.ctrlKey || e.metaKey)) s.sel.clear();
@@ -467,7 +467,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     sideSources();
     if (!t) { body.innerHTML = '<div class="hint">No result</div>'; return; }
     const s = st(t);
-    const heads = [...t.tHead.rows[0].cells].slice(1);
+    const heads = [...t.tHead.rows[0].cells].slice(1).filter((th) => th.dataset.c !== undefined);
     if (pane === 'cols') {
       const q = document.getElementById('colq')?.value ?? '';
       body.innerHTML = '<input type="search" id="colq" placeholder="Search columns…" value="' + esc(q) + '">'
@@ -576,6 +576,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       td.innerHTML = headOf(t, c)?.dataset.gen ? '<input class="cell" data-c="' + c + '" placeholder="generated" disabled>'
         : '<input class="cell" spellcheck="false" data-c="' + c + '" placeholder="default">';
     }
+    tr.insertCell().className = 'fill'; // sejajar dengan kolom sisa di baris lain
     // gulirkan baris baru ke layar + fokus ke sel pertama yang boleh diisi (kolom generated tidak bisa difokus)
     tr.scrollIntoView({ block: 'nearest' });
     [...tr.querySelectorAll('input.cell:not([disabled])')].find((i) => !i.parentElement.hidden)?.focus();
@@ -649,7 +650,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   /** popup nilai sel: dipakai hover maupun double-click; nilai mentah disimpan untuk tombol Copy */
   function peekShow(td) {
     const t = td.closest('table.rs');
-    if (!t || td.classList.contains('n') || !td.parentElement.dataset.r || td.querySelector('input')) return; // sel yang sedang diedit: tidak diganggu
+    if (!t || td.classList.contains('n') || td.classList.contains('fill') || !td.parentElement.dataset.r || td.querySelector('input')) return; // sel yang sedang diedit: tidak diganggu
     if (!menu.hidden && !menu.classList.contains('peek')) return; // menu lain (filter / export) sedang terbuka
     const v = val(st(t), +td.parentElement.dataset.r, order(t)[td.cellIndex - 1]);
     const html = peekText(v);
