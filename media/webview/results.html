@@ -65,18 +65,15 @@
   .foot .morebtn { margin-left: auto; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
     color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   .foot .morebtn:hover { background: var(--vscode-button-hoverBackground, #1177bb); } .foot .morebtn:disabled { opacity: .5; cursor: progress; }
-  .editbar { display: inline-flex; align-items: center; gap: 6px; color: var(--vscode-editorWarning-foreground, #cca700); }
+  .editbar { display: inline-flex; align-items: center; gap: 4px; color: var(--vscode-editorWarning-foreground, #cca700); }
   .editbar[hidden], .editbar .pend[hidden] { display: none; }
-  .editbar .pend { display: inline-flex; align-items: center; gap: 6px; }
+  .editbar .pend { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; } .editbar .pend .ecount { margin-right: 2px; }
   .editbar.off { color: var(--vscode-descriptionForeground); cursor: help; }
   .editbar button:disabled { opacity: .5; cursor: help; }
   /* baris yang akan dihapus saat Save: merah, menang atas warna seleksi */
   tbody tr.todelete td, tbody tr.todelete.sel td { text-decoration: line-through; background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 22%, transparent) !important; color: var(--vscode-errorForeground, #f48771) !important; }
   tbody.newrows td { background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, #81b88b) 12%, transparent); }
   tbody.newrows input.cell { width: 100%; min-width: 60px; }
-  .editbar button { padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
-    color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
-  .editbar .save, .editbar .genupd { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   tbody td.edited { box-shadow: inset 2px 0 var(--vscode-editorWarning-foreground, #cca700); background: rgba(204, 167, 0, .12) !important; }
   tbody td input.cell { width: 100%; min-width: 80px; box-sizing: border-box; padding: 2px 4px; font: inherit; color: var(--vscode-input-foreground);
     background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder); }
@@ -142,7 +139,18 @@
   /* satu baris toolbar per hasil: Result N · jumlah baris + Search Output */
   .rbar { display: flex; align-items: center; gap: 10px; margin: 4px 0; font-family: var(--vscode-font-family); font-size: 12px; }
   .rhead { font-weight: 600; white-space: nowrap; } .rhead .rtitle { font-weight: normal; opacity: .7; }
+  /* ikon aksi di header hasil (gaya toolbar): search, Add row, Delete rows, Save, script, Discard */
+  .rtools { display: inline-flex; align-items: center; gap: 2px; }
+  .rtools button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; padding: 0; border: 0; border-radius: 3px;
+    cursor: pointer; color: inherit; background: none; opacity: .75; }
+  .rtools button svg { width: 14px; height: 14px; }
+  .rtools button:hover:not(:disabled) { opacity: 1; background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
+  .rtools button.on { opacity: 1; color: var(--vscode-textLink-foreground); background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
+  .rtools .editbar { gap: 2px; } .rtools .editbar::before { content: ''; width: 1px; height: 14px; margin: 0 4px; background: var(--vscode-panel-border); }
+  .rtools .editbar { color: inherit; } .rtools .editbar .pend { color: var(--vscode-editorWarning-foreground, #cca700); }
+  .rtools .editbar .save { color: var(--vscode-charts-blue, #3794ff); }
   .sout { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0; font-family: var(--vscode-font-family); font-size: 12px; }
+  .sout[hidden] { display: none; } /* class display menang atas [hidden] bawaan browser */
   .sout label { font-size: 11px; font-weight: 600; opacity: .8; white-space: nowrap; }
   .sout .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 1px 4px; min-height: 20px;
     background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }

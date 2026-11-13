@@ -241,6 +241,27 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const top = r.bottom + 2 + h <= innerHeight ? r.bottom + 2 : r.top - h - 2;
     menu.style.top = Math.max(4, Math.min(top, innerHeight - h - 4)) + 'px';
   }
+  /** Search Output disembunyikan sampai dibuka lewat ikon search atau Ctrl+F; menutupnya juga membuang key supaya tidak ada filter tersembunyi */
+  function openSearch(blk, mode) {
+    const sout = blk?.querySelector('.sout');
+    if (!sout) return;
+    const close = mode === 'toggle' && !sout.hidden;
+    sout.hidden = close;
+    blk.querySelector('.searchbtn')?.classList.toggle('on', !close);
+    const t = blk.querySelector('table.rs');
+    if (!close) return void sout.querySelector('.skey').focus();
+    const s = t && st(t);
+    if (s && s.keys.length) { s.keys = []; renderChips(t); apply(t); }
+  }
+  // Ctrl / Cmd + F di panel hasil: buka Search Output hasil yang sedang dilihat (bukan Find bawaan webview)
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+      const t = tableOf();
+      if (!t) return;
+      e.preventDefault();
+      openSearch(t.closest('.blk'), 'open');
+    }
+  });
   // Shift+klik memperluas seleksi baris, bukan blok teks
   document.addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('tbody td')) e.preventDefault(); });
   document.addEventListener('click', (e) => {
@@ -300,6 +321,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       t.closest('.blk').querySelector('.skey').focus();
       return;
     }
+    if (b.classList.contains('searchbtn')) { openSearch(b.closest('.blk'), 'toggle'); return; }
     if (b.classList.contains('allbtn')) {
       b.disabled = true;
       b.textContent = 'Loading…';
@@ -324,8 +346,8 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (b.classList.contains('pinbtn')) { vscode.postMessage({ type: 'pin' }); return; }
-    if (b.classList.contains('addrow')) { addRow(b.closest('.foot').previousElementSibling.querySelector('table')); return; }
-    if (b.classList.contains('delrow')) { markDelete(b.closest('.foot').previousElementSibling.querySelector('table')); return; }
+    if (b.classList.contains('addrow')) { addRow(blkTable()); return; }
+    if (b.classList.contains('delrow')) { markDelete(blkTable()); return; }
     if (b.classList.contains('save')) {
       const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
       const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
@@ -335,7 +357,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (b.classList.contains('genupd') || b.classList.contains('discard')) {
-      const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
+      const t = blkTable(), s = st(t);
       if (b.classList.contains('genupd')) {
         const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
         const part = t.closest('section')?.dataset.part;
@@ -350,7 +372,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (b.classList.contains('morebtn')) {
-      const t = b.closest('.foot').previousElementSibling.querySelector('table');
+      const t = blkTable();
       const part = t.closest('section')?.dataset.part;
       b.disabled = true;
       b.textContent = 'Loading…';
@@ -457,7 +479,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   const showCell = (td, v) => { td.innerHTML = cellHtml(v); };
   function syncEdits(t) {
     const s = st(t);
-    const bar = t.closest('.grid').nextElementSibling.querySelector('.editbar');
+    const bar = t.closest('.blk').querySelector('.editbar');
     if (!bar) return;
     const n = s.edits.size + s.deletes.size + newRows(t).length;
     bar.querySelector('.pend').hidden = !n;

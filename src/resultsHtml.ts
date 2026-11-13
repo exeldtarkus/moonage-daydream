@@ -70,6 +70,12 @@ function typeTag(type: string): string {
 const PIN_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2h4l-.5 4 2.5 2.5v1H4v-1L6.5 6zM8 9.5V14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 const COLS_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h11v11h-11zM6.5 2.5v11M10 2.5v11" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const INSPECT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11M2.5 7h7M2.5 10.5h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="11" cy="10.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M13 12.5 15 14.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+const SEARCH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="m10.2 10.2 3.3 3.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+const PLUS_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+const MINUS_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+const SAVE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h8L13.5 5v8.5h-11zM5.5 2.5v4h5v-4M5 9.5h6v4H5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+const SCRIPT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3H4.5A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13H6M10 3h1.5A1.5 1.5 0 0 1 13 4.5v7a1.5 1.5 0 0 1-1.5 1.5H10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+const UNDO_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 7.5h6a3 3 0 1 1 0 6H6M3.5 7.5l2.5-2.5M3.5 7.5 6 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 5 4.5-5 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const EXPORT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 12.5h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const FORMAT_OPTIONS = Object.entries(FORMATS).map(([k, f]) => `<option value="${k}">${f.label}</option>`).join('');
@@ -92,7 +98,7 @@ export const fmtCount = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g
 const LOAD_ALL_READONLY = 'rows loaded with Load all are read-only (run the query again without Load all to edit)';
 
 /** kotak Search Output gaya Kibana "is one of": key jadi chip (digambar script grid), beberapa chip = OR, cocok di kolom mana pun */
-const SEARCH_OUTPUT = '<div class="sout" role="search"><label>Search Output</label><div class="chips"><input class="skey" spellcheck="false" placeholder="type a value, Enter to add…  (&quot;exact&quot;, null)" aria-label="Search Output: type a value, Enter to add"></div>'
+const SEARCH_OUTPUT = '<div class="sout" role="search" hidden><div class="chips"><input class="skey" spellcheck="false" placeholder="type a value, Enter to add…  (&quot;exact&quot;, null)" aria-label="Search Output: type a value, Enter to add"></div>'
   + '<button class="sclear" title="Remove all search keys" hidden>Clear</button><span class="sbusy" hidden></span><span class="smatch" aria-live="polite"></span></div>';
 
 /** navigasi halaman (menggulir grid ke halaman itu); jumlah halaman diisi script grid */
@@ -114,6 +120,15 @@ const cacheState = (gc: GridCache) => ({
   sort: gc.view.sort, partial: gc.view.cache.partial, loading: !!gc.loading,
 });
 
+/** tombol edit grid di header hasil: ikon + tooltip; block = alasan hasil ini tidak bisa diedit */
+const editBar = (block?: string) => (block
+  ? `<span class="editbar off" title="Editing is off: ${esc(block)}"><button class="addrow" aria-label="Add row" disabled>${PLUS_ICON}</button><button class="delrow" aria-label="Delete rows" disabled>${MINUS_ICON}</button></span>`
+  : `<span class="editbar"><button class="addrow" title="Add a new row at the bottom" aria-label="Add row">${PLUS_ICON}</button>`
+    + `<button class="delrow" title="Mark the selected rows for deletion" aria-label="Delete rows">${MINUS_ICON}</button>`
+    + `<span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Save: run all changes in one transaction" aria-label="Save">${SAVE_ICON}</button>`
+    + `<button class="genupd" title="Generate UPDATE script" aria-label="Generate UPDATE script">${SCRIPT_ICON}</button>`
+    + `<button class="discard" title="Discard the pending changes" aria-label="Discard">${UNDO_ICON}</button></span></span>`);
+
 /** canMore: statement asal diketahui (satu SELECT) -> tombol Load more di result set pertama */
 /** editBlock: alasan result set tidak bisa diedit (dicek extension setelah hasil tampil) -> tombol edit nonaktif */
 function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols: string[] = []): string {
@@ -131,12 +146,11 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
     }).join('');
     const truncated = !gc && (!!s.limited || s.total > s.rows.length);
     const title = gc ? cacheTitle(gc) : `${fmtCount(s.total)} row(s)${more}`;
-    return `<div class="blk"><div class="rbar"><span class="rhead">Result ${i + 1} <span class="rtitle">${title}</span></span>${SEARCH_OUTPUT}</div>
+    const tools = `<span class="rtools"><button class="searchbtn" title="Search Output (Ctrl+F)" aria-label="Search Output">${SEARCH_ICON}</button>${canMore && i === 0 ? editBar(block) : ''}</span>`;
+    return `<div class="blk"><div class="rbar"><span class="rhead">Result ${i + 1} <span class="rtitle">${title}</span></span>${tools}${SEARCH_OUTPUT}</div>
 <div class="grid"><table class="rs" data-set="${i}"${gc ? ` data-cache="${esc(JSON.stringify(cacheState(gc)))}"` : ''}${canMore && i === 0 && !block ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody></tbody></table>
 <script type="application/json" class="rows">${pageJson(gc ? [] : s.rows.map((row) => row.map(cellText)))}</script></div>
-<div class="foot"><span>Rows: <b class="count" data-total="${gc ? gc.view.cache.length : s.rows.length}">${fmtCount(gc ? gc.view.count : s.total)}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${PAGER}${canMore && i === 0
-      ? block ? `<span class="editbar off" title="Editing is off: ${esc(block)}"><button class="addrow" disabled>Add row</button><button class="delrow" disabled>Delete rows</button></span>`
-        : '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && truncated && s.rows.length < GRID_MAX_ROWS
+<div class="foot"><span>Rows: <b class="count" data-total="${gc ? gc.view.cache.length : s.rows.length}">${fmtCount(gc ? gc.view.count : s.total)}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${PAGER}${canMore && i === 0 && truncated && s.rows.length < GRID_MAX_ROWS
       ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${fmtCount(PAGE_ROWS)})</button>` : ''}${canMore && i === 0 && truncated
       ? `<button class="allbtn" title="Stream every row (up to ${fmtCount(MAX_CACHED_ROWS)}) into a local result cache; search, sort and export then work on all of them">Load all</button>` : ''}</div></div>`;
   }).join('');

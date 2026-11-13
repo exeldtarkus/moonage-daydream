@@ -10,7 +10,8 @@ const page = () => render('csp', 't', { result: res, source: { uri: 'file:///q.s
 
 test('toolbar hasil: judul Result dan Search Output satu baris', () => {
   const html = page();
-  assert.match(html, /<div class="rbar"><span class="rhead">Result 1 <span class="rtitle">1 row\(s\)<\/span><\/span><div class="sout"/);
+  assert.match(html, /<div class="rbar"><span class="rhead">Result 1 <span class="rtitle">1 row\(s\)<\/span><\/span><span class="rtools">/);
+  assert.match(html, /<\/span><div class="sout" role="search" hidden>/, 'Search Output di baris yang sama, tersembunyi sampai dibuka');
   assert.ok(!html.includes('<h3>Result '), 'judul Result tidak lagi baris sendiri');
 });
 

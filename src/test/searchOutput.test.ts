@@ -16,7 +16,7 @@ const res = (o: Partial<QueryResult['resultSets'][0]> = {}): QueryResult => ({
 
 test('Search Output bar above every result grid (also without a source), with chips input and live match count', () => {
   for (const html of [render('csp', 't', { result: res(), source: src }), render('csp', 't', { result: res() })]) {
-    assert.match(html, /<div class="sout"[^>]*>.*Search Output/s);
+    assert.match(html, /<button class="searchbtn"[^>]*aria-label="Search Output"/, 'ikon search menggantikan label teks');
     assert.match(html, /<input class="skey"[^>]*aria-label="Search Output: type a value, Enter to add"/);
     assert.match(html, /<span class="smatch" aria-live="polite">/);
   }
