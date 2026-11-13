@@ -99,6 +99,9 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       if (s.rowH !== h) render(t);
     }
     syncPager(t, first);
+    // pemisah di toolbar dibuat selebar kolom nomor baris supaya garisnya sejajar dengan grid
+    const ncol = t.tHead.rows[0].cells[0].getBoundingClientRect().width;
+    if (ncol) t.closest('.blk')?.style.setProperty('--ncol', ncol + 'px');
   }
   /** pager di footer: halaman dari baris paling atas; ukuran halaman disimpan per webview */
   function syncPager(t, first) {
