@@ -68,6 +68,8 @@ function typeTag(type: string): string {
 }
 
 const PIN_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2h4l-.5 4 2.5 2.5v1H4v-1L6.5 6zM8 9.5V14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+const COLS_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h11v11h-11zM6.5 2.5v11M10 2.5v11" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const INSPECT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11M2.5 7h7M2.5 10.5h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="11" cy="10.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M13 12.5 15 14.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
 const EXPORT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 12.5h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const FORMAT_OPTIONS = Object.entries(FORMATS).map(([k, f]) => `<option value="${k}">${f.label}</option>`).join('');
 const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
@@ -135,7 +137,7 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
       ? block ? `<span class="editbar off" title="Editing is off: ${esc(block)}"><button class="addrow" disabled>Add row</button><button class="delrow" disabled>Delete rows</button></span>`
         : '<span class="editbar"><button class="addrow" title="Add a new row at the bottom">Add row</button><button class="delrow" title="Mark the selected rows for deletion">Delete rows</button><span class="pend" hidden><b class="ecount"></b> change(s)<button class="save" title="Run all changes in one transaction">Save</button><button class="genupd">Generate UPDATE script</button><button class="discard">Discard</button></span></span>' : ''}${canMore && i === 0 && truncated && s.rows.length < GRID_MAX_ROWS
       ? `<button class="morebtn" title="Run the query again and append the next ${PAGE_ROWS} rows (row order is only stable with ORDER BY)">Load more (+${fmtCount(PAGE_ROWS)})</button>` : ''}${canMore && i === 0 && truncated
-      ? `<button class="allbtn" title="Stream every row (up to ${fmtCount(MAX_CACHED_ROWS)}) into a local result cache; search, sort and export then work on all of them">Load all</button>` : ''}<button class="xbtn" title="Export / save to file">${EXPORT_ICON}Export</button></div></div>`;
+      ? `<button class="allbtn" title="Stream every row (up to ${fmtCount(MAX_CACHED_ROWS)}) into a local result cache; search, sort and export then work on all of them">Load all</button>` : ''}</div></div>`;
   }).join('');
   // jumlah baris per statement non-SELECT (urut), juga di samping result set SELECT: berjudul statement asalnya bila pasti
   const named = r.rowsAffected.flatMap((n, i) => {
@@ -208,7 +210,7 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
     bar: running(o) ? '<div class="bar"></div>' : '',
     top: 'loading' in o ? '' : `<div class="top">${pinned ? '📌 ' : ''}${esc(title)} · ${status}${pinned || running(o) ? '' : `<button class="pinbtn" title="Pin: keep this result in its own tab (next to the others) so new runs do not replace it">${PIN_ICON}Pin</button>`}</div>`,
     body,
-    sideTabs: 'result' in o || 'parts' in o ? `<nav class="sidetabs"><button data-pane="cols">Columns</button><button data-pane="insp">Inspector</button></nav>
+    sideTabs: 'result' in o || 'parts' in o ? `<nav class="sidetabs"><button data-pane="cols" title="Show, hide and reorder columns">${COLS_ICON}Columns</button><button data-pane="insp" title="Inspect the selected row">${INSPECT_ICON}Inspector</button><button data-pane="exp" title="Export / save the active result to a file">${EXPORT_ICON}Export</button></nav>
 <aside id="side" hidden><div class="sidehead"><b id="sidetitle"></b><button class="sideclose" title="Close">×</button></div><div id="sidebody"></div></aside>` : '',
     data: pageJson(FORMAT_OPTIONS),
   });

@@ -63,7 +63,6 @@
   .foot .morebtn { margin-left: auto; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
     color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
   .foot .morebtn:hover { background: var(--vscode-button-hoverBackground, #1177bb); } .foot .morebtn:disabled { opacity: .5; cursor: progress; }
-  .foot .morebtn + .xbtn { margin-left: 8px; }
   .editbar { display: inline-flex; align-items: center; gap: 6px; color: var(--vscode-editorWarning-foreground, #cca700); }
   .editbar[hidden], .editbar .pend[hidden] { display: none; }
   .editbar .pend { display: inline-flex; align-items: center; gap: 6px; }
@@ -79,10 +78,6 @@
   tbody td.edited { box-shadow: inset 2px 0 var(--vscode-editorWarning-foreground, #cca700); background: rgba(204, 167, 0, .12) !important; }
   tbody td input.cell { width: 100%; min-width: 80px; box-sizing: border-box; padding: 2px 4px; font: inherit; color: var(--vscode-input-foreground);
     background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder); }
-  .foot .xbtn { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 0; border-radius: 2px; cursor: pointer;
-    font: inherit; color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, transparent); }
-  .foot .xbtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
-  .foot .xbtn svg { width: 12px; height: 12px; }
   /* baris terpilih: warna dicampur dari focusBorder, bukan list.activeSelectionBackground (ada tema yang warnanya mirip latar grid -> seleksi tidak terlihat) */
   tbody tr.sel td { background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 20%, transparent) !important; }
   /* sel aktif (terakhir diklik): biru, di atas warna baris terpilih / Delete rows */
@@ -91,23 +86,27 @@
   /* nilai panjang (JSON, teks) tidak melebarkan kolom: dipotong dengan ellipsis, nilai penuh lewat double-click / Inspector */
   .cv { display: inline-block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
   tbody tr.vpad td { padding: 0; height: auto; border: 0; background: none !important; pointer-events: none; }
-  .menu.export { padding: 10px 12px; min-width: 230px; }
-  .menu.export label { display: block; margin: 6px 0 4px; font-weight: 600; }
-  .menu select { width: 100%; padding: 4px; font: inherit; color: var(--vscode-dropdown-foreground, inherit);
+  /* panel Export (tab rail kanan): cakupan baris + format + Save / Copy */
+  #side .xform label { display: block; margin: 10px 0 4px; font-weight: 600; }
+  #side .xform select { width: 100%; padding: 4px; font: inherit; color: var(--vscode-dropdown-foreground, inherit);
     background: var(--vscode-dropdown-background, var(--vscode-input-background)); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); }
-  .menu .acts { display: flex; gap: 8px; margin-top: 12px; } .menu .acts button { flex: 1; margin: 0; }
-  .menu button.second { text-align: center; padding: 6px; border-radius: 2px;
+  #side .xform .acts { display: flex; gap: 8px; margin-top: 14px; }
+  #side .xform .acts button { flex: 1; text-align: center; padding: 6px; border: 0; border-radius: 2px; cursor: pointer; font: inherit;
     color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
-  .menu button.second:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
-  .menu button:disabled { opacity: .45; cursor: not-allowed; }
-  .menu button.primary { margin-top: 12px; text-align: center; padding: 6px; border-radius: 2px;
-    color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
-  .menu button.primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+  #side .xform .acts button.primary { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
+  #side .xform .acts button.primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+  #side .xform .acts button.second:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+  #side .xform .acts button:disabled { opacity: .45; cursor: not-allowed; }
   /* panel samping: Columns / Inspector (tab vertikal di tepi kanan) */
-  .sidetabs { position: fixed; right: 0; top: 40px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
-  .sidetabs button { writing-mode: vertical-rl; padding: 10px 3px; border: 0; border-radius: 3px 0 0 3px; cursor: pointer; font-family: var(--vscode-font-family); font-size: 11px;
-    color: var(--vscode-foreground, inherit); background: var(--vscode-editorGroupHeader-tabsBackground, #252526); opacity: .75; }
-  .sidetabs button:hover, .sidetabs button.on { opacity: 1; background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  .sidetabs { position: fixed; right: 0; top: 40px; display: flex; flex-direction: column; z-index: 5; overflow: hidden; border-radius: 4px 0 0 4px;
+    border: 1px solid var(--vscode-panel-border); border-right: 0; background: var(--vscode-editorGroupHeader-tabsBackground, #252526); }
+  .sidetabs button { display: inline-flex; align-items: center; gap: 6px; writing-mode: vertical-rl; padding: 12px 5px; border: 0; cursor: pointer;
+    font-family: var(--vscode-font-family); font-size: 11px; letter-spacing: .2px;
+    color: var(--vscode-foreground, inherit); background: none; opacity: .7; }
+  .sidetabs button + button { border-top: 1px solid var(--vscode-panel-border); }
+  .sidetabs svg { width: 13px; height: 13px; transform: rotate(90deg); } /* ikon ikut arah teks vertikal */
+  .sidetabs button:hover { opacity: 1; background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  .sidetabs button.on { opacity: 1; background: var(--vscode-list-activeSelectionBackground, #37373d); box-shadow: inset 2px 0 var(--vscode-focusBorder, #007fd4); }
   body.side-open { padding-right: 300px; } body.side-open .sidetabs { right: 284px; }
   #side { position: fixed; top: 0; right: 0; bottom: 0; width: 284px; z-index: 6; overflow: auto; box-sizing: border-box; padding: 8px 10px;
     font-family: var(--vscode-font-family); font-size: 12px; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); border-left: 1px solid var(--vscode-panel-border); }

@@ -150,7 +150,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   }
   /** Copy tidak tersedia untuk Excel (file biner) */
   function syncCopy() {
-    const c = menu.querySelector('[data-a=xcopy]');
+    const c = document.querySelector('[data-a=xcopy]');
     if (c) c.disabled = document.getElementById('xf').value === 'xlsx';
   }
   /** tandai baris terpilih di DOM tanpa menggambar ulang (gambar ulang di tengah klik merusak double-click edit) */
@@ -349,26 +349,6 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       vscode.postMessage({ type: 'more', set: +t.dataset.set, part: part === undefined ? undefined : +part });
       return;
     }
-    if (b.classList.contains('xbtn')) {
-      e.stopPropagation();
-      const t = b.closest('.foot').previousElementSibling.querySelector('table');
-      const n = selected(t).length, s = st(t);
-      menu.table = t;
-      
-      // mode cache: semua baris cache / hasil filter + sort / seleksi / query ulang ke server tanpa batas cache
-      const scopes = s.c ? '<option value="cache">All cached (' + fmt(s.c.total) + ' rows' + (s.c.partial ? ', partial' : '') + ')</option>'
-        + '<option value="view"' + (s.keys.length || Object.keys(s.filters).length || s.sort ? '' : ' disabled') + '>Filtered rows (' + fmt(s.c.count) + ')</option>'
-        + '<option value="sel"' + (n ? '' : ' disabled') + '>Current Selection (' + n + ' rows)</option><option value="server">All Data from server (no limit)</option>'
-        : '<option value="all">All Data</option><option value="sel"' + (n ? '' : ' disabled') + '>Current Selection (' + n + ' rows)</option>';
-      open(b, '<label>Export</label><select id="xs">' + scopes + '</select>'
-        + '<label>Format</label><select id="xf">' + FORMAT_OPTIONS + '</select>'
-        + '<div class="acts"><button data-a="xsave" class="primary">Save</button><button data-a="xcopy" class="second" title="Copy to clipboard">Copy</button></div>', () => {
-        document.getElementById('xs').value = n ? 'sel' : s.c ? (s.keys.length || Object.keys(s.filters).length || s.sort ? 'view' : 'cache') : 'all';
-        if (saved.format) document.getElementById('xf').value = saved.format;
-        syncCopy();
-      }, 'export');
-      return;
-    }
     if (b.classList.contains('fbtn') || b.classList.contains('mbtn')) {
       e.stopPropagation();
       const t = th.closest('table');
@@ -383,18 +363,19 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       }
       return;
     }
+    if (b.dataset.a === 'xsave' || b.dataset.a === 'xcopy') { // panel Export di rail kanan: hasil yang terakhir disentuh
+      const t = tableOf();
+      if (!t) return;
+      const format = document.getElementById('xf').value, scope = document.getElementById('xs').value;
+      saved.format = format;
+      vscode.setState(saved);
+      send(t, b.dataset.a === 'xsave' ? 'export' : 'copy', format, scope);
+      return;
+    }
     if (menu.contains(b)) {
       if (b.classList.contains('peekcopy')) return; // popup nilai sel: ditangani handler peek, bukan menu kolom
       const t = menu.table, c = menu.col, s = st(t);
       const a = b.dataset.a;
-      if (a === 'xsave' || a === 'xcopy') {
-        const format = document.getElementById('xf').value, scope = document.getElementById('xs').value;
-        saved.format = format;
-        vscode.setState(saved);
-        send(t, a === 'xsave' ? 'export' : 'copy', format, scope);
-        menu.hidden = true;
-        return;
-      }
       if (a === 'asc' || a === 'desc') s.sort = { c, dir: a === 'asc' ? 1 : -1 };
       if (a === 'nosort') s.sort = null;
       if (a === 'hide') s.hidden.add(c);
@@ -418,7 +399,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     if (!side || side.hidden) return;
     const t = tableOf();
     const body = document.getElementById('sidebody');
-    document.getElementById('sidetitle').textContent = pane === 'cols' ? 'Columns' : 'Inspector';
+    document.getElementById('sidetitle').textContent = pane === 'cols' ? 'Columns' : pane === 'insp' ? 'Inspector' : 'Export';
     if (!t) { body.innerHTML = '<div class="hint">No result</div>'; return; }
     const s = st(t);
     const heads = [...t.tHead.rows[0].cells].slice(1);
@@ -434,6 +415,19 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
         }).join('');
       const qi = document.getElementById('colq');
       if (q) { qi.focus(); qi.setSelectionRange(q.length, q.length); }
+    } else if (pane === 'exp') {
+      // pilihan sama dengan menu export lama: cakupan baris + format, Save ke file / Copy ke clipboard
+      const n = selected(t).length;
+      const scopes = s.c ? '<option value="cache">All cached (' + fmt(s.c.total) + ' rows' + (s.c.partial ? ', partial' : '') + ')</option>'
+        + '<option value="view"' + (s.keys.length || Object.keys(s.filters).length || s.sort ? '' : ' disabled') + '>Filtered rows (' + fmt(s.c.count) + ')</option>'
+        + '<option value="sel"' + (n ? '' : ' disabled') + '>Current Selection (' + n + ' rows)</option><option value="server">All Data from server (no limit)</option>'
+        : '<option value="all">All Data</option><option value="sel"' + (n ? '' : ' disabled') + '>Current Selection (' + n + ' rows)</option>';
+      body.innerHTML = '<div class="hint">Export to your computer.</div><div class="xform"><label>Export</label><select id="xs">' + scopes + '</select>'
+        + '<label>Format</label><select id="xf">' + FORMAT_OPTIONS + '</select>'
+        + '<div class="acts"><button data-a="xsave" class="primary">Save</button><button data-a="xcopy" class="second" title="Copy to clipboard">Copy</button></div></div>';
+      document.getElementById('xs').value = n ? 'sel' : s.c ? (s.keys.length || Object.keys(s.filters).length || s.sort ? 'view' : 'cache') : 'all';
+      if (saved.format) document.getElementById('xf').value = saved.format;
+      syncCopy();
     } else {
       const r = s.anchor, pos = r === null ? -1 : posOf(s, r);
       body.innerHTML = pos < 0 ? '<div class="hint">Select a row to inspect it.</div>'
