@@ -33,3 +33,10 @@ test('Save: tombol di header memakai tabel bloknya, bukan footer (regresi: Save 
   assert.match(html, /contains\('save'\)\) \{\s*const t = blkTable\(\)/, 'Save memakai blkTable()');
   assert.ok(!/contains\('save'\)\) \{[\s\S]{0,200}closest\('\.foot'\)/.test(html), 'tidak ada lagi pencarian lewat .foot');
 });
+
+test('Esc: membuang perubahan grid yang belum disimpan', () => {
+  const html = page();
+  assert.match(html, /function discardEdits\(t\)/, 'satu fungsi discard dipakai tombol dan Esc');
+  assert.match(html, /key === 'Escape'[\s\S]{0,400}discardEdits\(/, 'Esc memanggil discard');
+  assert.ok(html.includes('Discarded '), 'user diberi tahu berapa perubahan yang dibuang');
+});

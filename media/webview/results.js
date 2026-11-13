@@ -388,13 +388,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
         const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
         const part = t.closest('section')?.dataset.part;
         vscode.postMessage({ type: 'edits', set: +t.dataset.set, part: part === undefined ? undefined : +part, edits });
-      } else {
-        s.edits.clear();
-        s.deletes.clear();
-        t.tBodies[1]?.remove();
-        apply(t); // filter / sort bisa bergantung pada nilai yang diedit
-        syncEdits(t);
-      }
+      } else discardEdits(t);
       return;
     }
     if (b.classList.contains('morebtn')) {
@@ -527,6 +521,19 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     bar.querySelector('.ecount').textContent = String(n);
   }
   const newRows = (t) => [...(t.tBodies[1]?.rows ?? [])];
+  /** buang semua perubahan grid yang belum disimpan (tombol Discard / tombol Esc); mengembalikan jumlah yang dibuang */
+  function discardEdits(t) {
+    const s = st(t);
+    const n = s.edits.size + s.deletes.size + newRows(t).length;
+    if (!n) return 0;
+    s.edits.clear();
+    s.deletes.clear();
+    t.tBodies[1]?.remove();
+    apply(t); // filter / sort bisa bergantung pada nilai yang diedit
+    syncEdits(t);
+    return n;
+  }
+
   /** baris baru di tbody terpisah (tidak ikut filter / sort); sel per kolom hasil, kosong = default server, NULL = NULL */
   function addRow(t) {
     const s = st(t);
@@ -696,6 +703,12 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (e.key === 'Escape' || (e.key === 'Enter' && e.target.id === 'f')) menu.hidden = true;
+    if (e.key === 'Escape') { // Esc = Discard: buang perubahan grid yang belum disimpan
+      const t = [tableOf(), ...document.querySelectorAll('table.rs')].find((x) => x && st(x).edits.size + st(x).deletes.size + newRows(x).length);
+      const n = t && discardEdits(t);
+      if (n) vscode.postMessage({ type: 'info', text: `Discarded ${n} pending change(s).` });
+      return;
+    }
     // Ctrl/Cmd+C: baris terpilih dalam format setting grid.copyFormat (default JSON); tidak saat mengetik di input
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !e.target.closest('input, select, textarea') && !String(getSelection())) {
       const t = [...document.querySelectorAll('table.rs')].find((x) => selected(x).length);
