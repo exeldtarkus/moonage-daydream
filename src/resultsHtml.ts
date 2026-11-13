@@ -85,7 +85,7 @@ const DOTS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.5
 const REFRESH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5V5.5H10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 /** pilihan Auto refresh (ms); 0 = mati */
 const AUTO_STEPS: [number, string][] = [[0, 'Off'], [5000, '5s'], [10000, '10s'], [30000, '30s'], [60000, '1m'], [300000, '5m']];
-const autoPick = `<span class="auto" title="Auto refresh: run this query again on a timer">${REFRESH_ICON}<select class="autosel" aria-label="Auto refresh">${AUTO_STEPS.map(([ms, lbl]) => `<option value="${ms}"${ms ? '' : ' selected'}>${lbl}</option>`).join('')}</select></span>`;
+const autoPick = `<span class="auto" title="Auto refresh: run this query again on a timer">${REFRESH_ICON}<select class="autosel" aria-label="Auto refresh">${AUTO_STEPS.map(([ms, lbl]) => `<option value="${ms}"${ms ? '' : ' selected'}>${lbl}</option>`).join('')}</select><span class="autoleft" aria-live="off"></span><span class="autorun" hidden></span></span>`;
 const WHERE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
 /** filter WHERE di toolbar hasil (part = index query pada run paralel); tersembunyi sampai ikon WHERE diklik */

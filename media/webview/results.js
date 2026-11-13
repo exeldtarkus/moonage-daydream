@@ -135,16 +135,40 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
    * Auto refresh: timer hidup di webview (ikut berhenti saat panel ditutup / disembunyikan) dan hanya meminta
    * extension menjalankan ulang statement asal; intervalnya disimpan di state supaya bertahan saat hasil digambar ulang.
    */
-  let autoTimer;
-  function setAuto(ms) {
+  let autoTimer, autoClock, autoNext = 0;
+  /** sisa waktu sampai refresh berikutnya ("7s" / "1:05") + nomor refresh yang sudah dijalankan */
+  function autoLeft() {
+    const sec = Math.ceil(Math.max(0, autoNext - Date.now()) / 1000);
+    const txt = !autoNext ? '' : sec >= 60 ? Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') : sec + 's';
+    const n = saved.autoN || 0;
+    document.querySelectorAll('.autoleft').forEach((el) => (el.textContent = txt));
+    document.querySelectorAll('.autorun').forEach((el) => {
+      el.hidden = !autoNext || !n;
+      el.textContent = '#' + n;
+      el.title = 'Refresh #' + n + (saved.autoAt ? ' at ' + new Date(saved.autoAt).toLocaleTimeString() : '');
+    });
+  }
+  function setAuto(ms, reset) {
     if (!document.querySelector('.autosel')) ms = 0; // hasil ini tidak bisa dijalankan ulang (multi query / pin / cache)
     saved.auto = ms;
+    if (reset || !ms) { saved.autoN = 0; saved.autoAt = 0; } // ganti interval / Off: hitungan mulai dari awal
     vscode.setState(saved);
     clearInterval(autoTimer);
-    if (ms) autoTimer = setInterval(() => {
-      if (document.querySelector('.editbar .pend:not([hidden])')) return; // ada perubahan belum disimpan: jangan dibuang
-      vscode.postMessage({ type: 'rerun' });
-    }, ms);
+    clearInterval(autoClock);
+    autoNext = ms ? Date.now() + ms : 0;
+    if (ms) {
+      autoTimer = setInterval(() => {
+        autoNext = Date.now() + ms;
+        if (document.querySelector('.editbar .pend:not([hidden])')) return; // ada perubahan belum disimpan: jangan dibuang
+        saved.autoN = (saved.autoN || 0) + 1;
+        saved.autoAt = Date.now();
+        vscode.setState(saved);
+        autoLeft();
+        vscode.postMessage({ type: 'rerun' });
+      }, ms);
+      autoClock = setInterval(autoLeft, 500);
+    }
+    autoLeft();
     document.querySelectorAll('.auto').forEach((a) => a.classList.toggle('on', !!ms));
     document.querySelectorAll('.autosel').forEach((el) => (el.value = String(ms)));
   }
@@ -733,7 +757,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     if (s.c) { clearTimeout(s.debounce); s.debounce = setTimeout(() => apply(t), 250); } else apply(t);
   });
   document.addEventListener('change', (e) => {
-    if (e.target.classList.contains('autosel')) return setAuto(+e.target.value || 0);
+    if (e.target.classList.contains('autosel')) return setAuto(+e.target.value || 0, true);
     const t = e.target.closest?.('.foot')?.previousElementSibling?.querySelector('table.rs');
     if (!t) return;
     if (e.target.classList.contains('psize')) { saved.psize = +e.target.value; vscode.setState(saved); render(t); }
