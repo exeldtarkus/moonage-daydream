@@ -7,6 +7,11 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '1.3.1', date: '2026-11-13', items: [
+      { kind: 'fixed', title: 'A single result fills the panel', detail: 'The grid of a single result stopped at 70% of the panel height, which left an empty strip under the footer when the results panel was maximized. It now uses the whole height available, while a result with only a few rows still keeps its own height. Several queries in one run are unchanged: each one keeps its own scrollable grid.' },
+    ],
+  },
+  {
     version: '1.3.0', date: '2026-11-13', items: [
       { kind: 'new', title: 'Icon toolbar on every result', detail: 'Each result has one header row with icons instead of text buttons: search, WHERE, Add row, Delete rows and, as soon as you change something, Save, Generate UPDATE script and Discard. Search Output and the WHERE filter stay out of the way until you open them (Ctrl+F opens the search) and only one of the two is open at a time; a filter that is already applied keeps its field open and its icon lit.' },
       { kind: 'new', title: 'Fold away the queries you are done with', detail: 'When several statements run at once, every Query section has a chevron: click the title to collapse its result, or use Collapse all in the title bar to fold or open every query in one go. They all start expanded.' },
