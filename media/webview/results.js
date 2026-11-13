@@ -122,6 +122,8 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     scrolling = true;
     requestAnimationFrame(() => {
       scrolling = false;
+      saved.sc = e.target.scrollTop;
+      vscode.setState(saved);
       // sel yang sedang diedit disimpan dulu sebelum barisnya diganti
       if (document.activeElement?.matches('table.rs tbody:first-of-type input.cell')) document.activeElement.blur();
       render(t);
@@ -129,6 +131,26 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
   }, true);
   const saved = vscode.getState() || {};
   document.querySelectorAll('table.rs').forEach((t) => { const s = st(t); s.pk = parseKeys(s.keys); render(t); renderChips(t); syncCount(t); });
+  /**
+   * Auto refresh: timer hidup di webview (ikut berhenti saat panel ditutup / disembunyikan) dan hanya meminta
+   * extension menjalankan ulang statement asal; intervalnya disimpan di state supaya bertahan saat hasil digambar ulang.
+   */
+  let autoTimer;
+  function setAuto(ms) {
+    if (!document.querySelector('.autosel')) ms = 0; // hasil ini tidak bisa dijalankan ulang (multi query / pin / cache)
+    saved.auto = ms;
+    vscode.setState(saved);
+    clearInterval(autoTimer);
+    if (ms) autoTimer = setInterval(() => {
+      if (document.querySelector('.editbar .pend:not([hidden])')) return; // ada perubahan belum disimpan: jangan dibuang
+      vscode.postMessage({ type: 'rerun' });
+    }, ms);
+    document.querySelectorAll('.auto').forEach((a) => a.classList.toggle('on', !!ms));
+    document.querySelectorAll('.autosel').forEach((el) => (el.value = String(ms)));
+  }
+  setAuto(+saved.auto || 0);
+  // shortcut: posisi scroll hanya dipulihkan untuk hasil tunggal (.blk.only), upgrade bila auto refresh dipakai multi query
+  if (saved.auto && saved.sc) { const g = document.querySelector('.blk.only .grid'); if (g) g.scrollTop = saved.sc; }
   /** baris terpilih (index asli) dalam urutan tampil sekarang (mode cache: posisi yang belum diketahui di akhir) */
   const selected = (t) => {
     const s = st(t);
@@ -711,6 +733,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     if (s.c) { clearTimeout(s.debounce); s.debounce = setTimeout(() => apply(t), 250); } else apply(t);
   });
   document.addEventListener('change', (e) => {
+    if (e.target.classList.contains('autosel')) return setAuto(+e.target.value || 0);
     const t = e.target.closest?.('.foot')?.previousElementSibling?.querySelector('table.rs');
     if (!t) return;
     if (e.target.classList.contains('psize')) { saved.psize = +e.target.value; vscode.setState(saved); render(t); }

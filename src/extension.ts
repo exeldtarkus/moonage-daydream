@@ -16,6 +16,7 @@ import { ConnBanner } from './connBanner';
 import { CONN_COLORS, colorLabel, isConnColor } from './connColor';
 import type { ConnColor } from './connColor';
 import { formatEditSpans, formatSql } from './sqlFormat';
+import { fmtCount } from './resultsHtml';
 import type { Outcome, Source } from './resultsHtml';
 import { newDbHtml } from './newDbHtml';
 import { RELEASES, shouldShow, whatsNewHtml } from './whatsNew';
@@ -115,6 +116,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     : m.type === 'copyValue' ? copyCellValue(m)
     : m.type === 'planXml' ? openPlanXml(o)
     : m.type === 'info' ? vscode.window.showInformationMessage(m.text ?? '')
+    : m.type === 'rerun' ? autoRerun()
     : m.type === 'pin' ? results.pin()
     : m.type === 'more' ? loadMore(m)
     : m.type === 'edits' ? editScript(m)
@@ -1480,7 +1482,7 @@ async function runQuery(opts?: unknown) {
  * toolbar WHERE di hasil: statement asal (bukan yang sudah difilter) dijalankan ulang dengan kondisi baru;
  * part = query ke-n pada run paralel. Kondisi kosong = statement asal.
  */
-export async function applyWhere(where: string, part?: number) {
+export async function applyWhere(where: string, part?: number, quiet = false) {
   const o = results.current?.outcome;
   const src: Source | undefined = !o ? undefined
     : 'parts' in o ? (part !== undefined && o.parts[part] ? { uri: o.uri, sql: o.parts[part].sql } : undefined)
@@ -1495,7 +1497,16 @@ export async function applyWhere(where: string, part?: number) {
     return;
   }
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(src.uri));
-  await execute(doc, sql, { uri: src.uri, sql: src.sql, where: where.trim() || undefined, ...(src.mongo ? { mongo: true } : {}) });
+  await execute(doc, sql, { uri: src.uri, sql: src.sql, where: where.trim() || undefined, ...(src.mongo ? { mongo: true } : {}) }, quiet);
+}
+
+/** Auto refresh dari panel hasil: statement asal dijalankan ulang diam-diam (tanpa merebut fokus / mengisi History) */
+async function autoRerun() {
+  const o = results.current?.outcome;
+  const src = o && !('parts' in o) && 'source' in o ? o.source : undefined;
+  // query sebelumnya masih jalan atau file dalam transaksi manual (satu sesi): tick dilewati, bukan ditumpuk
+  if (!src || running.has(src.uri) || txMode(src.uri) === 'manual') return;
+  await applyWhere(src.where ?? '', undefined, true);
 }
 
 /**
@@ -1967,7 +1978,7 @@ async function onCloseTx(doc: vscode.TextDocument) {
 }
 
 /** daftarkan query yang berjalan untuk file key (Running Queries, CodeLens Cancel); run lama di file itu dibatalkan. end() wajib dipanggil */
-function startRun(key: string, c: ConnectionInfo, text: string) {
+function startRun(key: string, c: ConnectionInfo, text: string, quiet = false) {
   const prev = running.get(key);
   if (prev) cancel(prev); // jalankan ulang file yang masih jalan: query lama dihentikan
   const ac = new AbortController();
@@ -1979,7 +1990,7 @@ function startRun(key: string, c: ConnectionInfo, text: string) {
   runningView.refresh();
   // popup kanan bawah selama query berjalan (Cancel = batalkan), tertutup sendiri saat selesai; query cepat (< 300 ms) tidak memunculkan popup
   setTimeout(() => {
-    if (running.get(key) !== q || q.cancelling) return;
+    if (running.get(key) !== q || q.cancelling || quiet) return; // auto refresh: tanpa popup tiap tick
     void vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Running query on ${q.db ? `${q.conn} / ${q.db}` : q.conn}`, cancellable: true }, (progress, token) => {
       token.onCancellationRequested(() => cancel(q));
       const tick = () => progress.report({ message: `${firstLine(q.sql)} · ${Math.floor((Date.now() - q.start) / 1000)}s` });
@@ -2070,7 +2081,8 @@ async function openPlanXml(outcome?: Outcome) {
 }
 
 /** jalankan text untuk file doc (koneksi / database dari binding file); source = statement asal untuk filter WHERE */
-async function execute(doc: vscode.TextDocument, text: string, source?: Source) {
+/** quiet = auto refresh: tanpa spinner / popup / History dan tanpa memindahkan fokus; hasil lama tetap tampil sampai yang baru siap */
+async function execute(doc: vscode.TextDocument, text: string, source?: Source, quiet = false) {
   const uri = doc.uri;
   const c = fileConn(uri) ?? (await pickConnection('Select connection to run on'));
   if (!c) return;
@@ -2097,7 +2109,7 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
     }, 'Confirm');
     if (ok !== 'Confirm') return void log.info(`runQuery cancelled at the Auto-commit confirmation: ${c.name} / ${c.database}`);
   }
-  const { q, ac, end } = startRun(key, c, text);
+  const { q, ac, end } = startRun(key, c, text, quiet);
   log.info(`runQuery start: ${c.name} / ${c.database}`);
   const title = c.database ? `${c.name} / ${c.database}` : c.name;
   // beberapa SELECT tanpa variabel / #temp: tiap statement di koneksi sendiri, hasil tampil begitu statement itu selesai
@@ -2109,7 +2121,7 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
   let outcome: Outcome = !manual && parallelSafe(stmts)
     ? { parts: stmts.map((sql) => ({ sql, o: { loading: true } })), uri: key, start: q.start }
     : { loading: true, uri: key };
-  await results.show(title, outcome); // spinner sampai hasil (atau error / cancel) menggantikannya
+  if (!quiet) await results.show(title, outcome); // spinner sampai hasil (atau error / cancel) menggantikannya
 
   try {
     await vscode.window.withProgress(
@@ -2173,13 +2185,19 @@ async function execute(doc: vscode.TextDocument, text: string, source?: Source) 
     }
   }
   const errors = 'parts' in outcome ? outcome.parts.flatMap((p) => ('error' in p.o ? [p.o.error] : [])) : 'error' in outcome ? [outcome.error] : [];
-  await history.add({
+  if (!quiet) await history.add({
     sql: text, conn: c.name, db: c.database, at: q.start, durationMs: Date.now() - q.start,
     status: !errors.length ? 'ok' : errors.every((e) => e === 'Query cancelled.') ? 'cancelled' : 'error',
     message: errors.find((e) => e !== 'Query cancelled.') ?? errors[0],
   });
   if (running.has(key)) return; // sudah diganti run yang lebih baru: hasilnya yang ditampilkan
   if ('parts' in outcome) results.repaint(key); // panel sudah tampil sejak awal; cukup perbarui status akhir
-  else await results.show(title, outcome);
+  else await results.show(title, outcome, quiet);
+  if (quiet) {
+    const done = 'result' in outcome ? (outcome as { result: QueryResult }).result : undefined;
+    const rows = done?.resultSets.reduce((n, r) => n + r.rows.length, 0) ?? 0;
+    vscode.window.setStatusBarMessage(errors.length ? `$(error) Auto refresh failed: ${errors[0]}`
+      : `$(sync) Auto refresh at ${new Date().toLocaleTimeString()}: ${fmtCount(rows)} row(s) in ${done?.durationMs ?? 0} ms`, 4000);
+  }
   void markEditable(outcome);
 }

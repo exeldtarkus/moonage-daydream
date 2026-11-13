@@ -167,6 +167,13 @@
   .rtools button svg { width: 16px; height: 16px; }
   .rtools button:hover:not(:disabled) { opacity: 1; background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
   .rtools button.on { opacity: 1; color: var(--vscode-textLink-foreground); background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
+  /* Auto refresh: ikon + pilihan interval, ikon menyala saat timer hidup */
+  .rtools .auto { display: inline-flex; align-items: center; gap: 2px; margin-left: 2px; opacity: .7; }
+  .rtools .auto svg { width: 16px; height: 16px; }
+  .rtools .auto.on { opacity: 1; color: var(--vscode-textLink-foreground); }
+  .rtools .auto select { padding: 0 2px; border: 0; background: none; color: inherit; cursor: pointer;
+    font-family: var(--vscode-font-family); font-size: 11px; }
+  .rtools .auto option { color: var(--vscode-dropdown-foreground, inherit); background: var(--vscode-dropdown-background, var(--vscode-editor-background)); }
   .rtools .editbar { gap: 2px; } .rtools .editbar::before { content: ''; width: 1px; height: 14px; margin: 0 4px; background: var(--vscode-panel-border); }
   .rtools .editbar { color: inherit; } .rtools .editbar .pend { color: var(--vscode-editorWarning-foreground, #cca700); }
   .rtools .editbar .save { color: var(--vscode-charts-blue, #3794ff); }

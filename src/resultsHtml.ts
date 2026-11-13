@@ -82,6 +82,10 @@ const FORMAT_OPTIONS = Object.entries(FORMATS).map(([k, f]) => `<option value="$
 const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const DOTS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.5" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="12.5" r="1.3" fill="currentColor"/></svg>';
 
+const REFRESH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5V5.5H10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+/** pilihan Auto refresh (ms); 0 = mati */
+const AUTO_STEPS: [number, string][] = [[0, 'Off'], [5000, '5s'], [10000, '10s'], [30000, '30s'], [60000, '1m'], [300000, '5m']];
+const autoPick = `<span class="auto" title="Auto refresh: run this query again on a timer">${REFRESH_ICON}<select class="autosel" aria-label="Auto refresh">${AUTO_STEPS.map(([ms, lbl]) => `<option value="${ms}"${ms ? '' : ' selected'}>${lbl}</option>`).join('')}</select></span>`;
 const WHERE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
 /** filter WHERE di toolbar hasil (part = index query pada run paralel); tersembunyi sampai ikon WHERE diklik */
@@ -151,6 +155,7 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
     const whereOn = where && i === 0; // filter WHERE menjalankan ulang query asal: hanya result set pertama
     const tools = `<span class="rtools"><button class="searchbtn" title="Search Output (Ctrl+F)" aria-label="Search Output">${SEARCH_ICON}</button>`
       + `${whereOn ? `<button class="wherebtn${where.value ? ' on' : ''}" title="WHERE filter: run the query again on the server with an extra condition" aria-label="WHERE filter">${WHERE_ICON}</button>` : ''}`
+      + `${whereOn && !gc ? autoPick : ''}`
       + `${canMore && i === 0 ? editBar(block) : ''}</span>`;
     const multi = r.resultSets.length > 1;
     const rhead = gc ? `<span class="rhead">${multi ? `Result ${i + 1} ` : ''}<span class="rtitle">${title}</span></span>`

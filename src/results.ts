@@ -77,9 +77,10 @@ export class Results implements vscode.WebviewViewProvider {
     this.paint(view.webview);
   }
 
-  async show(title: string, outcome: Outcome): Promise<void> {
+  async show(title: string, outcome: Outcome, quiet = false): Promise<void> {
     this.last = { title, outcome };
     this.onChange?.();
+    if (quiet) return this.refresh(); // auto refresh: gambar ulang di tempat, jangan buka panel / pindahkan fokus
     const editor = vscode.window.activeTextEditor;
     if (this.location === 'panel') {
       this.panel?.dispose();
