@@ -183,8 +183,15 @@
     color: var(--vscode-button-secondaryForeground, #fff); background: var(--vscode-button-secondaryBackground, #3a3d41); }
   .btn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
   /* run paralel: tiap statement satu section, loading kecil sebaris */
-  h2 { font-size: 13px; margin: 16px 0 6px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); }
-  section:first-of-type h2 { border-top: 0; padding-top: 0; margin-top: 4px; } h2 span { font-weight: normal; opacity: .7; }
+  h2 { font-size: 13px; margin: 0; } h2 span { font-weight: normal; opacity: .7; }
+  /* tiap query bisa ditutup / dibuka; chevron kanan = tertutup, diputar ke bawah saat terbuka */
+  details.qpart > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none;
+    margin: 16px 0 6px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); }
+  details.qpart > summary::-webkit-details-marker { display: none; }
+  section:first-of-type details.qpart > summary { border-top: 0; padding-top: 0; margin-top: 4px; }
+  details.qpart > summary:hover { color: var(--vscode-textLink-foreground); }
+  details.qpart > summary .chev { width: 14px; height: 14px; flex: none; opacity: .8; transition: transform .12s; }
+  details.qpart[open] > summary .chev { transform: rotate(90deg); }
   .loading.inline { position: static; flex-direction: row; justify-content: flex-start; padding: 10px 4px; }
   .loading.inline .spin { width: 24px; height: 24px; } .loading.inline .spin i { border-width: 2px; }
   .loading.inline .spin i:nth-child(2) { inset: 4px; } .loading.inline .spin i:nth-child(3) { inset: 8px; }

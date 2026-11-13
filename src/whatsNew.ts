@@ -8,6 +8,7 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 export const RELEASES: Release[] = [
   {
     version: '1.2.8', date: '2026-11-13', items: [
+      { kind: 'new', title: 'Collapse a query in a multi-query result', detail: 'When several statements run at once, every Query section has a chevron: click the title to fold its result away and keep the ones you are analysing in view. All of them start expanded.' },
       { kind: 'improved', title: 'Export moved to the side rail', detail: 'Export is now a panel next to Columns and Inspector on the right edge of the result view: pick the rows and the format, then Save to a file or Copy to the clipboard. The three tabs share one tidy rail.' },
       { kind: 'new', title: 'Double-click selects the whole statement', detail: 'Double-clicking inside a statement in a SQL file selects it completely, up to its ;, instead of a single word. Turn it off with moonageDaydream.editor.doubleClickSelectsStatement.' },
     ],
