@@ -139,6 +139,14 @@ export function statementAt(sql: string, offset: number, dialect?: Dialect): str
   return hit ? sql.slice(hit.start, hit.end).trimEnd() : '';
 }
 
+/** double-click di file SQL: rentang statement di offset ini (termasuk `;`, tanpa spasi di belakang) */
+export function statementSpanAt(sql: string, offset: number, dialect?: Dialect): { start: number; end: number } | undefined {
+  const hit = statementSegments(sql, dialect).find((s) => s.start <= offset && offset <= s.end);
+  if (!hit) return undefined;
+  const end = hit.start + sql.slice(hit.start, hit.end).trimEnd().length;
+  return end > hit.start ? { start: hit.start, end } : undefined;
+}
+
 /** posisi token kode terakhir statement yang tidak diakhiri `;` (komentar di belakangnya diabaikan) */
 export function missingSemicolons(sql: string, dialect?: Dialect): { start: number; end: number }[] {
   const masked = maskSql(sql, true); // hanya komentar yang dibuang: token terakhir boleh string / [nama]

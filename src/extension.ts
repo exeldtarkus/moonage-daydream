@@ -24,7 +24,7 @@ import { newObjectTemplates } from './msTemplates';
 import { objectTemplates } from './objTemplates';
 import { mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
-import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments, resolveTableRef, tableAt, tableSpans } from './sqlContext';
+import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments, statementSpanAt, resolveTableRef, tableAt, tableSpans } from './sqlContext';
 import { parsePlan } from './plan';
 import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
 import { ConsulClient, consulTarget } from './consul';
@@ -335,6 +335,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.languages.registerCompletionItemProvider({ language: 'sql' }, completion, '.', '"', "'", '$'),
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, { onDidChangeCodeLenses: lensChanged.event, provideCodeLenses }),
+    vscode.window.onDidChangeTextEditorSelection(expandWordToStatement),
     vscode.window.onDidChangeActiveTextEditor(updateFileStatus),
     (banner = new ConnBanner()),
     vscode.window.onDidChangeVisibleTextEditors(() => banner.update(fileConn)),
@@ -659,6 +660,24 @@ function updateFileStatus() {
   status.backgroundColor = tx?.session.open ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
   status.tooltip = c ? `${drivers[c.type].label} ${c.user}@${address(c)}/${c.database} (click to switch)` : 'Select a connection';
   status.command = uri ? 'moonageDaydream.setFileConnection' : 'moonageDaydream.selectConnection';
+}
+
+/**
+ * Double-click di file .sql: VS Code memilih satu kata; seleksi itu diperluas jadi seluruh statement (sampai `;`).
+ * Hanya seleksi mouse yang persis satu kata, jadi drag / Shift+klik tidak terganggu.
+ * shortcut: drag yang kebetulan pas satu kata juga ikut diperluas, matikan lewat setting bila mengganggu.
+ */
+function expandWordToStatement(e: vscode.TextEditorSelectionChangeEvent) {
+  const doc = e.textEditor.document;
+  if (e.kind !== vscode.TextEditorSelectionChangeKind.Mouse || e.selections.length !== 1 || doc.languageId !== 'sql') return;
+  if (!vscode.workspace.getConfiguration('moonageDaydream').get<boolean>('editor.doubleClickSelectsStatement', true)) return;
+  const sel = e.selections[0];
+  const word = sel.isEmpty ? undefined : doc.getWordRangeAtPosition(sel.start);
+  if (!word || !word.isEqual(new vscode.Range(sel.start, sel.end))) return;
+  const span = statementSpanAt(doc.getText(), doc.offsetAt(sel.start), dialectOf(doc.uri));
+  if (!span) return;
+  const next = new vscode.Selection(doc.positionAt(span.start), doc.positionAt(span.end));
+  if (!next.isEqual(sel)) e.textEditor.selection = next;
 }
 
 /** CodeLens: di atas tiap statement Execute | Explain | Analyze (Analyze hanya SELECT) | koneksi | database | mode transaksi */

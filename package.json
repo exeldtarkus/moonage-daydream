@@ -1382,6 +1382,11 @@
           "default": "warning",
           "description": "Mark SQL syntax errors in SELECT / INSERT / UPDATE / DELETE / WITH statements, checked offline with the dialect of the file's connection (other statements are not checked)."
         },
+        "moonageDaydream.editor.doubleClickSelectsStatement": {
+          "type": "boolean",
+          "default": true,
+          "description": "Double-click inside a SQL statement selects the whole statement (up to ;) instead of a single word."
+        },
         "moonageDaydream.transaction.mode": {
           "type": "string",
           "enum": [

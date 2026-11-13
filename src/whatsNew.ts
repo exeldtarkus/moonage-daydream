@@ -7,6 +7,12 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '1.2.8', date: '2026-11-13', items: [
+      { kind: 'improved', title: 'Export moved to the side rail', detail: 'Export is now a panel next to Columns and Inspector on the right edge of the result view: pick the rows and the format, then Save to a file or Copy to the clipboard. The three tabs share one tidy rail.' },
+      { kind: 'new', title: 'Double-click selects the whole statement', detail: 'Double-clicking inside a statement in a SQL file selects it completely, up to its ;, instead of a single word. Turn it off with moonageDaydream.editor.doubleClickSelectsStatement.' },
+    ],
+  },
+  {
     version: '1.2.6', date: '2026-11-11', items: [
       { kind: 'new', title: 'Cell value popup', detail: 'Hover (or double-click) a cell in the result grid to see the whole value in a popup, with a Copy button for the raw value; JSON is pretty-printed and colored. Short plain values stay as they are.' },
       { kind: 'fixed', title: 'Selected rows are visible again', detail: 'The selected row is tinted with the editor focus color instead of list.activeSelectionBackground, which some themes set to the same color as the grid background.' },
