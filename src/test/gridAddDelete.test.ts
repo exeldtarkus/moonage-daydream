@@ -27,3 +27,9 @@ test('Delete rows tanpa seleksi: beri tahu user, jangan diam saja', () => {
 test('pesan info dari panel hasil ditampilkan sebagai notifikasi VS Code', () => {
   assert.match(src('src/extension.ts'), /m\.type === 'info' \? vscode\.window\.showInformationMessage/);
 });
+
+test('Save: tombol di header memakai tabel bloknya, bukan footer (regresi: Save tidak bereaksi)', () => {
+  const html = page();
+  assert.match(html, /contains\('save'\)\) \{\s*const t = blkTable\(\)/, 'Save memakai blkTable()');
+  assert.ok(!/contains\('save'\)\) \{[\s\S]{0,200}closest\('\.foot'\)/.test(html), 'tidak ada lagi pencarian lewat .foot');
+});

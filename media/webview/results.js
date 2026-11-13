@@ -353,7 +353,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     if (b.classList.contains('addrow')) { addRow(blkTable()); return; }
     if (b.classList.contains('delrow')) { markDelete(blkTable()); return; }
     if (b.classList.contains('save')) {
-      const t = b.closest('.foot').previousElementSibling.querySelector('table'), s = st(t);
+      const t = blkTable(), s = st(t);
       const edits = [...s.edits].map(([k, value]) => { const [row, col] = k.split(':').map(Number); return { row, col, value }; });
       const inserts = newRows(t).map((tr) => { const v = []; tr.querySelectorAll('input.cell').forEach((i) => { v[+i.dataset.c] = i.value; }); return Array.from(v, (x) => x ?? ''); });
       const part = t.closest('section')?.dataset.part;
