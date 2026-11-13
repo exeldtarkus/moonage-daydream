@@ -8,7 +8,7 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 export const RELEASES: Release[] = [
   {
     version: '1.3.0', date: '2026-11-13', items: [
-      { kind: 'improved', title: 'WHERE bar hidden for now', detail: 'The WHERE filter row above the grid is not drawn any more, so a result starts with its own toolbar row and the grid. Filtering still works through the column filters and Search Output.' },
+      { kind: 'improved', title: 'WHERE is an icon now', detail: 'The WHERE filter no longer takes a row of its own: it is an icon in the result toolbar that opens the input when you click it, like the search icon. A filter that is already applied keeps the field open and the icon lit.' },
       { kind: 'fixed', title: 'Side panels follow the result you are looking at', detail: 'With several queries in one run, Columns, Inspector and Export now work on the grid you clicked, and a picker at the top of the panel lists every result (Query 2 · Result 1 …) so you can switch without scrolling. Export of a selection from the second query works again.' },
       { kind: 'new', title: 'Icon toolbar on every result', detail: 'Each result now has one header row: the row count, a search icon and the grid actions (Add row, Delete rows, Save, Generate UPDATE script, Discard) as icons. Search Output stays out of the way until you open it with the icon or Ctrl+F, and closing it clears the search keys.' },
       { kind: 'fixed', title: 'Add row jumps to the new row', detail: 'Clicking + scrolls the new row into view and puts the cursor in the first column you can fill, skipping generated and identity columns. Clicking Delete rows without a selection now says which step is missing instead of doing nothing.' },

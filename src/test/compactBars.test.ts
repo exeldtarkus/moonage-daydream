@@ -11,7 +11,7 @@ const page = () => render('csp', 't', { result: res, source: { uri: 'file:///q.s
 test('toolbar hasil: judul Result dan Search Output satu baris', () => {
   const html = page();
   assert.match(html, /<div class="rbar"><span class="rtools">/, 'header hasil tunggal langsung berisi ikon');
-  assert.match(html, /<\/span><div class="sout" role="search" hidden>/, 'Search Output di baris yang sama, tersembunyi sampai dibuka');
+  assert.match(html, /<\/form><div class="sout" role="search" hidden>/, 'WHERE + Search Output di baris yang sama, keduanya tersembunyi sampai dibuka');
   assert.ok(!html.includes('<h3>Result '), 'judul Result tidak lagi baris sendiri');
 });
 
@@ -23,6 +23,6 @@ test('toolbar hasil: Search Output mengisi sisa baris, tanpa margin ekstra', () 
 });
 
 test('baris WHERE lebih rapat', () => {
-  assert.match(page(), /\.where \{[^}]*margin: 2px 0/);
+  assert.match(page(), /\.where \{[^}]*margin: 0/);
   assert.match(page(), /\.where input \{[^}]*padding: 2px 8px/);
 });

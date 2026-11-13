@@ -253,6 +253,15 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     const s = t && st(t);
     if (s && s.keys.length) { s.keys = []; renderChips(t); apply(t); }
   }
+  /** filter WHERE: tersembunyi sampai ikon diklik; ikon tetap menyala selama filternya terisi */
+  function openWhere(blk, mode) {
+    const form = blk?.querySelector('form.where');
+    if (!form) return;
+    const close = mode === 'toggle' && !form.hidden;
+    form.hidden = close;
+    blk.querySelector('.wherebtn')?.classList.toggle('on', !close || !!form.where.value);
+    if (!close) form.where.focus();
+  }
   // Ctrl / Cmd + F di panel hasil: buka Search Output hasil yang sedang dilihat (bukan Find bawaan webview)
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
@@ -326,6 +335,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (b.classList.contains('searchbtn')) { openSearch(b.closest('.blk'), 'toggle'); return; }
+    if (b.classList.contains('wherebtn')) { openWhere(b.closest('.blk'), 'toggle'); return; }
     if (b.classList.contains('allbtn')) {
       b.disabled = true;
       b.textContent = 'Loading…';

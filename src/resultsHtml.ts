@@ -82,12 +82,11 @@ const FORMAT_OPTIONS = Object.entries(FORMATS).map(([k, f]) => `<option value="$
 const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const DOTS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.5" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="12.5" r="1.3" fill="currentColor"/></svg>';
 
-/** toolbar WHERE di atas grid (part = index query pada run paralel) */
-/** shortcut: baris WHERE disembunyikan sementara atas permintaan user; set true untuk menghidupkannya lagi */
-const WHERE_BAR: boolean = false;
+const WHERE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
+/** filter WHERE di toolbar hasil (part = index query pada run paralel); tersembunyi sampai ikon WHERE diklik */
 function whereBar(where: string | undefined, part?: number): string {
-  return `<form class="where"${part === undefined ? '' : ` data-part="${part}"`}><label>WHERE</label>`
+  return `<form class="where"${where ? ' data-on="1"' : ' hidden'}${part === undefined ? '' : ` data-part="${part}"`}><label>WHERE</label>`
     + `<input name="where" spellcheck="false" placeholder="e.g. name LIKE 'RF%'  (Enter to run again on the server)" value="${esc(where ?? '')}">`
     + `${where ? '<button type="button" class="clear" title="Clear filter">×</button>' : ''}</form>`;
 }
@@ -134,7 +133,7 @@ const editBar = (block?: string) => (block
 
 /** canMore: statement asal diketahui (satu SELECT) -> tombol Load more di result set pertama */
 /** editBlock: alasan result set tidak bisa diedit (dicek extension setelah hasil tampil) -> tombol edit nonaktif */
-function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols: string[] = []): string {
+function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols: string[] = [], where?: { value?: string; part?: number }): string {
   const gen = new Set(genCols.map((g) => g.toLowerCase()));
   const sets = r.resultSets.map((s, i) => {
     const gc = s.cache;
@@ -149,11 +148,14 @@ function resultHtml(r: QueryResult, canMore = false, editBlock?: string, genCols
     }).join('');
     const truncated = !gc && (!!s.limited || s.total > s.rows.length);
     const title = gc ? cacheTitle(gc) : `${fmtCount(s.total)} row(s)${more}`;
-    const tools = `<span class="rtools"><button class="searchbtn" title="Search Output (Ctrl+F)" aria-label="Search Output">${SEARCH_ICON}</button>${canMore && i === 0 ? editBar(block) : ''}</span>`;
+    const whereOn = where && i === 0; // filter WHERE menjalankan ulang query asal: hanya result set pertama
+    const tools = `<span class="rtools"><button class="searchbtn" title="Search Output (Ctrl+F)" aria-label="Search Output">${SEARCH_ICON}</button>`
+      + `${whereOn ? `<button class="wherebtn${where.value ? ' on' : ''}" title="WHERE filter: run the query again on the server with an extra condition" aria-label="WHERE filter">${WHERE_ICON}</button>` : ''}`
+      + `${canMore && i === 0 ? editBar(block) : ''}</span>`;
     const multi = r.resultSets.length > 1;
     const rhead = gc ? `<span class="rhead">${multi ? `Result ${i + 1} ` : ''}<span class="rtitle">${title}</span></span>`
       : multi ? `<span class="rhead">Result ${i + 1}</span>` : ''; // jumlah baris sudah ada di footer
-    return `<div class="blk"><div class="rbar">${rhead}${tools}${SEARCH_OUTPUT}</div>
+    return `<div class="blk"><div class="rbar">${rhead}${tools}${whereOn ? whereBar(where.value, where.part) : ''}${SEARCH_OUTPUT}</div>
 <div class="grid"><table class="rs" data-set="${i}"${gc ? ` data-cache="${esc(JSON.stringify(cacheState(gc)))}"` : ''}${canMore && i === 0 && !block ? ' data-edit="1" title="Double-click a cell to edit; Save runs the changes in one transaction"' : ''}><thead><tr><th class="n"></th>${head}</tr></thead><tbody></tbody></table>
 <script type="application/json" class="rows">${pageJson(gc ? [] : s.rows.map((row) => row.map(cellText)))}</script></div>
 <div class="foot"><span>Rows: <b class="count" data-total="${gc ? gc.view.cache.length : s.rows.length}">${fmtCount(gc ? gc.view.count : s.total)}</b>${more}</span><span>${CLOCK}<b>${r.durationMs}ms</b></span>${PAGER}${canMore && i === 0 && truncated && s.rows.length < GRID_MAX_ROWS
@@ -197,7 +199,7 @@ function partHtml(p: Part, i: number, uri: string, pinned: boolean): string {
   // tiap query bisa ditutup (details, default terbuka) supaya hasil yang banyak lebih mudah dibaca
   const body = 'loading' in o
     ? `<div class="loading inline">${spinner(o.cancelling ? 'Cancelling query' : 'Running query')}${cancelBtn(uri, o.cancelling, i)}</div>`
-    : `${pinned || !WHERE_BAR ? '' : whereBar(undefined, i)}${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned, o.editBlock, o.genCols)}`;
+    : `${'error' in o ? `<div class="err">${esc(o.error)}</div>` : resultHtml(o.result, !pinned, o.editBlock, o.genCols, pinned ? undefined : { part: i })}`;
   return `<section data-part="${i}"><details class="qpart" open>${head}${body}</details></section>`;
 }
 
@@ -223,10 +225,11 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
 </div>`;
   } else if ('error' in o) {
     status = 'Failed';
-    body = `${WHERE_BAR && o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
+    body = `<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = `${WHERE_BAR && o.source && !o.source.mongo && !pinned ? whereBar(o.source.where) : ''}${resultHtml(o.result, !!o.source && !pinned, o.editBlock, o.genCols)}`;
+    body = resultHtml(o.result, !!o.source && !pinned, o.editBlock, o.genCols,
+      o.source && !o.source.mongo && !pinned ? { value: o.source.where } : undefined);
   }
   return webviewPage('results', {
     cspSource,
