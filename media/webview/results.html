@@ -11,6 +11,8 @@
     color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, #3a3d41); }
   .pinbtn { display: inline-flex; align-items: center; gap: 4px; } .pinbtn svg { width: 12px; height: 12px; }
   .pinbtn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+  .pinbtn + .pinbtn { margin-left: 8px; } /* dua tombol di baris judul: hanya yang pertama didorong ke kanan */
+  .collapsebtn .chev { transform: rotate(90deg); } .collapsebtn.closed .chev { transform: none; }
   h3 { font-size: 12px; margin: 12px 0 4px; } h3 span { font-weight: normal; opacity: .7; }
   /* grid gaya DBCode: header tebal + ikon tipe, baris lega selang-seling, angka rata kanan, footer Rows / waktu */
   .grid { overflow: auto; max-height: 70vh; border: 1px solid var(--vscode-panel-border); border-bottom: 0; overflow-anchor: none; } /* virtual scroll: browser tidak boleh menggeser scroll saat baris diganti */

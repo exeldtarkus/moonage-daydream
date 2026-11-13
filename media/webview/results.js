@@ -315,6 +315,14 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       return;
     }
     if (b.classList.contains('xmlbtn')) { vscode.postMessage({ type: 'planXml' }); return; }
+    if (b.classList.contains('collapsebtn')) { // tutup / buka semua query sekaligus
+      const parts = [...document.querySelectorAll('details.qpart')];
+      const close = parts.some((d) => d.open);
+      parts.forEach((d) => { d.open = !close; });
+      b.classList.toggle('closed', close);
+      b.querySelector('.lbl').textContent = close ? 'Expand all' : 'Collapse all';
+      return;
+    }
     if (b.classList.contains('pinbtn')) { vscode.postMessage({ type: 'pin' }); return; }
     if (b.classList.contains('addrow')) { addRow(b.closest('.foot').previousElementSibling.querySelector('table')); return; }
     if (b.classList.contains('delrow')) { markDelete(b.closest('.foot').previousElementSibling.querySelector('table')); return; }

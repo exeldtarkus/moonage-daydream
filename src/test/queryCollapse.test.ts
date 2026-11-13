@@ -30,3 +30,21 @@ test('multi query: chevron di kiri judul, berputar saat terbuka', () => {
   assert.match(html, /details\.qpart > summary \{[^}]*cursor: pointer/);
   assert.match(html, /details\.qpart > summary \{[^}]*list-style: none/);
 });
+
+test('multi query: tombol Collapse all menutup / membuka semua query', () => {
+  const html = page();
+  assert.match(html, /<button class="pinbtn collapsebtn"[^>]*>/, 'tombol di baris judul');
+  assert.ok(html.includes('Collapse all'), 'label awal');
+  assert.match(html, /collapsebtn'\)\) \{[\s\S]{0,400}querySelectorAll\('details\.qpart'\)/, 'handler menyentuh semua query');
+  assert.ok(html.includes("'Expand all'"), 'label berubah saat semua tertutup');
+});
+
+test('single result: tanpa tombol Collapse all (hanya satu hasil)', () => {
+  const one = render('csp', 't', { result: res, source: { uri: 'file:///q.sql', sql: 's', conn: 'c' } as never });
+  assert.ok(!one.includes('collapsebtn"'), 'tidak ada tombol di hasil tunggal');
+});
+
+test('Collapse all: ditangani sebelum tombol Pin (gaya tombolnya sama: class pinbtn)', () => {
+  const html = page();
+  assert.ok(html.indexOf("collapsebtn')) {") < html.indexOf("pinbtn')) {"), 'klik Collapse all tidak jatuh ke handler Pin');
+});
