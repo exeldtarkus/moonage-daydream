@@ -228,8 +228,8 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
     body = `<div class="err">${esc(o.error)}</div>`; // filter WHERE salah: bisa langsung diperbaiki
   } else {
     status = `Done in ${o.result.durationMs} ms`;
-    body = resultHtml(o.result, !!o.source && !pinned, o.editBlock, o.genCols,
-      o.source && !o.source.mongo && !pinned ? { value: o.source.where } : undefined);
+    body = onlyBlk(resultHtml(o.result, !!o.source && !pinned, o.editBlock, o.genCols,
+      o.source && !o.source.mongo && !pinned ? { value: o.source.where } : undefined));
   }
   return webviewPage('results', {
     cspSource,
@@ -241,6 +241,12 @@ export function render(cspSource: string, title: string, o: Outcome, pinned = fa
 <aside id="side" hidden><div class="sidehead"><b id="sidetitle"></b><button class="sideclose" title="Close">×</button></div><div id="sidesrc"></div><div id="sidebody"></div></aside>` : '',
     data: pageJson(FORMAT_OPTIONS),
   });
+}
+
+/** satu-satunya blok hasil di halaman: ditandai supaya grid-nya mengisi sisa tinggi panel, bukan berhenti di 70vh */
+function onlyBlk(html: string): string {
+  const at = html.indexOf('<div class="blk">');
+  return at >= 0 && at === html.lastIndexOf('<div class="blk">') ? html.replace('<div class="blk">', '<div class="blk only">') : html;
 }
 
 const running = (o: Outcome) => ('parts' in o ? o.parts.some((p) => 'loading' in p.o) : 'loading' in o);
