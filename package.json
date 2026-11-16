@@ -471,6 +471,12 @@
         "icon": "$(play)"
       },
       {
+        "command": "moonageDaydream.selectStatement",
+        "title": "Select Statement",
+        "category": "Moonage Daydream",
+        "icon": "$(list-selection)"
+      },
+      {
         "command": "moonageDaydream.explain",
         "title": "Explain (estimated plan)",
         "category": "Moonage Daydream",
@@ -1142,6 +1148,10 @@
           "when": "false"
         },
         {
+          "command": "moonageDaydream.selectStatement",
+          "when": "false"
+        },
+        {
           "command": "moonageDaydream.explain",
           "when": "editorLangId == sql"
         },
@@ -1381,11 +1391,6 @@
           ],
           "default": "warning",
           "description": "Mark SQL syntax errors in SELECT / INSERT / UPDATE / DELETE / WITH statements, checked offline with the dialect of the file's connection (other statements are not checked)."
-        },
-        "moonageDaydream.editor.doubleClickSelectsStatement": {
-          "type": "boolean",
-          "default": true,
-          "description": "Double-click inside a SQL statement selects the whole statement (up to ;) instead of a single word."
         },
         "moonageDaydream.transaction.mode": {
           "type": "string",

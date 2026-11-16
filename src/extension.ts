@@ -25,7 +25,7 @@ import { newObjectTemplates } from './msTemplates';
 import { objectTemplates } from './objTemplates';
 import { mongoFindCollection } from './mongo';
 import { ACTIVITY_SQL, SERVER_INFO_SQL, backupScript, jobScript, killScript, restoreScript, scriptAs, splitBatches, linkedServerForm, testLinkedServerSql } from './mssql';
-import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments, statementSpanAt, resolveTableRef, tableAt, tableSpans } from './sqlContext';
+import { addWhere, reusableSelectTop, affectedStatements, changingStatement, preview, readOnlyBlocked, txEndStatement, autoLimitable, missingSemicolons, parallelSafe, readOnly, singleSelect, splitStatements, statementAt, statementSegments, resolveTableRef, tableAt, tableSpans } from './sqlContext';
 import { parsePlan } from './plan';
 import { ConsulFs, deleteConsulKey, newConsulKey, openConsulKey } from './consulView';
 import { ConsulClient, consulTarget } from './consul';
@@ -301,6 +301,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('moonageDaydream.runQuery', runQuery),
     vscode.commands.registerCommand('moonageDaydream.runStatement', runStatement),
+    vscode.commands.registerCommand('moonageDaydream.selectStatement', selectStatement),
     vscode.commands.registerCommand('moonageDaydream.pinResults', () => results.pin()),
     vscode.commands.registerCommand('moonageDaydream.toggleTransactionMode', (u?: vscode.Uri | string, mode?: 'auto' | 'manual') => setTransactionMode(u, mode)),
     vscode.commands.registerCommand('moonageDaydream.commitTransaction', (u?: vscode.Uri | string) => endTransaction('commit', u)),
@@ -338,7 +339,6 @@ export function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.languages.registerCompletionItemProvider({ language: 'sql' }, completion, '.', '"', "'", '$'),
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, { onDidChangeCodeLenses: lensChanged.event, provideCodeLenses }),
-    vscode.window.onDidChangeTextEditorSelection(expandWordToStatement),
     vscode.window.onDidChangeActiveTextEditor(updateFileStatus),
     (banner = new ConnBanner()),
     vscode.window.onDidChangeVisibleTextEditors(() => banner.update(fileConn)),
@@ -665,24 +665,6 @@ function updateFileStatus() {
   status.command = uri ? 'moonageDaydream.setFileConnection' : 'moonageDaydream.selectConnection';
 }
 
-/**
- * Double-click di file .sql: VS Code memilih satu kata; seleksi itu diperluas jadi seluruh statement (sampai `;`).
- * Hanya seleksi mouse yang persis satu kata, jadi drag / Shift+klik tidak terganggu.
- * shortcut: drag yang kebetulan pas satu kata juga ikut diperluas, matikan lewat setting bila mengganggu.
- */
-function expandWordToStatement(e: vscode.TextEditorSelectionChangeEvent) {
-  const doc = e.textEditor.document;
-  if (e.kind !== vscode.TextEditorSelectionChangeKind.Mouse || e.selections.length !== 1 || doc.languageId !== 'sql') return;
-  if (!vscode.workspace.getConfiguration('moonageDaydream').get<boolean>('editor.doubleClickSelectsStatement', true)) return;
-  const sel = e.selections[0];
-  const word = sel.isEmpty ? undefined : doc.getWordRangeAtPosition(sel.start);
-  if (!word || !word.isEqual(new vscode.Range(sel.start, sel.end))) return;
-  const span = statementSpanAt(doc.getText(), doc.offsetAt(sel.start), dialectOf(doc.uri));
-  if (!span) return;
-  const next = new vscode.Selection(doc.positionAt(span.start), doc.positionAt(span.end));
-  if (!next.isEqual(sel)) e.textEditor.selection = next;
-}
-
 /** CodeLens: di atas tiap statement Execute | Explain | Analyze (Analyze hanya SELECT) | koneksi | database | mode transaksi */
 function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
   const c = fileConn(doc.uri);
@@ -712,6 +694,7 @@ function provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
         lenses.push(new vscode.CodeLens(r, { title: '$(pulse) Analyze', command: 'moonageDaydream.analyze', arguments: args, tooltip: 'Actual execution plan (runs the SELECT inside a rolled back transaction)' }));
       }
     }
+    lenses.push(new vscode.CodeLens(r, { title: '$(list-selection) Select', command: 'moonageDaydream.selectStatement', arguments: args, tooltip: 'Select this statement in the editor' }));
     pushConn(lenses, r, doc, c); // koneksi | database | mode transaksi di setiap statement
   });
   if (!segs.length) pushConn(lenses, first, doc, c);
@@ -2016,6 +1999,17 @@ async function targetText(uriArg?: vscode.Uri | string, start?: number, end?: nu
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document !== doc) return { doc, text: '' };
   return { doc, text: editor.selection.isEmpty ? statementAt(doc.getText(), doc.offsetAt(editor.selection.active), dialectOf(doc.uri)) : doc.getText(editor.selection) };
+}
+
+/** CodeLens Select: blok seluruh statement itu di editor (pengganti double-click yang memperluas seleksi) */
+function selectStatement(uriArg?: vscode.Uri | string, start?: number, end?: number) {
+  const uri = typeof uriArg === 'string' ? vscode.Uri.parse(uriArg) : uriArg;
+  const editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri?.toString()) ?? vscode.window.activeTextEditor;
+  if (!editor || start === undefined || end === undefined) return;
+  const doc = editor.document;
+  editor.selection = new vscode.Selection(doc.positionAt(start), doc.positionAt(end));
+  editor.revealRange(editor.selection, vscode.TextEditorRevealType.Default);
+  if (vscode.window.activeTextEditor !== editor) void vscode.window.showTextDocument(doc, editor.viewColumn);
 }
 
 /** CodeLens Execute di atas statement: jalankan statement itu saja */
