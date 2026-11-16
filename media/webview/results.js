@@ -21,7 +21,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const data = JSON.parse(t.nextElementSibling.textContent);
       const cs = t.dataset.cache ? JSON.parse(t.dataset.cache) : null;
       state.set(t, { data, view: data.map((_, i) => i), order: heads.map((th) => +th.dataset.c), num: heads.map((th) => th.classList.contains('num')),
-        filters: cs ? cs.filters : {}, sort: cs ? cs.sort : null, keys: cs ? cs.keys : [], hidden: new Set(), sel: new Set(), anchor: null, cur: null, edits: new Map(), deletes: new Set(),
+        filters: cs ? cs.filters : {}, sort: cs ? cs.sort : null, keys: cs ? cs.keys : [], hidden: new Set(), sel: new Set(), col: null, anchor: null, cur: null, edits: new Map(), deletes: new Set(),
         c: cs && { count: cs.count, total: cs.total, partial: cs.partial, loading: cs.loading, gen: 0, pages: new Map(), rmap: new Map(), pos: new Map(), req: new Set() } });
     }
     return state.get(t);
@@ -99,6 +99,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       if (s.rowH !== h) render(t);
     }
     syncPager(t, first);
+    paintCol(t);
     // pemisah pertama di toolbar dibuat sampai garis kolom nomor baris (hitung dari posisi, bukan lebar sel: border toolbar ikut)
     const bar = t.closest('.blk')?.querySelector('.rbar');
     const ncol = bar && t.tHead.rows[0].cells[0].getBoundingClientRect().right - bar.getBoundingClientRect().left - 1;
@@ -195,13 +196,33 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     ord.splice(to, 0, ...ord.splice(from, 1));
   }
   /** export / copy ke extension: baris terpilih (scope sel) atau semua data, kolom yang tidak disembunyikan */
-  function send(t, type, format, scope, header) {
-    vscode.postMessage({ type, format, scope, header, ...ids(t), rows: scope === 'sel' ? selected(t) : undefined, cols: visibleCols(t) });
+  function send(t, type, format, scope, header, cols) {
+    vscode.postMessage({ type, format, scope, header, ...ids(t), rows: scope === 'sel' ? selected(t) : undefined, cols: cols ?? visibleCols(t) });
   }
   /** Copy tidak tersedia untuk Excel (file biner) */
   function syncCopy() {
     const c = document.querySelector('[data-a=xcopy]');
     if (c) c.disabled = document.getElementById('xf').value === 'xlsx';
+  }
+  /** kolom terpilih (klik judul kolom): tandai header + sel kolom itu di baris yang sedang digambar */
+  function paintCol(t) {
+    const s = st(t), i = s.col === null ? -1 : order(t).indexOf(s.col) + 1;
+    for (const r of [t.tHead.rows[0], ...t.tBodies[0].rows]) [...r.cells].forEach((td, x) => td.classList.toggle('selcol', x === i));
+  }
+  /** klik judul kolom: pilih seluruh kolom (klik lagi = batal); seleksi baris dikosongkan */
+  function selectCol(t, c) {
+    const s = st(t);
+    s.col = s.col === c ? null : c;
+    s.sel.clear();
+    paintSel(t);
+    paintCol(t);
+    if (pane === 'insp' || pane === 'exp') renderSide();
+  }
+  /** Copy kolom terpilih sebagai array nilai (semua baris hasil, bukan hanya yang digambar) */
+  function copyCol(t) {
+    const s = st(t);
+    if (s.col === null) return;
+    send(t, 'copy', 'array', s.c ? 'cache' : 'all', false, [s.col]);
   }
   /** tandai baris terpilih di DOM tanpa menggambar ulang (gambar ulang di tengah klik merusak double-click edit) */
   function paintSel(t) { const s = st(t); for (const tr of t.tBodies[0].rows) if (tr.dataset.r) tr.classList.toggle('sel', s.sel.has(+tr.dataset.r)); }
@@ -338,6 +359,8 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       active = tb;
       if (moved && side && !side.hidden) renderSide(); // panel samping selalu mengikuti hasil yang disentuh
     }
+    const lbl = e.target.closest('th .lbl');
+    if (lbl && tb) { selectCol(tb, +lbl.closest('th').dataset.c); return; }
     const go = e.target.closest('[data-goto]');
     if (go) { headOf(tableOf(), +go.dataset.goto).scrollIntoView({ block: 'nearest', inline: 'center' }); return; }
     const mv = e.target.closest('[data-move]');
@@ -354,6 +377,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const t = td.closest('table'), s = st(t), tr = td.parentElement;
       if (!tr.dataset.r) return; // baris baru (Add row) / spacer
       const i = +tr.dataset.r;
+      if (s.col !== null) { s.col = null; paintCol(t); }
       if (!td.classList.contains('n') && !td.classList.contains('fill')) { t.tBodies[0].querySelector('td.cur')?.classList.remove('cur'); td.classList.add('cur'); s.cur = editKey(i, order(t)[td.cellIndex - 1]); }
       if (e.shiftKey && s.anchor !== null) {
         const a = posOf(s, s.anchor), z = posOf(s, i);
@@ -455,6 +479,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
         open(b, '<input id="f" placeholder="contains…  (null = empty)" value="' + (s.filters[c] ?? '').replace(/"/g, '&quot;') + '"><hr><button data-a="clearf">Clear filter</button>', () => document.getElementById('f').focus());
       } else {
         open(b, '<button data-a="asc">Sort ascending</button><button data-a="desc">Sort descending</button><button data-a="nosort">Clear sort</button><hr>'
+          + '<button data-a="copycol">Copy column as array</button><hr>'
           + '<button data-a="hide">Hide column</button>' + (s.hidden.size ? '<button data-a="showall">Show all columns (' + s.hidden.size + ' hidden)</button>' : ''));
       }
       return;
@@ -474,6 +499,7 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
       const a = b.dataset.a;
       if (a === 'asc' || a === 'desc') s.sort = { c, dir: a === 'asc' ? 1 : -1 };
       if (a === 'nosort') s.sort = null;
+      if (a === 'copycol') { menu.hidden = true; s.col = c; paintCol(t); return void copyCol(t); }
       if (a === 'hide') s.hidden.add(c);
       if (a === 'showall') s.hidden.clear();
       if (a === 'clearf') delete s.filters[c];
@@ -796,6 +822,8 @@ const FORMAT_OPTIONS = JSON.parse(document.getElementById('page-data').textConte
     }
     // Ctrl/Cmd+C: baris terpilih dalam format setting grid.copyFormat (default JSON); tidak saat mengetik di input
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !e.target.closest('input, select, textarea') && !String(getSelection())) {
+      const tc = [...document.querySelectorAll('table.rs')].find((x) => st(x).col !== null);
+      if (tc) { e.preventDefault(); return void copyCol(tc); } // kolom terpilih: array nilai kolom itu
       const t = [...document.querySelectorAll('table.rs')].find((x) => selected(x).length);
       if (!t) return;
       e.preventDefault();

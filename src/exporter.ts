@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream, promises as fsp, WriteStream } fro
 import { once } from 'events';
 import { createDeflateRaw, deflateRawSync } from 'zlib';
 
-export type ExportFormat = 'xlsx' | 'csv' | 'tsv' | 'json' | 'jsonPretty' | 'markdown' | 'html';
+export type ExportFormat = 'xlsx' | 'csv' | 'tsv' | 'json' | 'jsonPretty' | 'markdown' | 'html' | 'array';
 export const FORMATS: Record<ExportFormat, { label: string; ext: string }> = {
   xlsx: { label: 'Excel (.xlsx)', ext: 'xlsx' },
   csv: { label: 'CSV', ext: 'csv' },
@@ -11,6 +11,7 @@ export const FORMATS: Record<ExportFormat, { label: string; ext: string }> = {
   jsonPretty: { label: 'JSON (pretty)', ext: 'json' },
   markdown: { label: 'Markdown', ext: 'md' },
   html: { label: 'HTML', ext: 'html' },
+  array: { label: 'Array of values (first column)', ext: 'json' },
 };
 /** batas baris Copy All Data ke clipboard (teks disimpan di memori) */
 export const CLIPBOARD_MAX_ROWS = 100_000;
@@ -111,6 +112,14 @@ async function textSink(format: Exclude<ExportFormat, 'xlsx'>, columns: string[]
       await out.write('[');
       return {
         row: (v) => out.write(`${n++ ? ',' : ''}\n  ${JSON.stringify(obj(v), null, 2).replace(/\n/g, '\n  ')}`),
+        end: async () => { await out.write(n ? '\n]\n' : ']\n'); await out.close(); },
+        abort,
+      };
+    case 'array':
+      // satu kolom saja (Copy column): daftar nilai, bukan objek per baris
+      await out.write('[');
+      return {
+        row: (v) => out.write(`${n++ ? ',' : ''}\n  ${JSON.stringify(plain(v[0]))}`),
         end: async () => { await out.write(n ? '\n]\n' : ']\n'); await out.close(); },
         abort,
       };

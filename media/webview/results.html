@@ -90,6 +90,9 @@
   /* sel aktif (terakhir diklik): biru, di atas warna baris terpilih / Delete rows */
   tbody td.cur, tbody tr.sel td.cur, tbody tr.todelete td.cur { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: -2px; background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 30%, transparent) !important; }
   tbody td { cursor: default; }
+  /* kolom terpilih (klik judul kolom): Ctrl+C menyalinnya sebagai array */
+  th.selcol, tbody td.selcol { background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 25%, transparent) !important; }
+  th .lbl { cursor: pointer; }
   /* nilai panjang (JSON, teks) tidak melebarkan kolom: dipotong dengan ellipsis, nilai penuh lewat double-click / Inspector */
   .cv { display: inline-block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
   tbody tr.vpad td { padding: 0; height: auto; border: 0; background: none !important; pointer-events: none; }

@@ -7,6 +7,11 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 /** catatan rilis untuk halaman What's New, terbaru di atas; tambah entri baru setiap rilis yang membawa fitur */
 export const RELEASES: Release[] = [
   {
+    version: '1.3.3', date: '2026-11-16', items: [
+      { kind: 'new', title: 'Select a column and copy it as an array', detail: 'Click a column title in the result grid to select the whole column (click it again, or click any cell, to drop the selection). Ctrl+C then copies every value of that column as a JSON array, ready to paste into code or an IN list; the column menu has the same action as Copy column as array. The values come from the whole result, not only the rows on screen, and Array of values is also available as an export format.' },
+    ],
+  },
+  {
     version: '1.3.1', date: '2026-11-13', items: [
       { kind: 'new', title: 'Auto refresh', detail: 'A single SELECT result has an Auto refresh picker in its toolbar (Off, 5s, 10s, 30s, 1m, 5m) that runs the same statement again on a timer, filter and all. The refresh is quiet: no spinner, no History entry and the cursor stays in your editor, with a short status bar message after every run. Next to the picker a countdown shows how long until the next run and a small badge how many refreshes have run so far (hover it for the time of the last one). A tick is skipped while the previous run is still going or while you have unsaved grid changes, and the timer stops when the panel is hidden or you run another query.' },
       { kind: 'fixed', title: 'A single result fills the panel', detail: 'The grid of a single result stopped at 70% of the panel height, which left an empty strip under the footer when the results panel was maximized. It now uses the whole height available, while a result with only a few rows still keeps its own height. Several queries in one run are unchanged: each one keeps its own scrollable grid.' },
