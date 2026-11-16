@@ -4,7 +4,7 @@ English | [Bahasa Indonesia](README.id.md)
 
 A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite and MongoDB, plus Consul (KV store and cluster dashboard). Write queries in `.sql` files, run them with a shortcut or CodeLens, and view, filter, edit and export the results in a grid.
 
-![Results grid with column type tags, selected rows, WHERE toolbar and Load more](images/screenshots/results.png)
+![Results grid with the icon toolbar, column type tags, selected rows and the Columns / Inspector / Export rail](images/screenshots/results.png)
 
 ## Features
 
@@ -29,8 +29,11 @@ A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite an
 - **Auto limit** for a single SELECT, then **Load more (+1000)** up to 50,000 rows in the grid.
 - **Manual transaction mode** per file with **Commit** / **Rollback** lenses; on SQL Server, MySQL / MariaDB and PostgreSQL the state is read from the server and `COMMIT` / `ROLLBACK` may be part of the script.
 - **Auto-commit confirmation**: statements that change data in Auto-commit mode ask first (on by default; can be turned off per group or connection).
-- **Results grid**: column type tags, a WHERE toolbar that re-runs the query on the server, per-column filter / sort / hide on the loaded rows, column reorder, **Columns** / **Inspector** side panels, row selection with Ctrl+C (copied as TSV); only the rows near the viewport are drawn, so large results stay fast. UPDATE / INSERT / DELETE results show their `n row(s) affected` under a **Statement n** title, also next to SELECT results.
-- **Export** all data or the selected rows to CSV, TSV, JSON, JSON (pretty), Markdown, HTML or Excel (.xlsx), or copy to the clipboard.
+- **Results grid**: one icon toolbar per result (search, WHERE, Add row, Delete rows, Save, Generate script, Discard), column type tags, per-column filter / sort / hide on the loaded rows, column reorder, keyboard navigation (arrows, Shift+arrows, Esc discards changes), and **Columns** / **Inspector** / **Export** side panels on the right rail with a result picker. Several queries in one run get collapsible **Query** sections (**Collapse all**). Only the rows near the viewport are drawn, so large results stay fast. UPDATE / INSERT / DELETE results show their `n row(s) affected` under a **Statement n** title, also next to SELECT results.
+- **Load all**: read a result of up to millions of rows into a cache on disk (not memory); the grid pages through it with search, column filters, sort and export from the cache.
+- **Cell value popup**: hover (or double-click) a cell for the whole value, JSON pretty-printed, with **Copy value**. Ctrl+C copies the selected rows (format: `moonageDaydream.grid.copyFormat`); click a column title and Ctrl+C copies that column as a JSON array.
+- **Auto refresh** for a single SELECT: Off, 5s, 10s, 30s, 1m or 5m, with a countdown and refresh number; quiet (no History entry, the cursor stays in your editor).
+- **Export** all data or the selected rows to CSV, TSV, JSON, JSON (pretty), Array of values, Markdown, HTML or Excel (.xlsx), or copy to the clipboard.
 - **Pin results** to keep them in their own tab, side by side.
 - **Edit cells**: edits generate an UPDATE script by primary key in a new tab. The script is never executed automatically.
 - **Execution plans**: graphical plan with cost bars for SQL Server; the `EXPLAIN` output as a grid for the other databases.
@@ -40,21 +43,31 @@ A VS Code database client for SQL Server, MySQL / MariaDB, PostgreSQL, SQLite an
 
 ## What's New
 
+**1.3.4**
+
+- Fixed: **Format SQL** no longer breaks a multi-line `IN (...)` list (or a long SELECT list) when leading commas are on; every line keeps its own comma.
+
+**1.3.3**
+
+- New: **Select** button in the CodeLens row above every statement selects the whole statement up to its `;` (double-click selects a single word again).
+- New: **column selection** in the result grid: click a column title to select the column, Ctrl+C copies its values as a JSON array (also **Copy column as array** in the column menu and the **Array of values** export format).
+
+**1.3.1 - 1.3.2**
+
+- New: **Auto refresh** for a single SELECT (Off, 5s, 10s, 30s, 1m, 5m) with a countdown and a refresh number; quiet, no History entry.
+- Fixed: a single result fills the height of the panel.
+
+**1.3.0**
+
+- New: one **icon toolbar** per result (search, WHERE, Add row, Delete rows, Save, Generate script, Discard); collapsible **Query** sections with **Collapse all**; keyboard in the grid (arrows, Shift+arrows, Esc discards); **Columns / Inspector / Export** panels on the right rail with a result picker; an empty results panel with shortcut cards.
+
+**1.2.1 - 1.2.6**
+
+- New: **Load all** for results of millions of rows (disk cache with search, column filters, sort, paging and export from the cache); **cell value popup** (hover or double-click, JSON pretty-printed, **Copy value**); loading indicators in the webviews; **Copy as script / JSON** and **Open Table Columns** from a SQL file.
+
 **1.2.0**
 
-- New:
-  - **Find Object** (Ctrl+Alt+O): search connections, databases, tables, views and procedures of every connection from a local metadata cache; **Update Metadata** and **Clear Cache** in the Command Palette.
-  - **Filter in Connections** (Ctrl+Alt+F): the funnel on a connection, database or folder shows only matching names.
-  - **Open view**: every open SQL tab, saved or not, with Save All, Close All, pin and drag & drop order.
-  - **SQL syntax check**: SELECT / INSERT / UPDATE / DELETE / WITH checked offline with the connection's dialect (`moonageDaydream.lint.syntax`).
-  - **Running queries and history in the status bar**: quick picks to cancel, reopen, run again or copy; a popup with Cancel while a query runs.
-  - **Group environment icons**: Production, UAT, Development and Local Development, guessed from the name or set by right-click.
-- Improved:
-  - **Connection rows**: logo with a pulsing dot while connected, connected count per group, richer tooltip, loading bar when expanding a disconnected connection.
-  - **One preview tab**: table clicks and history entries reuse one SQL tab until you edit it.
-  - **Faster large results**: the grid draws only the rows near the viewport.
-- Fixed:
-  - **Slow or failed connections**: no longer freeze the rest of Connections or show as connected.
+- New: **Find Object**, **Filter in Connections**, **Open view**, SQL syntax check, running queries and **History** in the status bar, group environment icons; connection rows redesigned; faster large results.
 
 Earlier: **1.1.0** confirmation after Add Data / grid save; **1.0.0** multi-column UNIQUE / FOREIGN KEY, MongoDB replica set connections, Show Log on errors, streaming export, `GO` fixes.
 
@@ -164,6 +177,7 @@ Expand a connection to browse databases, tables, views, procedures and columns (
 Open or create a `.sql` file. The CodeLens above every statement shows **Execute**, **Explain**, **Analyze** (for SELECT), then the connection, the database and the transaction mode of the file; click the connection or database to change it. Then:
 
 - **Ctrl+Alt+Enter** runs the selection, or the statement under the cursor. **Ctrl+Enter** does the same when the DBCode extension is not installed.
+- **Select** in the CodeLens row selects the whole statement (up to its `;`) in the editor.
 - **Execute** on a lens runs that statement.
 - While a query runs, a **Cancel** lens appears; the query is cancelled on the server. A query that takes longer than 0.3 s also shows a popup with the query, the elapsed seconds and **Cancel**; it closes when the query finishes.
 
@@ -185,19 +199,19 @@ Statements that do not return rows (UPDATE, INSERT, DELETE, MERGE, `SELECT ... I
 
 ### 3. Filter and sort
 
-Type a condition in the **WHERE** box and press Enter: the query runs again on the server with that condition. The filter icon in a column header filters the loaded rows by text; the column menu sorts or hides the column. Reorder and show / hide columns by dragging and ticking them in the **Columns** side panel.
+Open the filter row with the **WHERE** icon in the result toolbar (or the search icon / Ctrl+F for Search Output), type a condition and press Enter: the query runs again on the server with that condition. The filter icon in a column header filters the loaded rows by text; the column menu sorts, hides or copies the column (**Copy column as array**). Reorder and show / hide columns by dragging and ticking them in the **Columns** side panel. With **Load all** the search, filters and sort work on the whole cached result.
 
 ![WHERE status = 'paid' plus a column filter on city](images/screenshots/filter.png)
 
-Click a row to select it (Ctrl / Shift for more rows); Ctrl+C copies the selection as TSV. The **Inspector** side panel shows every column of the selected row with its type; **Columns** lists the columns with their types.
+Click a row to select it (Ctrl / Shift for more rows, or the arrow keys); Ctrl+C copies the selection (default format JSON pretty, see `moonageDaydream.grid.copyFormat`). Click a column title to select the whole column: Ctrl+C then copies its values as a JSON array. Hover or double-click a cell to see its whole value. The **Inspector** side panel shows every column of the selected row with its type; **Columns** lists the columns with their types.
 
 ![Inspector side panel showing one row with column types](images/screenshots/inspector.png)
 
 ### 4. Export
 
-Click **Export**, choose **All Data** or the selection and a format (Excel .xlsx, CSV, TSV, JSON, JSON pretty, Markdown, HTML), then **Save** to a file or **Copy** to the clipboard.
+Open the **Export** side panel (right rail), pick **All Data** or the selection and a format (Excel .xlsx, CSV, TSV, JSON, JSON pretty, Array of values, Markdown, HTML), then **Save** to a file or **Copy** to the clipboard. With several queries in one run, the picker at the top of the panel chooses the result.
 
-![Export popup with All Data and Excel (.xlsx)](images/screenshots/export.png)
+![Export side panel with All Data and Excel (.xlsx), next to the result grid](images/screenshots/export.png)
 
 **Pin** keeps the current results in their own tab so the next query does not replace them.
 
@@ -329,6 +343,9 @@ Read-only connections cannot save or delete keys. When the ACL token lacks a per
 | `moonageDaydream.lint.semicolon` | `error` | Mark statements not terminated with `;`: `error`, `warning`, `off` |
 | `moonageDaydream.lint.syntax` | `warning` | Mark syntax errors in SELECT / INSERT / UPDATE / DELETE / WITH (offline, dialect of the connection): `error`, `warning`, `off` |
 | `moonageDaydream.connection.idleDisconnectMinutes` | `0` | Disconnect a connection after it has not been used for this many minutes (no running query, open transaction or monitor). `0` = never |
+| `moonageDaydream.grid.copyFormat` | `jsonPretty` | Format of the rows copied with Ctrl+C in the result grid: `jsonPretty`, `json`, `tsv`, `csv`, `markdown` |
+| `moonageDaydream.grid.maxCachedRows` | `5000000` | Load all: maximum rows kept in the result cache per result (at most 5,000,000); when reached the query is cancelled and the result is marked partial |
+| `moonageDaydream.grid.cacheMemoryMB` | `100` | Load all: RAM per result cache in MB (at most 100); the rest goes to `.moonage-cache` in the workspace folder |
 
 The extension also sets itself as the default formatter for `[sql]`.
 
@@ -389,7 +406,7 @@ The extension also sets itself as the default formatter for `[sql]`.
 - SQLite: the whole database file is read for each query, and a running query cannot be cancelled.
 - MongoDB: no manual transactions and no formatter.
 - Import connection string: a `mongodb://` URL with several hosts (replica set) is not supported; use `mongodb+srv://` or one host.
-- The grid holds at most 50,000 rows (Load more stops there); use Export for all data.
+- The grid holds at most 50,000 rows (Load more stops there); use **Load all** for up to millions of rows (edit is off for that result) or Export for all data.
 - SQLite has no Analyze (only `EXPLAIN QUERY PLAN`).
 - Script as CREATE TABLE (SQL Server) has no partitioning, compression, filegroups, columnstore, temporal or memory-optimized options.
 - Live Monitor: MySQL / MariaDB has no CPU % chart; PostgreSQL statistics are flushed with about 1 s delay; Expensive queries need `performance_schema` (MySQL / MariaDB) or `pg_stat_statements` (PostgreSQL).

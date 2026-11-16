@@ -107,7 +107,7 @@ const PLAN_XML = `<ShowPlanXML><BatchSequence><Batch><Statements>
 
     // 3. export / copy
     p = await page(render('csp', 'shop / sales', { result: result([ordersSet]), source: { uri: 'file:///orders.sql', sql: SQL } }), { h: 760 });
-    await p.click('.xbtn');
+    await p.click('.sidetabs button[data-pane="exp"]');
     await shot(p, 'export.png');
 
     // 4. beberapa SELECT paralel, satu masih berjalan

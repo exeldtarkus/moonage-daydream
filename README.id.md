@@ -4,7 +4,7 @@
 
 Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite dan MongoDB, plus Consul (KV store dan dashboard cluster). Tulis query di file `.sql`, jalankan dengan shortcut atau CodeLens, lalu lihat, filter, edit dan export hasilnya di grid.
 
-![Grid hasil dengan tag tipe kolom, baris terpilih, toolbar WHERE dan Load more](images/screenshots/results.png)
+![Grid hasil dengan toolbar ikon, tag tipe kolom, baris terpilih dan rail Columns / Inspector / Export](images/screenshots/results.png)
 
 ## Fitur
 
@@ -29,8 +29,11 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
 - **Auto limit** untuk satu SELECT, lalu **Load more (+1000)** sampai 50.000 baris di grid.
 - **Mode transaksi manual** per file dengan lens **Commit** / **Rollback**; di SQL Server, MySQL / MariaDB dan PostgreSQL statusnya dibaca dari server dan `COMMIT` / `ROLLBACK` boleh ada di dalam script.
 - **Konfirmasi Auto-commit**: statement yang mengubah data di mode Auto-commit minta konfirmasi dulu (aktif secara default; bisa dimatikan per group atau koneksi).
-- **Grid hasil**: tag tipe kolom, toolbar WHERE yang menjalankan ulang query di server, filter / sort / hide per kolom pada baris yang sudah dimuat, urutan kolom bisa diubah, panel samping **Columns** / **Inspector**, pilih baris lalu Ctrl+C (tersalin sebagai TSV); hanya baris di sekitar area tampil yang digambar, jadi hasil besar tetap cepat. Hasil UPDATE / INSERT / DELETE menampilkan `n row(s) affected` di bawah judul **Statement n**, juga di samping hasil SELECT.
-- **Export** semua data atau baris terpilih ke CSV, TSV, JSON, JSON (pretty), Markdown, HTML atau Excel (.xlsx), atau salin ke clipboard.
+- **Grid hasil**: satu toolbar ikon per hasil (search, WHERE, Add row, Delete rows, Save, Generate script, Discard), tag tipe kolom, filter / sort / hide per kolom pada baris yang sudah dimuat, urutan kolom bisa diubah, navigasi keyboard (panah, Shift+panah, Esc membuang perubahan), dan panel samping **Columns** / **Inspector** / **Export** di rail kanan dengan pemilih hasil. Beberapa query dalam satu run mendapat section **Query** yang bisa dilipat (**Collapse all**). Hanya baris di sekitar area tampil yang digambar, jadi hasil besar tetap cepat. Hasil UPDATE / INSERT / DELETE menampilkan `n row(s) affected` di bawah judul **Statement n**, juga di samping hasil SELECT.
+- **Load all**: baca hasil sampai jutaan baris ke cache di disk (bukan memori); grid berpindah halaman dengan search, filter kolom, sort dan export dari cache.
+- **Popup nilai cell**: hover (atau double-click) cell untuk melihat nilai lengkap, JSON di-pretty-print, dengan **Copy value**. Ctrl+C menyalin baris terpilih (format: `moonageDaydream.grid.copyFormat`); klik judul kolom lalu Ctrl+C menyalin kolom itu sebagai array JSON.
+- **Auto refresh** untuk satu SELECT: Off, 5s, 10s, 30s, 1m atau 5m, dengan hitung mundur dan nomor refresh; senyap (tanpa entri History, kursor tetap di editor).
+- **Export** semua data atau baris terpilih ke CSV, TSV, JSON, JSON (pretty), Array of values, Markdown, HTML atau Excel (.xlsx), atau salin ke clipboard.
 - **Pin results** supaya hasil tetap di tab sendiri, berdampingan.
 - **Edit cell**: perubahan menghasilkan script UPDATE berdasarkan primary key di tab baru. Script tidak pernah dijalankan otomatis.
 - **Execution plan**: plan grafis dengan bar cost untuk SQL Server; output `EXPLAIN` sebagai grid untuk database lain.
@@ -40,21 +43,31 @@ Database client untuk VS Code: SQL Server, MySQL / MariaDB, PostgreSQL, SQLite d
 
 ## Yang Baru
 
+**1.3.4**
+
+- Diperbaiki: **Format SQL** tidak lagi merusak daftar `IN (...)` multi-baris (atau daftar SELECT panjang) saat leading comma aktif; tiap baris tetap punya komanya sendiri.
+
+**1.3.3**
+
+- Baru: tombol **Select** di baris CodeLens setiap statement memblok seluruh statement sampai `;` (double-click kembali memilih satu kata).
+- Baru: **seleksi kolom** di grid hasil: klik judul kolom untuk memilih kolom, Ctrl+C menyalin nilainya sebagai array JSON (juga **Copy column as array** di menu kolom dan format export **Array of values**).
+
+**1.3.1 - 1.3.2**
+
+- Baru: **Auto refresh** untuk satu SELECT (Off, 5s, 10s, 30s, 1m, 5m) dengan hitung mundur dan nomor refresh; senyap, tanpa entri History.
+- Diperbaiki: hasil tunggal mengisi tinggi panel.
+
+**1.3.0**
+
+- Baru: satu **toolbar ikon** per hasil (search, WHERE, Add row, Delete rows, Save, Generate script, Discard); section **Query** yang bisa dilipat dengan **Collapse all**; navigasi keyboard di grid (panah, Shift+panah, Esc membuang perubahan); panel **Columns / Inspector / Export** di rail kanan dengan pemilih hasil; panel hasil kosong dengan kartu pintasan.
+
+**1.2.1 - 1.2.6**
+
+- Baru: **Load all** untuk hasil jutaan baris (cache di disk dengan search, filter kolom, sort, paging dan export dari cache); **popup nilai cell** (hover atau double-click, JSON di-pretty-print, **Copy value**); indikator loading di webview; **Copy as script / JSON** dan **Open Table Columns** dari file SQL.
+
 **1.2.0**
 
-- Baru:
-  - **Find Object** (Ctrl+Alt+O): cari koneksi, database, table, view dan procedure dari semua koneksi lewat cache metadata lokal; **Update Metadata** dan **Clear Cache** di Command Palette.
-  - **Filter in Connections** (Ctrl+Alt+F): ikon corong pada koneksi, database atau folder hanya menampilkan nama yang cocok.
-  - **Open view**: semua tab SQL yang terbuka, tersimpan maupun belum, dengan Save All, Close All, pin dan urutan drag & drop.
-  - **SQL syntax check**: SELECT / INSERT / UPDATE / DELETE / WITH dicek offline dengan dialect koneksi (`moonageDaydream.lint.syntax`).
-  - **Running queries and history in the status bar**: quick pick untuk cancel, buka lagi, jalankan lagi atau salin; popup dengan Cancel selama query berjalan.
-  - **Group environment icons**: Production, UAT, Development dan Local Development, ditebak dari nama atau diatur lewat klik kanan.
-- Ditingkatkan:
-  - **Connection rows**: logo dengan titik berdenyut saat terhubung, jumlah koneksi terhubung per group, tooltip lebih lengkap, loading bar saat expand koneksi yang belum terhubung.
-  - **One preview tab**: klik tabel dan entri history memakai ulang satu tab SQL sampai tab itu diedit.
-  - **Faster large results**: grid hanya menggambar baris di sekitar area tampil.
-- Diperbaiki:
-  - **Slow or failed connections**: tidak lagi membekukan isi Connections lainnya atau tampil sebagai terhubung.
+- Baru: **Find Object**, **Filter in Connections**, **Open view**, cek sintaks SQL, query berjalan dan **History** di status bar, ikon environment group; baris koneksi didesain ulang; hasil besar lebih cepat.
 
 Sebelumnya: **1.1.0** notifikasi setelah Add Data / simpan grid; **1.0.0** UNIQUE / FOREIGN KEY multi-kolom, koneksi MongoDB replica set, Show Log pada error, export streaming, perbaikan `GO`.
 
@@ -164,6 +177,7 @@ Expand koneksi untuk melihat database, table, view, procedure dan kolom (koneksi
 Buka atau buat file `.sql`. CodeLens di atas setiap statement menampilkan **Execute**, **Explain**, **Analyze** (untuk SELECT), lalu koneksi, database dan mode transaksi file itu; klik koneksi atau database untuk menggantinya. Lalu:
 
 - **Ctrl+Alt+Enter** menjalankan selection, atau statement di posisi kursor. **Ctrl+Enter** melakukan hal yang sama bila extension DBCode tidak terpasang.
+- **Select** di baris CodeLens memblok seluruh statement (sampai `;`) di editor.
 - **Execute** pada lens menjalankan statement itu.
 - Saat query berjalan, muncul lens **Cancel**; query di-cancel di server. Query yang berjalan lebih dari 0,3 detik juga memunculkan popup berisi query, detik berjalan dan **Cancel**; popup tertutup saat query selesai.
 
@@ -185,19 +199,19 @@ Statement yang tidak mengembalikan baris (UPDATE, INSERT, DELETE, MERGE, `SELECT
 
 ### 3. Filter dan sort
 
-Ketik kondisi di kotak **WHERE** lalu tekan Enter: query dijalankan ulang di server dengan kondisi itu. Ikon filter di header kolom memfilter baris yang sudah dimuat berdasarkan teks; menu kolom untuk sort atau hide kolom. Urutan kolom dan tampil / sembunyi kolom diatur dengan drag dan centang di panel samping **Columns**.
+Buka baris filter dengan ikon **WHERE** di toolbar hasil (atau ikon search / Ctrl+F untuk Search Output), ketik kondisi lalu tekan Enter: query dijalankan ulang di server dengan kondisi itu. Ikon filter di header kolom memfilter baris yang sudah dimuat berdasarkan teks; menu kolom untuk sort, hide atau menyalin kolom (**Copy column as array**). Urutan kolom dan tampil / sembunyi kolom diatur dengan drag dan centang di panel samping **Columns**. Dengan **Load all**, search, filter dan sort bekerja pada seluruh hasil di cache.
 
 ![WHERE status = 'paid' ditambah filter kolom city](images/screenshots/filter.png)
 
-Klik baris untuk memilihnya (Ctrl / Shift untuk lebih dari satu baris); Ctrl+C menyalin pilihan sebagai TSV. Panel samping **Inspector** menampilkan semua kolom dari baris terpilih beserta tipenya; **Columns** menampilkan daftar kolom beserta tipenya.
+Klik baris untuk memilihnya (Ctrl / Shift untuk lebih dari satu baris, atau tombol panah); Ctrl+C menyalin pilihan (format default JSON pretty, lihat `moonageDaydream.grid.copyFormat`). Klik judul kolom untuk memilih seluruh kolom: Ctrl+C lalu menyalin nilainya sebagai array JSON. Hover atau double-click cell untuk melihat nilai lengkapnya. Panel samping **Inspector** menampilkan semua kolom dari baris terpilih beserta tipenya; **Columns** menampilkan daftar kolom beserta tipenya.
 
 ![Panel samping Inspector menampilkan satu baris dengan tipe kolom](images/screenshots/inspector.png)
 
 ### 4. Export
 
-Klik **Export**, pilih **All Data** atau selection dan format (Excel .xlsx, CSV, TSV, JSON, JSON pretty, Markdown, HTML), lalu **Save** ke file atau **Copy** ke clipboard.
+Buka panel samping **Export** (rail kanan), pilih **All Data** atau selection dan format (Excel .xlsx, CSV, TSV, JSON, JSON pretty, Array of values, Markdown, HTML), lalu **Save** ke file atau **Copy** ke clipboard. Dengan beberapa query dalam satu run, pemilih di atas panel menentukan hasil yang diekspor.
 
-![Popup Export dengan All Data dan Excel (.xlsx)](images/screenshots/export.png)
+![Panel samping Export dengan All Data dan Excel (.xlsx), di samping grid hasil](images/screenshots/export.png)
 
 **Pin** menyimpan hasil saat ini di tab sendiri supaya tidak tertimpa query berikutnya.
 
@@ -329,6 +343,9 @@ Koneksi read-only tidak bisa menyimpan atau menghapus key. Bila ACL token tidak 
 | `moonageDaydream.lint.semicolon` | `error` | Tandai statement tanpa `;`: `error`, `warning`, `off` |
 | `moonageDaydream.lint.syntax` | `warning` | Tandai kesalahan sintaks di SELECT / INSERT / UPDATE / DELETE / WITH (offline, dialect koneksi): `error`, `warning`, `off` |
 | `moonageDaydream.connection.idleDisconnectMinutes` | `0` | Disconnect koneksi yang tidak dipakai selama sekian menit (tanpa query berjalan, transaksi terbuka atau monitor). `0` = tidak pernah |
+| `moonageDaydream.grid.copyFormat` | `jsonPretty` | Format baris yang disalin dengan Ctrl+C di grid hasil: `jsonPretty`, `json`, `tsv`, `csv`, `markdown` |
+| `moonageDaydream.grid.maxCachedRows` | `5000000` | Load all: maksimum baris di cache hasil per hasil (paling banyak 5.000.000); bila tercapai query di-cancel dan hasil ditandai parsial |
+| `moonageDaydream.grid.cacheMemoryMB` | `100` | Load all: RAM per cache hasil dalam MB (paling banyak 100); sisanya ditulis ke `.moonage-cache` di folder workspace |
 
 Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 
@@ -389,7 +406,7 @@ Extension ini juga menjadikan dirinya formatter default untuk `[sql]`.
 - SQLite: seluruh file database dibaca setiap query, dan query yang sedang berjalan tidak bisa di-cancel.
 - MongoDB: tidak ada transaksi manual dan tidak ada formatter.
 - Import connection string: URL `mongodb://` dengan beberapa host (replica set) belum didukung; pakai `mongodb+srv://` atau satu host.
-- Grid menampung maksimal 50.000 baris (Load more berhenti di situ); pakai Export untuk semua data.
+- Grid menampung maksimal 50.000 baris (Load more berhenti di situ); pakai **Load all** untuk sampai jutaan baris (edit nonaktif untuk hasil itu) atau Export untuk semua data.
 - SQLite tidak punya Analyze (hanya `EXPLAIN QUERY PLAN`).
 - Script as CREATE TABLE (SQL Server) tidak mencakup opsi partitioning, compression, filegroup, columnstore, temporal atau memory-optimized.
 - Live Monitor: MySQL / MariaDB tidak punya grafik CPU %; statistik PostgreSQL di-flush dengan jeda sekitar 1 detik; Expensive queries butuh `performance_schema` (MySQL / MariaDB) atau `pg_stat_statements` (PostgreSQL).
