@@ -22,7 +22,9 @@ export function leadingCommas(sql: string): string {
     lines[i] = (lines[i].slice(0, code.length - 1) + lines[i].slice(code.length)).trimEnd();
     const indent = /^\s*/.exec(lines[i + 1])![0];
     lines[i + 1] = `${indent}, ${lines[i + 1].slice(indent.length)}`;
-    masked[i + 1] = `${indent}, ${masked[i + 1].slice(indent.length)}`;
+    // koma yang baru ditambahkan ditulis sebagai spasi di mask: isi string juga jadi spasi, jadi koma depan bisa terbaca
+    // sebagai "koma di akhir baris" pada putaran berikutnya dan ikut dipindah lagi (daftar IN multi-baris rusak)
+    masked[i + 1] = `${indent}  ${masked[i + 1].slice(indent.length)}`;
   }
   return lines.join('\n');
 }

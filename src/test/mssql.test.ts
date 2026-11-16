@@ -177,6 +177,13 @@ test('formatSql: uppercase keywords, leading commas, strings untouched', () => {
   assert.equal(leadingCommas('SELECT\n  a, -- c,\n  b'), 'SELECT\n  a -- c,\n  , b', 'code comma moved, comma inside comment kept');
 });
 
+test('leadingCommas: daftar IN multi-baris, koma terakhir tidak loncat ke )', () => {
+  const list = "WHERE\n    x IN (\n        'a',\n        'b',\n        'c'\n    )\n;";
+  assert.equal(leadingCommas(list), "WHERE\n    x IN (\n        'a'\n        , 'b'\n        , 'c'\n    )\n;");
+  // baris yang baru diberi koma depan tidak boleh dibaca ulang sebagai baris berakhir koma
+  assert.equal(leadingCommas("SELECT\n    'a',\n    'b'\n"), "SELECT\n    'a'\n    , 'b'\n");
+});
+
 test('autoLimitable: only a single SELECT without TOP / FETCH / INTO', () => {
   assert.equal(autoLimitable(['SELECT  *\nFROM    dbo.Orders']), true);
   assert.equal(autoLimitable(['WITH x AS (SELECT 1 a) SELECT * FROM x;']), true);

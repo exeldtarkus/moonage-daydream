@@ -8,6 +8,7 @@ export type Release = { version: string; date: string; items: ReleaseItem[] };
 export const RELEASES: Release[] = [
   {
     version: '1.3.3', date: '2026-11-16', items: [
+      { kind: 'fixed', title: 'Format SQL no longer breaks a multi-line IN list', detail: 'With leading commas on, formatting a list of values (IN (...), long SELECT lists) moved the last comma onto the closing bracket line and left one value without its comma, which made the statement invalid (unexpected "\'"). Every line keeps its own comma now.' },
       { kind: 'improved', title: 'Select statement is a button now', detail: 'The CodeLens row above every statement has a Select button that selects the whole statement, up to its ;, in the editor. Double-clicking in a SQL file selects a single word again like everywhere else, and the setting moonageDaydream.editor.doubleClickSelectsStatement is gone.' },
       { kind: 'new', title: 'Select a column and copy it as an array', detail: 'Click a column title in the result grid to select the whole column (click it again, or click any cell, to drop the selection). Ctrl+C then copies every value of that column as a JSON array, ready to paste into code or an IN list; the column menu has the same action as Copy column as array. The values come from the whole result, not only the rows on screen, and Array of values is also available as an export format.' },
     ],
